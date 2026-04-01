@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import logger from "../src/logger.ts";
 import { QmonLiveExecutionService } from "../src/qmon/qmon-live-execution.service.ts";
-import type { QmonPendingOrder, QmonPopulation } from "../src/qmon/qmon.types.ts";
+import type { QmonExecutionRuntime, QmonPendingOrder, QmonPopulation } from "../src/qmon/qmon.types.ts";
 
 function createPendingOrder(market: "eth-5m" | "btc-5m", kind: "entry" | "exit", action: "BUY_UP" | "SELL_UP"): QmonPendingOrder {
   return {
@@ -36,6 +36,7 @@ function createPopulation(
   market: "eth-5m" | "btc-5m",
   pendingOrder: QmonPendingOrder | null,
   action: "BUY_UP" | null,
+  executionRuntime?: QmonExecutionRuntime,
 ): QmonPopulation {
   return {
     market,
@@ -69,7 +70,43 @@ function createPopulation(
     seatLastCloseTimestamp: null,
     seatLastWindowStartMs: 100,
     seatLastSettledWindowStartMs: null,
+    executionRuntime:
+      executionRuntime ??
+      {
+        route: "paper",
+        executionState: "paper",
+        pendingIntent: null,
+        orderId: null,
+        submittedAt: null,
+        confirmedVenueSeat: null,
+        pendingVenueOrders: [],
+        recoveryStartedAt: null,
+        lastReconciledAt: null,
+        lastError: null,
+        isHalted: false,
+      },
   };
+}
+
+function createRealExecutionRuntime(
+  overrides: Partial<QmonExecutionRuntime> = {},
+): QmonExecutionRuntime {
+  const executionRuntime: QmonExecutionRuntime = {
+    route: "real",
+    executionState: "real-armed",
+    pendingIntent: null,
+    orderId: null,
+    submittedAt: null,
+    confirmedVenueSeat: null,
+    pendingVenueOrders: [],
+    recoveryStartedAt: null,
+    lastReconciledAt: null,
+    lastError: null,
+    isHalted: false,
+    ...overrides,
+  };
+
+  return executionRuntime;
 }
 
 function createSignals(): {
@@ -144,10 +181,36 @@ function createMockEngine(initialPopulations: readonly QmonPopulation[]) {
 
       if (population !== null && population.seatPendingOrder !== null) {
         if (population.seatPendingOrder.kind === "entry") {
-          populationsByMarket.set(market, createPopulation(market, null, "BUY_UP"));
+          populationsByMarket.set(
+            market,
+            createPopulation(market, null, "BUY_UP", {
+              ...(population.executionRuntime ?? createRealExecutionRuntime()),
+              route: "real",
+              executionState: "real-open",
+              pendingIntent: null,
+              confirmedVenueSeat: {
+                action: "BUY_UP",
+                shareCount: 4.89,
+                entryPrice: averagePrice,
+                enteredAt: 100,
+              },
+              isHalted: false,
+              recoveryStartedAt: null,
+              lastError: null,
+            }),
+          );
         } else {
           populationsByMarket.set(market, {
-            ...createPopulation(market, null, null),
+            ...createPopulation(market, null, null, {
+              ...(population.executionRuntime ?? createRealExecutionRuntime()),
+              route: "real",
+              executionState: "real-armed",
+              pendingIntent: null,
+              confirmedVenueSeat: null,
+              isHalted: false,
+              recoveryStartedAt: null,
+              lastError: null,
+            }),
             marketConsolidatedPnl: averagePrice,
           });
         }
@@ -160,6 +223,16 @@ function createMockEngine(initialPopulations: readonly QmonPopulation[]) {
         populationsByMarket.set(market, {
           ...population,
           seatPendingOrder: null,
+        });
+      }
+    },
+    setRealExecutionRuntime(market: "eth-5m" | "btc-5m", executionRuntime: QmonExecutionRuntime) {
+      const population = populationsByMarket.get(market) ?? null;
+
+      if (population !== null) {
+        populationsByMarket.set(market, {
+          ...population,
+          executionRuntime,
         });
       }
     },
@@ -195,11 +268,19 @@ async function captureWarnMessages(callback: () => Promise<void>): Promise<reado
 }
 
 test("QmonLiveExecutionService moves posted but unconfirmed orders into recovery without retrying", async () => {
+  let pendingConfirmationReads = 0;
+  let postCount = 0;
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 42,
+    listActiveOrdersPendingConfirmation: async () => {
+      pendingConfirmationReads += 1;
+
+      return pendingConfirmationReads > 1 ? [{ id: "order-1", market: "eth-updown-5m", status: "pending", side: "buy", outcome: "up" }] : [];
+    },
+    cancelOrderById: async () => true,
     postOrder: async () => ({
-      id: "order-1",
+      id: `order-${(postCount += 1)}`,
       date: new Date(),
     }),
     waitForOrderConfirmation: async () => ({
@@ -241,9 +322,11 @@ test("QmonLiveExecutionService moves posted but unconfirmed orders into recovery
   const status = liveExecutionService.getStatus(engine.getPopulations());
   const ethRoute = status.marketRoutes.find((route) => route.market === "eth-5m") ?? null;
 
+  assert.equal(postCount, 1);
   assert.equal(ethRoute?.executionState, "real-recovery-required");
   assert.equal(ethRoute?.isHalted, true);
   assert.equal(ethRoute?.pendingIntentKey !== null, true);
+  assert.equal(ethRoute?.orderId, "order-1");
 });
 
 test("QmonLiveExecutionService routes real seat pending orders only for allowlisted markets", async () => {
@@ -261,6 +344,8 @@ test("QmonLiveExecutionService routes real seat pending orders only for allowlis
       balanceReads += 1;
       return 42;
     },
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async (options: { readonly op: string; readonly direction: string; readonly size: number; readonly price: number; readonly market: { readonly slug: string } }) => {
       postedOrders.push({
         op: options.op,
@@ -335,6 +420,8 @@ test("QmonLiveExecutionService logs posted and confirmed real orders at warn lev
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 42,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async () => ({
       id: "order-1",
       date: new Date(),
@@ -385,6 +472,8 @@ test("QmonLiveExecutionService logs recovery-required real orders at warn level"
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 42,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async () => ({
       id: "order-1",
       date: new Date(),
@@ -437,6 +526,8 @@ test("QmonLiveExecutionService clears failed real seat orders and refreshes bala
       balanceReads += 1;
       return 12;
     },
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async () => {
       throw new Error("insufficient balance");
     },
@@ -479,6 +570,8 @@ test("QmonLiveExecutionService keeps recovery-required markets halted on startup
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [{ id: "1", market: "eth-updown-5m", status: "pending", side: "buy", outcome: "up" }],
+    cancelOrderById: async () => true,
     postOrder: async () => {
       postCount += 1;
       return null;
@@ -494,27 +587,29 @@ test("QmonLiveExecutionService keeps recovery-required markets halted on startup
     createMockLiveStatePersistence() as never,
     null,
   );
-  const engine = createMockEngine([createPopulation("eth-5m", createPendingOrder("eth-5m", "entry", "BUY_UP"), null)]);
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      createPendingOrder("eth-5m", "entry", "BUY_UP"),
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-recovery-required",
+        pendingIntent: createPendingOrder("eth-5m", "entry", "BUY_UP"),
+        orderId: "1",
+        submittedAt: 100,
+        recoveryStartedAt: 100,
+        isHalted: true,
+        lastError: "restart with unresolved intent",
+      }),
+    ),
+  ]);
 
   await liveExecutionService.initialize({
     mode: "real",
     allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
-    persistedState: {
-      updatedAt: Date.now(),
-      markets: [
-        {
-          market: "eth-5m",
-          routeState: "recovery-required",
-          pendingIntentKey: "eth-5m:entry:BUY_UP:100:5.000000:0.380000",
-          submittedAt: 100,
-          orderId: "1",
-          confirmedLiveSeat: null,
-          lastError: "restart with unresolved intent",
-        },
-      ],
-    },
+    persistedState: null,
     cpnlSessionStartedAt: null,
   });
 
@@ -527,11 +622,76 @@ test("QmonLiveExecutionService keeps recovery-required markets halted on startup
   assert.equal(status.marketRoutes[0]?.isHalted, true);
 });
 
+test("QmonLiveExecutionService cancels stale open venue orders only after the local intent has expired", async () => {
+  const expiredPendingOrder: QmonPendingOrder = {
+    ...createPendingOrder("eth-5m", "entry", "BUY_UP"),
+    marketEndMs: Date.now() - 5_000,
+  };
+  const cancelledOrderIds: string[] = [];
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [{ id: "stale-1", market: "eth-updown-5m", status: "pending", side: "buy", outcome: "up" }],
+    cancelOrderById: async (orderId: string) => {
+      cancelledOrderIds.push(orderId);
+      return true;
+    },
+    postOrder: async () => null,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      expiredPendingOrder,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-recovery-required",
+        pendingIntent: expiredPendingOrder,
+        orderId: "stale-1",
+        submittedAt: 100,
+        recoveryStartedAt: 100,
+        isHalted: true,
+        lastError: "timeout while waiting for confirmation",
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    allowlistedMarkets: ["eth-5m"],
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.deepEqual(cancelledOrderIds, ["stale-1"]);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-halted");
+  assert.equal(status.marketRoutes[0]?.orderId, null);
+  assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder, null);
+});
+
 test("QmonLiveExecutionService halts a market when a new entry appears while a confirmed live position already exists", async () => {
   let postCount = 0;
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async () => {
       postCount += 1;
       return null;
@@ -547,32 +707,29 @@ test("QmonLiveExecutionService halts a market when a new entry appears while a c
     createMockLiveStatePersistence() as never,
     null,
   );
-  const engine = createMockEngine([createPopulation("eth-5m", createPendingOrder("eth-5m", "entry", "BUY_UP"), null)]);
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      createPendingOrder("eth-5m", "entry", "BUY_UP"),
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-open",
+        confirmedVenueSeat: {
+          action: "BUY_UP",
+          shareCount: 5,
+          entryPrice: 0.38,
+          enteredAt: 100,
+        },
+      }),
+    ),
+  ]);
 
   await liveExecutionService.initialize({
     mode: "real",
     allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
-    persistedState: {
-      updatedAt: Date.now(),
-      markets: [
-        {
-          market: "eth-5m",
-          routeState: "armed",
-          pendingIntentKey: null,
-          submittedAt: null,
-          orderId: null,
-          confirmedLiveSeat: {
-            action: "BUY_UP",
-            shareCount: 5,
-            entryPrice: 0.38,
-            enteredAt: 100,
-          },
-          lastError: null,
-        },
-      ],
-    },
+    persistedState: null,
     cpnlSessionStartedAt: null,
   });
 
@@ -589,6 +746,8 @@ test("QmonLiveExecutionService does not infer a confirmed live position from loc
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async () => null,
     waitForOrderConfirmation: async () => null,
   };
@@ -624,6 +783,8 @@ test("QmonLiveExecutionService halts when a confirmed live order is missing a tr
   const orderService = {
     init: async () => undefined,
     getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
     postOrder: async (options: { readonly market: { readonly slug: string } }) => ({
       ...options,
       date: new Date(),

@@ -107,6 +107,18 @@ export type PendingOrderKind = "entry" | "exit";
 
 export type DominantSignalGroup = "predictive" | "microstructure" | "mixed" | "none";
 
+export type QmonExecutionRoute = "paper" | "real";
+
+export type QmonExecutionState =
+  | "paper"
+  | "real-armed"
+  | "real-pending-entry"
+  | "real-open"
+  | "real-pending-exit"
+  | "real-error"
+  | "real-halted"
+  | "real-recovery-required";
+
 export type TradeabilityAssessment = {
   readonly directionalAlpha: number;
   readonly estimatedEdgeBps: number;
@@ -164,6 +176,24 @@ export type QmonPosition = {
   readonly predictedFillQuality?: number | null;
   readonly signalAgreementCount?: number | null;
   readonly dominantSignalGroup?: DominantSignalGroup;
+};
+
+export type QmonConfirmedVenueSeat = {
+  readonly action: TradingAction;
+  readonly shareCount: number;
+  readonly entryPrice: number | null;
+  readonly enteredAt: number;
+};
+
+export type QmonPendingVenueOrderSnapshot = {
+  readonly orderId: string;
+  readonly marketSlug: string | null;
+  readonly side: "buy" | "sell" | null;
+  readonly outcome: "up" | "down" | null;
+  readonly size: number | null;
+  readonly price: number | null;
+  readonly status: string | null;
+  readonly createdAt: number | null;
 };
 
 export type QmonDecision = {
@@ -269,6 +299,21 @@ export type QmonPopulation = {
   readonly seatLastCloseTimestamp: number | null;
   readonly seatLastWindowStartMs: number | null;
   readonly seatLastSettledWindowStartMs: number | null;
+  readonly executionRuntime?: QmonExecutionRuntime;
+};
+
+export type QmonExecutionRuntime = {
+  readonly route: QmonExecutionRoute;
+  readonly executionState: QmonExecutionState;
+  readonly pendingIntent: QmonPendingOrder | null;
+  readonly orderId: string | null;
+  readonly submittedAt: number | null;
+  readonly confirmedVenueSeat: QmonConfirmedVenueSeat | null;
+  readonly pendingVenueOrders: readonly QmonPendingVenueOrderSnapshot[];
+  readonly recoveryStartedAt: number | null;
+  readonly lastReconciledAt: number | null;
+  readonly lastError: string | null;
+  readonly isHalted: boolean;
 };
 
 export type QmonFamilyState = {

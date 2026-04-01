@@ -1316,7 +1316,10 @@ export class QmonValidationLogService {
     };
     const rangeEvents = await this.readEventsFromRange(eventFilter);
     const marketSeatEvents = rangeEvents.filter((event) => {
-      const isMatchingSeatEvent = event.market === market && event.isSeat === true && (event.type === "position-opened" || event.type === "position-closed");
+      const isSeatExecutionEvent = event.category === "execution";
+      const isSeatPositionEvent = event.type === "position-opened" || event.type === "position-closed";
+      const isSeatWarningEvent = event.category === "warning" && typeof event.warningCode === "string" && event.warningCode.startsWith("live-");
+      const isMatchingSeatEvent = event.market === market && event.isSeat === true && (isSeatPositionEvent || isSeatExecutionEvent || isSeatWarningEvent);
 
       return isMatchingSeatEvent;
     });

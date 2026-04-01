@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createAdaptorServer } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { Hono } from "hono";
-import type { RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
+import type { QmonDashboardPayload, RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
 import type { DiagnosticCategory, DiagnosticRange, QmonEngine, QmonValidationLogService } from "../qmon/index.ts";
 import { RegimeEngine } from "../regime/regime-engine.service.ts";
 import type { RegimeEvent, RegimeResult } from "../regime/regime.types.ts";
@@ -249,6 +249,7 @@ export class HttpServerService {
       seatLastCloseTimestamp: population.seatLastCloseTimestamp,
       seatLastWindowStartMs: population.seatLastWindowStartMs,
       seatLastSettledWindowStartMs: population.seatLastSettledWindowStartMs,
+      executionRuntime: population.executionRuntime ?? null,
       qmons: qmons.map((qmon) => this.buildQmonSummary(qmon as Record<string, unknown>)),
     };
 
@@ -302,6 +303,41 @@ export class HttpServerService {
     }
 
     return averageApiQmonsSerializationMs;
+  }
+
+  /**
+   * Build the operator-facing dashboard payload from canonical runtime state.
+   */
+  private buildDashboardPayload(diagnosticsOverview: unknown): QmonDashboardPayload {
+    const familyState = this.qmonEngine?.getFamilyState() ?? {
+      populations: [],
+      globalGeneration: 0,
+      createdAt: 0,
+      lastUpdated: 0,
+    };
+    const familySummary = {
+      populations: familyState.populations.map((population) => this.buildPopulationSummary(population as unknown as Record<string, unknown>)),
+      globalGeneration: familyState.globalGeneration,
+      createdAt: familyState.createdAt,
+      lastUpdated: familyState.lastUpdated,
+    };
+    const runtimeExecutionStatus = this.runtimeExecutionStatusProvider?.() ?? {
+      mode: "paper",
+      allowlistedMarkets: [],
+      balanceUsd: null,
+      balanceState: "unavailable",
+      balanceUpdatedAt: null,
+      cpnlSessionStartedAt: null,
+      marketRoutes: [],
+    };
+    const dashboardPayload: QmonDashboardPayload = {
+      generatedAt: Date.now(),
+      familyState: familySummary,
+      runtimeExecutionStatus,
+      diagnosticsOverview,
+    };
+
+    return dashboardPayload;
   }
 
   /**
@@ -375,6 +411,17 @@ export class HttpServerService {
       }
       const familySummaryJson = this.getCachedFamilySummaryJson();
       return context.body(familySummaryJson, 200, { "Content-Type": "application/json" });
+    });
+
+    app.get("/api/qmons/dashboard", async (context) => {
+      if (!this.qmonEngine) {
+        return context.json({ error: "QMON engine not initialized" }, 503);
+      }
+
+      const diagnosticsOverview =
+        this.qmonValidationLogService !== null ? await this.qmonValidationLogService.readDiagnosticsOverview("24h") : null;
+
+      return context.json(this.buildDashboardPayload(diagnosticsOverview), 200);
     });
 
     app.get("/api/qmons/stats", (context) => {

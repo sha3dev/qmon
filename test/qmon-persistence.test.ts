@@ -330,3 +330,37 @@ test("QmonPersistenceService preserves real market seat state during CPnL reset"
   assert.equal(resetState.populations[0]?.seatPendingOrder?.action, "SELL_UP");
   assert.equal(resetState.populations[0]?.seatLastCloseTimestamp, 130);
 });
+
+test("QmonPersistenceService migrates legacy live execution state into the canonical population runtime", () => {
+  const persistenceService = new QmonPersistenceService("/tmp/qmon-persistence");
+  const familyState = createFamilyState();
+  const migratedState = persistenceService.normalizeFamilyState(
+    familyState,
+    ["btc-5m"],
+    {
+      updatedAt: 999,
+      markets: [
+        {
+          market: "btc-5m",
+          routeState: "recovery-required",
+          pendingIntentKey: "btc-5m:entry:BUY_UP:20:5.000000:0.420000",
+          submittedAt: 222,
+          orderId: "legacy-order-1",
+          confirmedLiveSeat: {
+            action: "BUY_UP",
+            shareCount: 5,
+            entryPrice: 0.42,
+            enteredAt: 111,
+          },
+          lastError: "restart with unresolved live order",
+        },
+      ],
+    },
+  );
+
+  assert.equal(migratedState.populations[0]?.executionRuntime?.route, "real");
+  assert.equal(migratedState.populations[0]?.executionRuntime?.executionState, "real-recovery-required");
+  assert.equal(migratedState.populations[0]?.executionRuntime?.orderId, "legacy-order-1");
+  assert.equal(migratedState.populations[0]?.executionRuntime?.confirmedVenueSeat?.action, "BUY_UP");
+  assert.equal(migratedState.populations[0]?.executionRuntime?.lastError, "restart with unresolved live order");
+});

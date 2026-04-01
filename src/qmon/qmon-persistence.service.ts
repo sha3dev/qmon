@@ -12,7 +12,16 @@ import { join } from "node:path";
 
 import config from "../config.ts";
 import { generateQmonId } from "./qmon-genome.service.ts";
-import type { MarketKey, Qmon, QmonFamilyState, QmonId, QmonPopulation } from "./qmon.types.ts";
+import type {
+  MarketKey,
+  Qmon,
+  QmonExecutionRoute,
+  QmonExecutionRuntime,
+  QmonFamilyState,
+  QmonId,
+  QmonPopulation,
+} from "./qmon.types.ts";
+import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMarketLiveState } from "./qmon-live-state-persistence.service.ts";
 
 /**
  * @section consts
@@ -118,6 +127,151 @@ export class QmonPersistenceService {
     return emptySeatPosition;
   }
 
+  private createDefaultExecutionRuntime(route: QmonExecutionRoute): QmonExecutionRuntime {
+    let executionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: "paper",
+      pendingIntent: null,
+      orderId: null,
+      submittedAt: null,
+      confirmedVenueSeat: null,
+      pendingVenueOrders: [],
+      recoveryStartedAt: null,
+      lastReconciledAt: null,
+      lastError: null,
+      isHalted: false,
+    };
+
+    if (route === "real") {
+      executionRuntime = {
+        ...executionRuntime,
+        executionState: "real-armed",
+      };
+    }
+
+    return executionRuntime;
+  }
+
+  private resolveExecutionState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
+    let executionState: QmonExecutionRuntime["executionState"] = "paper";
+
+    if (executionRuntime.route === "real") {
+      executionState = "real-armed";
+
+      if (executionRuntime.isHalted) {
+        executionState = executionRuntime.recoveryStartedAt !== null ? "real-recovery-required" : "real-halted";
+      } else if (executionRuntime.pendingIntent?.kind === "entry") {
+        executionState = "real-pending-entry";
+      } else if (executionRuntime.pendingIntent?.kind === "exit") {
+        executionState = "real-pending-exit";
+      } else if (executionRuntime.confirmedVenueSeat !== null) {
+        executionState = "real-open";
+      } else if (executionRuntime.lastError !== null) {
+        executionState = "real-error";
+      }
+    }
+
+    return executionState;
+  }
+
+  private createConfirmedVenueSeatFromLegacy(
+    persistedLiveSeatState: PersistedLiveSeatState | null,
+  ): QmonExecutionRuntime["confirmedVenueSeat"] {
+    let confirmedVenueSeat: QmonExecutionRuntime["confirmedVenueSeat"] = null;
+
+    if (persistedLiveSeatState !== null) {
+      confirmedVenueSeat = {
+        action: persistedLiveSeatState.action,
+        shareCount: persistedLiveSeatState.shareCount,
+        entryPrice: persistedLiveSeatState.entryPrice,
+        enteredAt: persistedLiveSeatState.enteredAt,
+      };
+    }
+
+    return confirmedVenueSeat;
+  }
+
+  private createExecutionRuntimeFromLegacyMarketState(
+    persistedMarketLiveState: PersistedMarketLiveState | null,
+  ): QmonExecutionRuntime | null {
+    let executionRuntime: QmonExecutionRuntime | null = null;
+
+    if (persistedMarketLiveState !== null) {
+      const isHalted = persistedMarketLiveState.routeState !== "armed";
+      const recoveryStartedAt = persistedMarketLiveState.routeState === "recovery-required" ? persistedMarketLiveState.submittedAt : null;
+
+      executionRuntime = {
+        route: "real",
+        executionState: "real-armed",
+        pendingIntent: null,
+        orderId: persistedMarketLiveState.orderId,
+        submittedAt: persistedMarketLiveState.submittedAt,
+        confirmedVenueSeat: this.createConfirmedVenueSeatFromLegacy(persistedMarketLiveState.confirmedLiveSeat),
+        pendingVenueOrders: [],
+        recoveryStartedAt,
+        lastReconciledAt: null,
+        lastError: persistedMarketLiveState.lastError,
+        isHalted,
+      };
+      executionRuntime = {
+        ...executionRuntime,
+        executionState: this.resolveExecutionState(executionRuntime),
+      };
+    }
+
+    return executionRuntime;
+  }
+
+  private findLegacyMarketState(
+    legacyLiveExecutionState: PersistedLiveExecutionState | null,
+    market: MarketKey,
+  ): PersistedMarketLiveState | null {
+    const persistedMarketLiveState = legacyLiveExecutionState?.markets.find((persistedMarket) => persistedMarket.market === market) ?? null;
+
+    return persistedMarketLiveState;
+  }
+
+  private normalizeExecutionRuntime(
+    population: QmonPopulation,
+    route: QmonExecutionRoute,
+    legacyLiveExecutionState: PersistedLiveExecutionState | null,
+  ): QmonExecutionRuntime {
+    const legacyExecutionRuntime = this.createExecutionRuntimeFromLegacyMarketState(this.findLegacyMarketState(legacyLiveExecutionState, population.market));
+    const currentExecutionRuntime = population.executionRuntime ?? legacyExecutionRuntime ?? this.createDefaultExecutionRuntime(route);
+    const normalizedExecutionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: currentExecutionRuntime.executionState,
+      pendingIntent: route === "real" ? population.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      orderId: route === "real" ? currentExecutionRuntime.orderId : null,
+      submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
+      confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
+      pendingVenueOrders: route === "real" ? currentExecutionRuntime.pendingVenueOrders : [],
+      recoveryStartedAt: route === "real" ? currentExecutionRuntime.recoveryStartedAt : null,
+      lastReconciledAt: route === "real" ? currentExecutionRuntime.lastReconciledAt : null,
+      lastError: route === "real" ? currentExecutionRuntime.lastError : null,
+      isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
+    };
+    const resolvedExecutionRuntime: QmonExecutionRuntime = {
+      ...normalizedExecutionRuntime,
+      executionState: this.resolveExecutionState(normalizedExecutionRuntime),
+    };
+
+    return resolvedExecutionRuntime;
+  }
+
+  private normalizePopulation(
+    population: QmonPopulation,
+    route: QmonExecutionRoute,
+    legacyLiveExecutionState: PersistedLiveExecutionState | null,
+  ): QmonPopulation {
+    const normalizedPopulation: QmonPopulation = {
+      ...population,
+      executionRuntime: this.normalizeExecutionRuntime(population, route, legacyLiveExecutionState),
+    };
+
+    return normalizedPopulation;
+  }
+
   /**
    * @section public:methods
    */
@@ -167,6 +321,7 @@ export class QmonPersistenceService {
         seatLastCloseTimestamp: null,
         seatLastWindowStartMs: null,
         seatLastSettledWindowStartMs: null,
+        executionRuntime: this.createDefaultExecutionRuntime("paper"),
       });
     }
 
@@ -209,6 +364,25 @@ export class QmonPersistenceService {
     return isSaved;
   }
 
+  public normalizeFamilyState(
+    state: QmonFamilyState,
+    realExecutionMarkets: readonly MarketKey[] = [],
+    legacyLiveExecutionState: PersistedLiveExecutionState | null = null,
+  ): QmonFamilyState {
+    const normalizedState: QmonFamilyState = {
+      ...state,
+      populations: state.populations.map((population) =>
+        this.normalizePopulation(
+          population,
+          realExecutionMarkets.includes(population.market) ? "real" : population.executionRuntime?.route ?? "paper",
+          legacyLiveExecutionState,
+        ),
+      ),
+    };
+
+    return normalizedState;
+  }
+
   public resetCpnlState(state: QmonFamilyState, realExecutionMarkets: readonly MarketKey[] = []): QmonFamilyState {
     const now = Date.now();
     const resetState: QmonFamilyState = {
@@ -221,6 +395,15 @@ export class QmonPersistenceService {
         seatLastCloseTimestamp: realExecutionMarkets.includes(population.market) ? population.seatLastCloseTimestamp : null,
         seatLastWindowStartMs: realExecutionMarkets.includes(population.market) ? population.seatLastWindowStartMs : null,
         seatLastSettledWindowStartMs: realExecutionMarkets.includes(population.market) ? population.seatLastSettledWindowStartMs : null,
+        executionRuntime: this.normalizeExecutionRuntime(
+          {
+            ...population,
+            seatPosition: realExecutionMarkets.includes(population.market) ? population.seatPosition : this.createEmptySeatPosition(),
+            seatPendingOrder: realExecutionMarkets.includes(population.market) ? population.seatPendingOrder : null,
+          },
+          realExecutionMarkets.includes(population.market) ? "real" : "paper",
+          null,
+        ),
         lastUpdated: now,
       })),
       lastUpdated: now,
@@ -239,7 +422,7 @@ export class QmonPersistenceService {
 
     try {
       const json = await readFile(familyStatePath, "utf-8");
-      familyState = JSON.parse(json) as QmonFamilyState;
+      familyState = this.normalizeFamilyState(JSON.parse(json) as QmonFamilyState);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`Failed to load family state: ${message}`);

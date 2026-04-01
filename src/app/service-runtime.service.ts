@@ -17,12 +17,11 @@ import { HttpServerService } from "../http/http-server.service.ts";
 import logger from "../logger.ts";
 import {
   QmonEngine,
+  QmonLiveExecutionService,
   QmonLiveStatePersistenceService,
   QmonPersistenceService,
   QmonValidationLogService,
 } from "../qmon/index.ts";
-import type { PersistedLiveExecutionState } from "../qmon/index.ts";
-import { QmonLiveExecutionService } from "../qmon/qmon-live-execution.service.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
 import type { RuntimeExecutionStatus } from "./app-runtime.types.ts";
 
@@ -50,6 +49,7 @@ export class ServiceRuntime {
   private readonly qmonLiveExecutionService: QmonLiveExecutionService | null;
   private readonly buffer: Snapshot[];
   private lastPersistAt: number;
+  private snapshotQueue: Promise<void>;
 
   /**
    * @section constructor
@@ -71,6 +71,7 @@ export class ServiceRuntime {
     this.qmonLiveExecutionService = qmonLiveExecutionService;
     this.buffer = [];
     this.lastPersistAt = 0;
+    this.snapshotQueue = Promise.resolve();
   }
 
   /**
@@ -83,24 +84,38 @@ export class ServiceRuntime {
     const qmonPersistence = QmonPersistenceService.createDefault("./data");
     const qmonLiveStatePersistenceService = QmonLiveStatePersistenceService.createDefault("./data");
     const qmonValidationLogService = QmonValidationLogService.createDefault("./data/qmon-diagnostics");
-    await qmonLiveStatePersistenceService.clear();
-    await qmonValidationLogService.clearPersistedState();
-
-    // Try to load existing QMON state
     const existingState = await qmonPersistence.load();
-    const initialFamilyState = existingState !== null ? qmonPersistence.resetCpnlState(existingState) : null;
+    const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
+    const normalizedExistingState =
+      existingState !== null
+        ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_REAL_MARKET_ALLOWLIST, legacyLiveExecutionState)
+        : null;
+    const initialFamilyState =
+      normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_REAL_MARKET_ALLOWLIST) : null;
     const qmonEngine = existingState
       ? new QmonEngine(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, initialFamilyState ?? undefined, signalEngine, undefined, qmonValidationLogService)
       : QmonEngine.createDefault(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, signalEngine, qmonValidationLogService);
 
-    // Initialize populations if needed
     if (!existingState) {
       qmonEngine.initializePopulations();
-      await qmonPersistence.save(qmonEngine.getFamilyState());
       logger.info("QMON populations initialized");
     } else {
-      await qmonPersistence.save(qmonEngine.getFamilyState());
       logger.info("QMON state loaded from persistence with CPnL reset");
+    }
+
+    qmonEngine.applyExecutionRoutes(config.QMON_REAL_MARKET_ALLOWLIST, Date.now());
+
+    if (!existingState && legacyLiveExecutionState !== null) {
+      qmonEngine.setFamilyState(
+        qmonPersistence.normalizeFamilyState(qmonEngine.getFamilyState(), config.QMON_REAL_MARKET_ALLOWLIST, legacyLiveExecutionState),
+      );
+      logger.info("QMON legacy live execution state migrated into family state");
+    }
+
+    await qmonPersistence.save(qmonEngine.getFamilyState());
+
+    if (legacyLiveExecutionState !== null) {
+      await qmonLiveStatePersistenceService.clear();
     }
 
     let qmonLiveExecutionService: QmonLiveExecutionService | null = null;
@@ -115,13 +130,11 @@ export class ServiceRuntime {
         readonly signatureType?: SignatureType;
         readonly maxAllowedSlippage?: number;
         readonly confirmationTimeoutMs: number;
-        readonly persistedState: PersistedLiveExecutionState | null;
         readonly cpnlSessionStartedAt: number | null;
       } = {
         mode: config.QMON_EXECUTION_MODE,
         allowlistedMarkets: config.QMON_REAL_MARKET_ALLOWLIST,
         confirmationTimeoutMs: config.QMON_REAL_CONFIRMATION_TIMEOUT_MS,
-        persistedState: null,
         cpnlSessionStartedAt: qmonValidationLogService.getCpnlSessionStartedAt(),
       };
 
@@ -173,6 +186,12 @@ export class ServiceRuntime {
           isHalted: false,
           hasPendingIntent: false,
           pendingIntentKey: null,
+          pendingIntent: null,
+          orderId: null,
+          submittedAt: null,
+          pendingVenueOrders: [],
+          recoveryStartedAt: null,
+          lastReconciledAt: null,
           hasLivePosition: false,
           livePositionAction: null,
           confirmedLiveSeat: null,
@@ -197,6 +216,21 @@ export class ServiceRuntime {
 
   /** Handle an incoming snapshot from the live feed. */
   private handleSnapshot(snapshot: Snapshot): void {
+    const previousSnapshotQueue = this.snapshotQueue;
+
+    this.snapshotQueue = this.processSnapshot(snapshot, previousSnapshotQueue);
+  }
+
+  /** Process one snapshot after the previous runtime cycle has completed. */
+  private async processSnapshot(snapshot: Snapshot, previousSnapshotQueue: Promise<void>): Promise<void> {
+    try {
+      await previousSnapshotQueue;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      logger.error(`previous snapshot processing failed: ${message}`);
+    }
+
     this.buffer.push(snapshot);
 
     if (this.buffer.length > MAX_BUFFER_SIZE) {
@@ -219,10 +253,14 @@ export class ServiceRuntime {
       this.qmonEngine.evaluateAll(lastStructuredSignals, lastRegimes, this.buffer, {
         realExecutionMarkets: config.QMON_REAL_MARKET_ALLOWLIST,
       });
-      this.qmonLiveExecutionService?.queueSync(this.qmonEngine, lastStructuredSignals);
+
+      if (this.qmonLiveExecutionService !== null) {
+        this.qmonLiveExecutionService.queueSync(this.qmonEngine, lastStructuredSignals);
+        await this.qmonLiveExecutionService.flush();
+      }
     }
 
-    void this.persistFamilyState(shouldPersist);
+    await this.persistFamilyState(shouldPersist);
   }
 
   /** Persist family state when a snapshot changed QMON runtime state or on periodic checkpoints. */

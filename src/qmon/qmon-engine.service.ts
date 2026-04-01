@@ -28,6 +28,8 @@ import type {
   PendingOrderAction,
   Qmon,
   QmonDecision,
+  QmonExecutionRoute,
+  QmonExecutionRuntime,
   QmonFamilyState,
   QmonGenome,
   QmonId,
@@ -299,6 +301,91 @@ export class QmonEngine {
   }
 
   /**
+   * Create the canonical execution runtime block stored per market.
+   */
+  private createDefaultExecutionRuntime(route: QmonExecutionRoute): QmonExecutionRuntime {
+    let executionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: "paper",
+      pendingIntent: null,
+      orderId: null,
+      submittedAt: null,
+      confirmedVenueSeat: null,
+      pendingVenueOrders: [],
+      recoveryStartedAt: null,
+      lastReconciledAt: null,
+      lastError: null,
+      isHalted: false,
+    };
+
+    if (route === "real") {
+      executionRuntime = {
+        ...executionRuntime,
+        executionState: "real-armed",
+      };
+    }
+
+    return executionRuntime;
+  }
+
+  /**
+   * Derive the public execution state from the canonical runtime block.
+   */
+  private resolveExecutionRuntimeState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
+    let executionState: QmonExecutionRuntime["executionState"] = "paper";
+
+    if (executionRuntime.route === "real") {
+      executionState = "real-armed";
+
+      if (executionRuntime.isHalted) {
+        executionState = executionRuntime.recoveryStartedAt !== null ? "real-recovery-required" : "real-halted";
+      } else if (executionRuntime.pendingIntent?.kind === "entry") {
+        executionState = "real-pending-entry";
+      } else if (executionRuntime.pendingIntent?.kind === "exit") {
+        executionState = "real-pending-exit";
+      } else if (executionRuntime.confirmedVenueSeat !== null) {
+        executionState = "real-open";
+      } else if (executionRuntime.lastError !== null) {
+        executionState = "real-error";
+      }
+    }
+
+    return executionState;
+  }
+
+  /**
+   * Keep each population aligned with the canonical execution runtime model.
+   */
+  private normalizePopulationExecutionRuntime(
+    population: QmonPopulation,
+    routeOverride?: QmonExecutionRoute,
+  ): QmonPopulation {
+    const route = routeOverride ?? population.executionRuntime?.route ?? "paper";
+    const currentExecutionRuntime = population.executionRuntime ?? this.createDefaultExecutionRuntime(route);
+    const normalizedExecutionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: currentExecutionRuntime.executionState,
+      pendingIntent: route === "real" ? population.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      orderId: route === "real" ? currentExecutionRuntime.orderId : null,
+      submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
+      confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
+      pendingVenueOrders: route === "real" ? currentExecutionRuntime.pendingVenueOrders : [],
+      recoveryStartedAt: route === "real" ? currentExecutionRuntime.recoveryStartedAt : null,
+      lastReconciledAt: route === "real" ? currentExecutionRuntime.lastReconciledAt : null,
+      lastError: route === "real" ? currentExecutionRuntime.lastError : null,
+      isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
+    };
+
+    return {
+      ...population,
+      executionRuntime: {
+        ...normalizedExecutionRuntime,
+        executionState: this.resolveExecutionRuntimeState(normalizedExecutionRuntime),
+      },
+    };
+  }
+
+  /**
    * Reset per-tick mutation tracking and exchange-weight caches.
    */
   private resetEvaluationCaches(): void {
@@ -311,12 +398,15 @@ export class QmonEngine {
    * Replace one population in family state.
    */
   private replacePopulation(updatedPopulation: QmonPopulation): void {
-    const nextPopulations = this.familyState.populations.map((population) => (population.market === updatedPopulation.market ? updatedPopulation : population));
+    const normalizedPopulation = this.normalizePopulationExecutionRuntime(updatedPopulation);
+    const nextPopulations = this.familyState.populations.map((population) =>
+      population.market === normalizedPopulation.market ? normalizedPopulation : population,
+    );
 
     this.familyState = {
       ...this.familyState,
       populations: nextPopulations,
-      lastUpdated: updatedPopulation.lastUpdated,
+      lastUpdated: normalizedPopulation.lastUpdated,
     };
   }
 
@@ -551,6 +641,7 @@ export class QmonEngine {
       seatLastCloseTimestamp: null,
       seatLastWindowStartMs: null,
       seatLastSettledWindowStartMs: null,
+      executionRuntime: this.createDefaultExecutionRuntime("paper"),
     };
   }
 
@@ -573,6 +664,7 @@ export class QmonEngine {
           seatLastCloseTimestamp: null,
           seatLastWindowStartMs: null,
           seatLastSettledWindowStartMs: null,
+          executionRuntime: this.createDefaultExecutionRuntime("paper"),
         },
       ],
       globalGeneration: this.familyState.globalGeneration,
@@ -2400,10 +2492,45 @@ export class QmonEngine {
   }
 
   /**
+   * Apply route ownership for markets that should execute in real mode.
+   */
+  public applyExecutionRoutes(realExecutionMarkets: readonly MarketKey[], timestamp: number): void {
+    this.familyState = {
+      ...this.familyState,
+      populations: this.familyState.populations.map((population) =>
+        this.normalizePopulationExecutionRuntime(population, realExecutionMarkets.includes(population.market) ? "real" : "paper"),
+      ),
+      lastUpdated: timestamp,
+    };
+    this.markStateMutation(true);
+  }
+
+  /**
    * Get population for a specific market.
    */
   public getPopulation(market: MarketKey): QmonPopulation | null {
     return this.familyState.populations.find((p) => p.market === market) ?? null;
+  }
+
+  /**
+   * Persist the canonical real-execution runtime for one market.
+   */
+  public setRealExecutionRuntime(market: MarketKey, executionRuntime: QmonExecutionRuntime, timestamp: number): void {
+    const population = this.getPopulation(market);
+
+    if (population === null) {
+      return;
+    }
+
+    this.markStateMutation(true);
+    this.replacePopulation({
+      ...population,
+      executionRuntime: {
+        ...executionRuntime,
+        executionState: this.resolveExecutionRuntimeState(executionRuntime),
+      },
+      lastUpdated: timestamp,
+    });
   }
 
   /**
@@ -3129,7 +3256,7 @@ export class QmonEngine {
     this.familyState = {
       ...state,
       populations: state.populations.map((population) => ({
-        ...population,
+        ...this.normalizePopulationExecutionRuntime(population),
         qmons: population.qmons.map((qmon) => this.refreshQmonMetrics(qmon)),
       })),
     };

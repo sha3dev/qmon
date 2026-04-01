@@ -4,7 +4,13 @@
 
 import { MarketCatalogService, OrderService } from "@sha3/polymarket";
 import polymarketConfig from "@sha3/polymarket/dist/config.js";
-import type { CryptoMarketWindow, CryptoSymbol, PolymarketMarket, PostedOrderWithStatus } from "@sha3/polymarket";
+import type {
+  CryptoMarketWindow,
+  CryptoSymbol,
+  PendingConfirmationOrder,
+  PolymarketMarket,
+  PostedOrderWithStatus,
+} from "@sha3/polymarket";
 import type { SignatureType } from "@polymarket/order-utils";
 
 /**
@@ -17,16 +23,22 @@ import type {
   ConfirmedLiveSeatSummary,
   ExecutionMode,
   MarketExecutionRoute,
-  MarketExecutionState,
   RuntimeExecutionStatus,
 } from "../app/app-runtime.types.ts";
-import type { StructuredSignalResult } from "../signal/signal.types.ts";
 import config from "../config.ts";
-import type { MarketKey, QmonPendingOrder, QmonPopulation, TradingAction } from "./qmon.types.ts";
+import type { StructuredSignalResult } from "../signal/signal.types.ts";
+import type {
+  MarketKey,
+  QmonConfirmedVenueSeat,
+  QmonExecutionRuntime,
+  QmonPendingOrder,
+  QmonPendingVenueOrderSnapshot,
+  QmonPopulation,
+} from "./qmon.types.ts";
 import type { QmonEngine } from "./qmon-engine.service.ts";
 import { QmonLiveStatePersistenceService } from "./qmon-live-state-persistence.service.ts";
-import type { PersistedLiveExecutionState, PersistedLiveSeatState } from "./qmon-live-state-persistence.service.ts";
 import type { QmonValidationLogService } from "./qmon-validation-log.service.ts";
+import type { PersistedLiveExecutionState } from "./qmon-live-state-persistence.service.ts";
 
 /**
  * @section consts
@@ -34,11 +46,7 @@ import type { QmonValidationLogService } from "./qmon-validation-log.service.ts"
 
 const BALANCE_ERROR_PATTERNS = ["balance", "allowance", "insufficient"];
 const EMPTY_ALLOWLIST: readonly MarketKey[] = [];
-const MAX_ATTEMPTS_PER_5M = 3;
-const MAX_FAILURES_PER_15M = 5;
-const FIVE_MINUTES_MS = 5 * 60_000;
-const FIFTEEN_MINUTES_MS = 15 * 60_000;
-const REAL_ACTIVITY_EVENT_TYPES = new Set(["live-order-posted", "live-order-confirmed"]);
+const REAL_ACTIVITY_EVENT_TYPES = new Set(["live-order-posted", "live-order-confirmed", "live-order-cancelled"]);
 const REAL_ACTIVITY_WARNING_CODES = new Set([
   "live-order-expired",
   "live-order-failed",
@@ -62,28 +70,6 @@ type LiveMarketCache = {
   readonly windowStartMs: number | null;
 };
 
-type LivePositionState = {
-  readonly action: TradingAction;
-  readonly shareCount: number;
-  readonly entryPrice: number | null;
-  readonly enteredAt: number;
-};
-
-type LiveMarketRouteState = "armed" | "halted" | "recovery-required";
-
-type LiveMarketState = {
-  readonly routeState: LiveMarketRouteState;
-  readonly executionState: MarketExecutionState;
-  readonly isHalted: boolean;
-  readonly pendingIntentKey: string | null;
-  readonly submittedAt: number | null;
-  readonly orderId: string | null;
-  readonly livePosition: LivePositionState | null;
-  readonly attemptTimestamps: readonly number[];
-  readonly failureTimestamps: readonly number[];
-  readonly lastError: string | null;
-};
-
 type InitializeLiveExecutionOptions = {
   readonly mode: ExecutionMode;
   readonly allowlistedMarkets: readonly MarketKey[];
@@ -92,7 +78,7 @@ type InitializeLiveExecutionOptions = {
   readonly signatureType?: SignatureType;
   readonly maxAllowedSlippage?: number;
   readonly confirmationTimeoutMs: number;
-  readonly persistedState: PersistedLiveExecutionState | null;
+  readonly persistedState?: PersistedLiveExecutionState | null;
   readonly cpnlSessionStartedAt: number | null;
 };
 
@@ -121,7 +107,6 @@ export class QmonLiveExecutionService {
   private cpnlSessionStartedAt: number | null;
   private balanceSnapshot: LiveBalanceSnapshot;
   private readonly liveMarketCacheByMarket: Map<MarketKey, LiveMarketCache>;
-  private readonly liveMarketStateByMarket: Map<MarketKey, LiveMarketState>;
   private isInitialized: boolean;
   private syncQueue: Promise<void>;
 
@@ -149,7 +134,6 @@ export class QmonLiveExecutionService {
       balanceUpdatedAt: null,
     };
     this.liveMarketCacheByMarket = new Map();
-    this.liveMarketStateByMarket = new Map();
     this.isInitialized = false;
     this.syncQueue = Promise.resolve();
   }
@@ -164,7 +148,6 @@ export class QmonLiveExecutionService {
     this.confirmationTimeoutMs = options.confirmationTimeoutMs;
     this.cpnlSessionStartedAt = options.cpnlSessionStartedAt;
     this.applyPolymarketSafetyConfig();
-    this.restorePersistedMarketState(options.persistedState);
 
     if (options.mode === "real") {
       if (!options.privateKey) {
@@ -201,22 +184,13 @@ export class QmonLiveExecutionService {
       await this.orderService.init(initOptions);
       this.isInitialized = true;
       await this.refreshBalanceSnapshot();
-      await this.persistLiveState();
     }
-  }
-
-  /**
-   * Apply local venue safety overrides before the order service starts trading.
-   */
-  private applyPolymarketSafetyConfig(): void {
-    const mutablePolymarketConfig = polymarketConfig as { SAFE_MAX_BUY_AMOUNT: number };
-
-    mutablePolymarketConfig.SAFE_MAX_BUY_AMOUNT = config.POLYMARKET_SAFE_MAX_BUY_AMOUNT;
   }
 
   public queueSync(qmonEngine: QmonEngine, latestSignals: StructuredSignalResult | null): void {
     if (this.mode === "real" && this.isInitialized && latestSignals !== null) {
       const previousSyncQueue = this.syncQueue;
+
       this.syncQueue = this.runSync(qmonEngine, latestSignals, previousSyncQueue);
     }
   }
@@ -229,21 +203,27 @@ export class QmonLiveExecutionService {
     const marketRoutes: MarketExecutionRoute[] = [];
 
     for (const population of populations) {
-      const market = population.market;
-      const liveMarketState = this.getMarketState(market);
-      const hasRealRouting = this.mode === "real" && this.allowlistedMarkets.includes(market);
-      const confirmedLiveSeat = hasRealRouting ? this.buildConfirmedLiveSeatSummary(liveMarketState.livePosition) : null;
+      const hasRealRouting = this.mode === "real" && this.allowlistedMarkets.includes(population.market);
+      const executionRuntime = this.getExecutionRuntime(population, hasRealRouting ? "real" : "paper");
+      const confirmedLiveSeat = hasRealRouting ? this.buildConfirmedLiveSeatSummary(executionRuntime.confirmedVenueSeat) : null;
+      const pendingIntentKey = hasRealRouting && executionRuntime.pendingIntent !== null ? this.buildPendingIntentKey(executionRuntime.pendingIntent) : null;
       const marketExecutionRoute: MarketExecutionRoute = {
-        market,
+        market: population.market,
         route: hasRealRouting ? "real" : "paper",
-        executionState: hasRealRouting ? liveMarketState.executionState : "paper",
-        isHalted: hasRealRouting ? liveMarketState.isHalted : false,
-        hasPendingIntent: hasRealRouting ? liveMarketState.pendingIntentKey !== null : false,
-        pendingIntentKey: hasRealRouting ? liveMarketState.pendingIntentKey : null,
+        executionState: hasRealRouting ? executionRuntime.executionState : "paper",
+        isHalted: hasRealRouting ? executionRuntime.isHalted : false,
+        hasPendingIntent: hasRealRouting ? executionRuntime.pendingIntent !== null : false,
+        pendingIntentKey,
+        pendingIntent: hasRealRouting ? executionRuntime.pendingIntent : null,
+        orderId: hasRealRouting ? executionRuntime.orderId : null,
+        submittedAt: hasRealRouting ? executionRuntime.submittedAt : null,
+        pendingVenueOrders: hasRealRouting ? executionRuntime.pendingVenueOrders : [],
+        recoveryStartedAt: hasRealRouting ? executionRuntime.recoveryStartedAt : null,
+        lastReconciledAt: hasRealRouting ? executionRuntime.lastReconciledAt : null,
         hasLivePosition: confirmedLiveSeat !== null,
         livePositionAction: confirmedLiveSeat?.action ?? null,
         confirmedLiveSeat,
-        lastError: hasRealRouting ? liveMarketState.lastError : null,
+        lastError: hasRealRouting ? executionRuntime.lastError : null,
       };
 
       marketRoutes.push(marketExecutionRoute);
@@ -264,155 +244,128 @@ export class QmonLiveExecutionService {
    * @section private:methods
    */
 
-  private createDefaultMarketState(): LiveMarketState {
-    const liveMarketState: LiveMarketState = {
-      routeState: "armed",
-      executionState: "real-armed",
-      isHalted: false,
-      pendingIntentKey: null,
-      submittedAt: null,
+  private applyPolymarketSafetyConfig(): void {
+    const mutablePolymarketConfig = polymarketConfig as { SAFE_MAX_BUY_AMOUNT: number };
+
+    mutablePolymarketConfig.SAFE_MAX_BUY_AMOUNT = config.POLYMARKET_SAFE_MAX_BUY_AMOUNT;
+  }
+
+  private createDefaultExecutionRuntime(route: "paper" | "real"): QmonExecutionRuntime {
+    let executionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: "paper",
+      pendingIntent: null,
       orderId: null,
-      livePosition: null,
-      attemptTimestamps: [],
-      failureTimestamps: [],
+      submittedAt: null,
+      confirmedVenueSeat: null,
+      pendingVenueOrders: [],
+      recoveryStartedAt: null,
+      lastReconciledAt: null,
       lastError: null,
+      isHalted: false,
     };
 
-    return liveMarketState;
-  }
-
-  private getMarketState(market: MarketKey): LiveMarketState {
-    const currentMarketState = this.liveMarketStateByMarket.get(market) ?? null;
-    const liveMarketState = currentMarketState ?? this.createDefaultMarketState();
-
-    if (currentMarketState === null) {
-      this.liveMarketStateByMarket.set(market, liveMarketState);
+    if (route === "real") {
+      executionRuntime = {
+        ...executionRuntime,
+        executionState: "real-armed",
+      };
     }
 
-    return liveMarketState;
+    return executionRuntime;
   }
 
-  private async setMarketState(
+  private resolveExecutionState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
+    let executionState: QmonExecutionRuntime["executionState"] = "paper";
+
+    if (executionRuntime.route === "real") {
+      executionState = "real-armed";
+
+      if (executionRuntime.isHalted) {
+        executionState = executionRuntime.recoveryStartedAt !== null ? "real-recovery-required" : "real-halted";
+      } else if (executionRuntime.pendingIntent?.kind === "entry") {
+        executionState = "real-pending-entry";
+      } else if (executionRuntime.pendingIntent?.kind === "exit") {
+        executionState = "real-pending-exit";
+      } else if (executionRuntime.confirmedVenueSeat !== null) {
+        executionState = "real-open";
+      } else if (executionRuntime.lastError !== null) {
+        executionState = "real-error";
+      }
+    }
+
+    return executionState;
+  }
+
+  private getExecutionRuntime(population: QmonPopulation | null, route: "paper" | "real"): QmonExecutionRuntime {
+    const currentExecutionRuntime = population?.executionRuntime ?? this.createDefaultExecutionRuntime(route);
+    const nextExecutionRuntime: QmonExecutionRuntime = {
+      route,
+      executionState: currentExecutionRuntime.executionState,
+      pendingIntent: route === "real" ? population?.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      orderId: route === "real" ? currentExecutionRuntime.orderId : null,
+      submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
+      confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
+      pendingVenueOrders: route === "real" ? currentExecutionRuntime.pendingVenueOrders : [],
+      recoveryStartedAt: route === "real" ? currentExecutionRuntime.recoveryStartedAt : null,
+      lastReconciledAt: route === "real" ? currentExecutionRuntime.lastReconciledAt : null,
+      lastError: route === "real" ? currentExecutionRuntime.lastError : null,
+      isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
+    };
+
+    return {
+      ...nextExecutionRuntime,
+      executionState: this.resolveExecutionState(nextExecutionRuntime),
+    };
+  }
+
+  private async updateExecutionRuntime(
+    qmonEngine: QmonEngine,
     market: MarketKey,
-    nextMarketState: LiveMarketState,
-    shouldPersist = true,
-  ): Promise<void> {
-    this.liveMarketStateByMarket.set(market, nextMarketState);
+    overrides: Partial<QmonExecutionRuntime>,
+    timestamp: number,
+  ): Promise<QmonExecutionRuntime> {
+    const population = qmonEngine.getPopulation(market);
+    const currentExecutionRuntime = this.getExecutionRuntime(population, "real");
+    const nextExecutionRuntime: QmonExecutionRuntime = {
+      ...currentExecutionRuntime,
+      ...overrides,
+      route: "real",
+    };
 
-    if (shouldPersist) {
-      await this.persistLiveState();
-    }
+    qmonEngine.setRealExecutionRuntime(
+      market,
+      {
+        ...nextExecutionRuntime,
+        executionState: this.resolveExecutionState(nextExecutionRuntime),
+      },
+      timestamp,
+    );
+
+    return this.getExecutionRuntime(qmonEngine.getPopulation(market), "real");
   }
 
-  private buildConfirmedLiveSeatSummary(livePosition: LivePositionState | null): ConfirmedLiveSeatSummary | null {
+  private buildConfirmedLiveSeatSummary(confirmedVenueSeat: QmonConfirmedVenueSeat | null): ConfirmedLiveSeatSummary | null {
     let confirmedLiveSeatSummary: ConfirmedLiveSeatSummary | null = null;
 
-    if (livePosition !== null) {
+    if (confirmedVenueSeat !== null) {
       confirmedLiveSeatSummary = {
-        action: livePosition.action,
-        shareCount: livePosition.shareCount,
-        entryPrice: livePosition.entryPrice,
-        enteredAt: livePosition.enteredAt,
+        action: confirmedVenueSeat.action,
+        shareCount: confirmedVenueSeat.shareCount,
+        entryPrice: confirmedVenueSeat.entryPrice,
+        enteredAt: confirmedVenueSeat.enteredAt,
       };
     }
 
     return confirmedLiveSeatSummary;
   }
 
-  private buildPersistedLiveSeat(livePosition: LivePositionState | null): PersistedLiveSeatState | null {
-    let persistedLiveSeat: PersistedLiveSeatState | null = null;
-
-    if (livePosition !== null) {
-      persistedLiveSeat = {
-        action: livePosition.action,
-        shareCount: livePosition.shareCount,
-        entryPrice: livePosition.entryPrice,
-        enteredAt: livePosition.enteredAt,
-      };
-    }
-
-    return persistedLiveSeat;
-  }
-
-  private buildPendingIntentKey(pendingOrder: QmonPendingOrder): string {
-    const pendingIntentKey = [
-      pendingOrder.market,
-      pendingOrder.kind,
-      pendingOrder.action,
-      pendingOrder.createdAt,
-      pendingOrder.requestedShares.toFixed(6),
-      pendingOrder.limitPrice.toFixed(6),
-    ].join(":");
-
-    return pendingIntentKey;
-  }
-
-  private restorePersistedMarketState(persistedState: PersistedLiveExecutionState | null): void {
-    if (persistedState !== null) {
-      for (const persistedMarketState of persistedState.markets) {
-        const routeState = persistedMarketState.routeState;
-        const livePosition = persistedMarketState.confirmedLiveSeat;
-        const restoredMarketState: LiveMarketState = {
-          routeState,
-          executionState:
-            routeState === "halted"
-              ? "real-halted"
-              : routeState === "recovery-required"
-                ? "real-recovery-required"
-                : livePosition !== null
-                  ? "real-open"
-                  : "real-armed",
-          isHalted: routeState !== "armed",
-          pendingIntentKey: persistedMarketState.pendingIntentKey,
-          submittedAt: persistedMarketState.submittedAt,
-          orderId: persistedMarketState.orderId,
-          livePosition:
-            livePosition !== null
-              ? {
-                  action: livePosition.action,
-                  shareCount: livePosition.shareCount,
-                  entryPrice: livePosition.entryPrice,
-                  enteredAt: livePosition.enteredAt,
-                }
-              : null,
-          attemptTimestamps: [],
-          failureTimestamps: [],
-          lastError: persistedMarketState.lastError,
-        };
-
-        this.liveMarketStateByMarket.set(persistedMarketState.market, restoredMarketState);
-      }
-    }
-  }
-
-  private buildPersistedState(): PersistedLiveExecutionState {
-    const markets = [...this.liveMarketStateByMarket.entries()].map(([market, liveMarketState]) => ({
-      market,
-      routeState: liveMarketState.routeState,
-      pendingIntentKey: liveMarketState.pendingIntentKey,
-      submittedAt: liveMarketState.submittedAt,
-      orderId: liveMarketState.orderId,
-      confirmedLiveSeat: this.buildPersistedLiveSeat(liveMarketState.livePosition),
-      lastError: liveMarketState.lastError,
-    }));
-    const persistedLiveExecutionState: PersistedLiveExecutionState = {
-      updatedAt: Date.now(),
-      markets,
-    };
-
-    return persistedLiveExecutionState;
-  }
-
-  private async persistLiveState(): Promise<void> {
-    await this.liveStatePersistenceService.save(this.buildPersistedState());
-  }
-
-  private createLivePositionStateFromPopulation(population: QmonPopulation | null): LivePositionState | null {
+  private createConfirmedVenueSeatFromPopulation(population: QmonPopulation | null): QmonConfirmedVenueSeat | null {
     const seatPosition = population?.seatPosition ?? null;
-    let livePosition: LivePositionState | null = null;
+    let confirmedVenueSeat: QmonConfirmedVenueSeat | null = null;
 
     if (seatPosition !== null && seatPosition.action !== null && seatPosition.shareCount !== null && seatPosition.enteredAt !== null) {
-      livePosition = {
+      confirmedVenueSeat = {
         action: seatPosition.action,
         shareCount: seatPosition.shareCount,
         entryPrice: seatPosition.entryPrice,
@@ -420,155 +373,29 @@ export class QmonLiveExecutionService {
       };
     }
 
-    return livePosition;
+    return confirmedVenueSeat;
   }
 
-  private resolveExecutionState(
-    routeState: LiveMarketRouteState,
-    population: QmonPopulation | null,
-    livePosition: LivePositionState | null,
-    lastError: string | null,
-  ): MarketExecutionState {
-    let executionState: MarketExecutionState = "real-armed";
-
-    if (routeState === "halted") {
-      executionState = "real-halted";
-    } else if (routeState === "recovery-required") {
-      executionState = "real-recovery-required";
-    } else if (population?.seatPendingOrder?.kind === "entry") {
-      executionState = "real-pending-entry";
-    } else if (population?.seatPendingOrder?.kind === "exit") {
-      executionState = "real-pending-exit";
-    } else if (livePosition !== null) {
-      executionState = "real-open";
-    } else if (lastError !== null) {
-      executionState = "real-error";
-    }
-
-    return executionState;
+  private buildPendingIntentKey(pendingOrder: QmonPendingOrder): string {
+    return [
+      pendingOrder.market,
+      pendingOrder.kind,
+      pendingOrder.action,
+      pendingOrder.createdAt,
+      pendingOrder.requestedShares.toFixed(6),
+      pendingOrder.limitPrice.toFixed(6),
+    ].join(":");
   }
 
-  private async setMarketStateFromPopulation(population: QmonPopulation | null, lastError: string | null, marketKey?: MarketKey): Promise<void> {
-    const resolvedMarketKey = population?.market ?? marketKey ?? null;
-
-    if (resolvedMarketKey !== null) {
-      const currentMarketState = this.getMarketState(resolvedMarketKey);
-      const hasPendingOrder = population?.seatPendingOrder !== null && population?.seatPendingOrder !== undefined;
-      const routeState = currentMarketState.routeState;
-      const shouldPreserveRecoveryIntent = routeState === "recovery-required";
-      const nextMarketState: LiveMarketState = {
-        ...currentMarketState,
-        routeState,
-        isHalted: routeState !== "armed",
-        pendingIntentKey: hasPendingOrder || shouldPreserveRecoveryIntent ? currentMarketState.pendingIntentKey : null,
-        submittedAt: hasPendingOrder || shouldPreserveRecoveryIntent ? currentMarketState.submittedAt : null,
-        orderId: hasPendingOrder || shouldPreserveRecoveryIntent ? currentMarketState.orderId : null,
-        livePosition: currentMarketState.livePosition,
-        lastError,
-        executionState: this.resolveExecutionState(routeState, population, currentMarketState.livePosition, lastError),
-      };
-
-      await this.setMarketState(resolvedMarketKey, nextMarketState);
-    }
-  }
-
-  private pruneTimestamps(timestamps: readonly number[], windowMs: number, now: number): readonly number[] {
-    const prunedTimestamps = timestamps.filter((timestamp) => now - timestamp <= windowMs);
-
-    return prunedTimestamps;
-  }
-
-  private async recordAttempt(market: MarketKey): Promise<LiveMarketState> {
-    const currentMarketState = this.getMarketState(market);
-    const now = Date.now();
-    const nextAttemptTimestamps = [...this.pruneTimestamps(currentMarketState.attemptTimestamps, FIVE_MINUTES_MS, now), now];
-    const nextMarketState: LiveMarketState = {
-      ...currentMarketState,
-      attemptTimestamps: nextAttemptTimestamps,
-    };
-
-    await this.setMarketState(market, nextMarketState);
-
-    return nextMarketState;
-  }
-
-  private async recordFailure(market: MarketKey): Promise<LiveMarketState> {
-    const currentMarketState = this.getMarketState(market);
-    const now = Date.now();
-    const nextFailureTimestamps = [...this.pruneTimestamps(currentMarketState.failureTimestamps, FIFTEEN_MINUTES_MS, now), now];
-    const nextMarketState: LiveMarketState = {
-      ...currentMarketState,
-      failureTimestamps: nextFailureTimestamps,
-    };
-
-    await this.setMarketState(market, nextMarketState);
-
-    return nextMarketState;
-  }
-
-  private shouldHaltForAttemptRate(marketState: LiveMarketState): boolean {
-    const isAttemptRateExceeded = marketState.attemptTimestamps.length >= MAX_ATTEMPTS_PER_5M;
-
-    return isAttemptRateExceeded;
-  }
-
-  private shouldHaltForFailureRate(marketState: LiveMarketState): boolean {
-    const isFailureRateExceeded = marketState.failureTimestamps.length >= MAX_FAILURES_PER_15M;
-
-    return isFailureRateExceeded;
-  }
-
-  private async haltMarket(qmonEngine: QmonEngine, market: MarketKey, reason: string): Promise<void> {
-    const currentMarketState = this.getMarketState(market);
-
-    qmonEngine.clearRealSeatPendingOrder(market, Date.now());
-    const population = qmonEngine.getPopulation(market);
-    const haltedMarketState: LiveMarketState = {
-      ...currentMarketState,
-      routeState: "halted",
-      executionState: "real-halted",
-      isHalted: true,
-      pendingIntentKey: null,
-      submittedAt: null,
-      orderId: null,
-      livePosition: this.createLivePositionStateFromPopulation(population) ?? currentMarketState.livePosition,
-      lastError: reason,
-    };
-
-    await this.setMarketState(market, haltedMarketState);
-    this.logLiveWarning(market, "live-routing-halted", reason);
-  }
-
-  private async enterRecoveryMarket(qmonEngine: QmonEngine, market: MarketKey, reason: string, orderId: string): Promise<void> {
-    const currentMarketState = this.getMarketState(market);
-
-    qmonEngine.clearRealSeatPendingOrder(market, Date.now());
-    const recoveryMarketState: LiveMarketState = {
-      ...currentMarketState,
-      routeState: "recovery-required",
-      executionState: "real-recovery-required",
-      isHalted: true,
-      pendingIntentKey: currentMarketState.pendingIntentKey,
-      submittedAt: currentMarketState.submittedAt,
-      orderId,
-      livePosition: currentMarketState.livePosition,
-      lastError: reason,
-    };
-
-    await this.setMarketState(market, recoveryMarketState);
-    this.logLiveWarning(market, "live-recovery-required", reason);
-  }
-
-  private hasLiveSeatDivergence(population: QmonPopulation, liveMarketState: LiveMarketState): boolean {
+  private hasLiveSeatDivergence(population: QmonPopulation, executionRuntime: QmonExecutionRuntime): boolean {
     const localSeatAction = population.seatPosition.action;
-    const confirmedLiveAction = liveMarketState.livePosition?.action ?? null;
+    const confirmedLiveAction = executionRuntime.confirmedVenueSeat?.action ?? null;
     const hasConfirmedLiveAction = confirmedLiveAction !== null;
     const hasActionMismatch = hasConfirmedLiveAction && localSeatAction !== confirmedLiveAction;
-    const hasUnexpectedEntryIntent = liveMarketState.livePosition !== null && population.seatPendingOrder?.kind === "entry";
-    const hasUnexpectedExitIntent = liveMarketState.livePosition === null && population.seatPendingOrder?.kind === "exit";
-    const hasLiveSeatDivergence = hasActionMismatch || hasUnexpectedEntryIntent || hasUnexpectedExitIntent;
+    const hasUnexpectedEntryIntent = executionRuntime.confirmedVenueSeat !== null && population.seatPendingOrder?.kind === "entry";
+    const hasUnexpectedExitIntent = executionRuntime.confirmedVenueSeat === null && population.seatPendingOrder?.kind === "exit";
 
-    return hasLiveSeatDivergence;
+    return hasActionMismatch || hasUnexpectedEntryIntent || hasUnexpectedExitIntent;
   }
 
   private async runSync(
@@ -580,60 +407,186 @@ export class QmonLiveExecutionService {
       await previousSyncQueue;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
+
       this.logLiveWarning("system", "live-sync-queue-failed", message);
     }
+
+    const pendingVenueOrders = await this.listActiveOrdersPendingConfirmation();
 
     for (const market of this.allowlistedMarkets) {
       const population = qmonEngine.getPopulation(market);
 
       if (population !== null) {
-        await this.syncMarket(qmonEngine, population, latestSignals);
+        await this.syncMarket(qmonEngine, population, latestSignals, pendingVenueOrders);
       }
     }
   }
 
-  private async syncMarket(qmonEngine: QmonEngine, population: QmonPopulation, latestSignals: StructuredSignalResult): Promise<void> {
-    const currentMarketState = this.getMarketState(population.market);
+  private async syncMarket(
+    qmonEngine: QmonEngine,
+    population: QmonPopulation,
+    latestSignals: StructuredSignalResult,
+    pendingVenueOrders: readonly PendingConfirmationOrder[],
+  ): Promise<void> {
+    const now = Date.now();
+    let currentPopulation = qmonEngine.getPopulation(population.market) ?? population;
+    let executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {}, now);
+    let liveMarket: PolymarketMarket | null = null;
 
-    await this.setMarketStateFromPopulation(population, currentMarketState.lastError);
-
-    if (this.hasLiveSeatDivergence(population, currentMarketState)) {
-      this.logLiveExecutionEvent("live-sync-skip", population.market, "skip reason=seat-divergence");
-      await this.haltMarket(qmonEngine, population.market, "live seat divergence detected between confirmed venue state and local seat state");
-      return;
+    if (executionRuntime.pendingIntent !== null || executionRuntime.orderId !== null) {
+      liveMarket = await this.resolveLiveMarket(population.market, latestSignals);
     }
 
-    if (currentMarketState.routeState !== "armed") {
-      this.logLiveExecutionEvent("live-sync-skip", population.market, `skip reason=route-state:${currentMarketState.routeState}`);
-      return;
-    }
+    const marketPendingVenueOrders = this.filterPendingVenueOrdersForMarket(
+      pendingVenueOrders,
+      executionRuntime.orderId,
+      liveMarket?.slug ?? null,
+    );
 
-    if (population.seatPendingOrder === null) {
-      this.logLiveExecutionEvent("live-sync-skip", population.market, "skip reason=no-pending-order");
-      return;
-    }
+    executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
+      pendingVenueOrders: marketPendingVenueOrders,
+      lastReconciledAt: now,
+    }, now);
+    executionRuntime = await this.reconcileTrackedOrder(qmonEngine, population.market, executionRuntime, marketPendingVenueOrders);
+    currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
 
-    if (this.hasPendingOrderExpired(population.seatPendingOrder)) {
-      this.logLiveExecutionEvent("live-sync-skip", population.market, "skip reason=pending-order-expired");
+    if (this.hasLiveSeatDivergence(currentPopulation, executionRuntime)) {
       qmonEngine.clearRealSeatPendingOrder(population.market, Date.now());
-      await this.setMarketStateFromPopulation(qmonEngine.getPopulation(population.market), "live-order-expired");
+      executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
+        isHalted: true,
+        recoveryStartedAt: null,
+        lastError: "live seat divergence detected between venue state and local seat ledger",
+      }, Date.now());
+      this.logLiveWarning(population.market, "live-routing-halted", executionRuntime.lastError ?? "live seat divergence");
+      return;
+    }
+
+    if (executionRuntime.isHalted) {
+      return;
+    }
+
+    if (currentPopulation.seatPendingOrder === null) {
+      if (executionRuntime.pendingIntent !== null && executionRuntime.orderId === null) {
+        await this.updateExecutionRuntime(qmonEngine, population.market, {
+          pendingIntent: null,
+        }, Date.now());
+      }
+
+      return;
+    }
+
+    if (this.hasPendingOrderExpired(currentPopulation.seatPendingOrder)) {
+      qmonEngine.clearRealSeatPendingOrder(population.market, Date.now());
+      await this.updateExecutionRuntime(qmonEngine, population.market, {
+        pendingIntent: null,
+        lastError: "live-order-expired",
+      }, Date.now());
       this.logLiveWarning(population.market, "live-order-expired", "real seat order expired before live execution");
       return;
     }
 
-    const liveMarket = await this.resolveLiveMarket(population.market, latestSignals);
-
-    if (liveMarket === null) {
-      this.logLiveExecutionEvent("live-sync-skip", population.market, "skip reason=market-resolution-failed");
+    if (executionRuntime.orderId !== null || executionRuntime.pendingVenueOrders.length > 0) {
       return;
     }
 
-    this.logLiveExecutionEvent(
-      "live-sync-attempt",
-      population.market,
-      `attempt kind=${population.seatPendingOrder.kind} action=${population.seatPendingOrder.action} shares=${population.seatPendingOrder.requestedShares.toFixed(4)} price=${population.seatPendingOrder.limitPrice.toFixed(4)}`,
-    );
-    await this.processPendingSeatOrder(qmonEngine, population, population.seatPendingOrder, liveMarket);
+    if (liveMarket === null) {
+      liveMarket = await this.resolveLiveMarket(population.market, latestSignals);
+    }
+
+    if (liveMarket === null) {
+      await this.updateExecutionRuntime(qmonEngine, population.market, {
+        lastError: "live-market-resolution-failed",
+      }, Date.now());
+      return;
+    }
+
+    await this.updateExecutionRuntime(qmonEngine, population.market, {
+      pendingIntent: currentPopulation.seatPendingOrder,
+      isHalted: false,
+      recoveryStartedAt: null,
+      lastError: null,
+    }, Date.now());
+    await this.processPendingSeatOrder(qmonEngine, currentPopulation, currentPopulation.seatPendingOrder, liveMarket);
+  }
+
+  private async reconcileTrackedOrder(
+    qmonEngine: QmonEngine,
+    market: MarketKey,
+    executionRuntime: QmonExecutionRuntime,
+    marketPendingVenueOrders: readonly QmonPendingVenueOrderSnapshot[],
+  ): Promise<QmonExecutionRuntime> {
+    const now = Date.now();
+
+    if (executionRuntime.orderId === null) {
+      return executionRuntime;
+    }
+
+    if (marketPendingVenueOrders.some((pendingVenueOrder) => pendingVenueOrder.orderId === executionRuntime.orderId)) {
+      if (executionRuntime.pendingIntent !== null && this.hasPendingOrderExpired(executionRuntime.pendingIntent)) {
+        const shouldCancelTrackedOrder = executionRuntime.pendingIntent.marketEndMs !== null && Date.now() >= executionRuntime.pendingIntent.marketEndMs;
+
+        if (shouldCancelTrackedOrder) {
+          try {
+            const wasCancelled = await this.orderService.cancelOrderById(executionRuntime.orderId);
+
+            if (wasCancelled) {
+              qmonEngine.clearRealSeatPendingOrder(market, now);
+              this.logLiveExecutionEvent("live-order-cancelled", market, `cancelled stale pending order id=${executionRuntime.orderId}`);
+
+              return this.updateExecutionRuntime(qmonEngine, market, {
+                pendingIntent: null,
+                orderId: null,
+                pendingVenueOrders: [],
+                isHalted: true,
+                recoveryStartedAt: null,
+                lastError: "stale live order cancelled after market expiry",
+              }, now);
+            }
+          } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+
+            this.logLiveWarning(market, "live-order-failed", `cancel stale order failed: ${message}`);
+          }
+        }
+      }
+
+      return this.updateExecutionRuntime(qmonEngine, market, {
+        pendingVenueOrders: marketPendingVenueOrders,
+        isHalted: true,
+        recoveryStartedAt: executionRuntime.recoveryStartedAt ?? now,
+        lastError: executionRuntime.lastError ?? "waiting for venue confirmation",
+      }, now);
+    }
+
+    if (executionRuntime.pendingIntent !== null) {
+      qmonEngine.clearRealSeatPendingOrder(market, now);
+      this.logLiveWarning(market, "live-routing-halted", `order ${executionRuntime.orderId} disappeared without a provable terminal reconciliation`);
+
+      return this.updateExecutionRuntime(qmonEngine, market, {
+        pendingVenueOrders: [],
+        isHalted: true,
+        recoveryStartedAt: null,
+        lastError: `order ${executionRuntime.orderId} disappeared without a provable terminal reconciliation`,
+      }, now);
+    }
+
+    if (executionRuntime.confirmedVenueSeat !== null) {
+      return this.updateExecutionRuntime(qmonEngine, market, {
+        orderId: null,
+        pendingVenueOrders: [],
+        isHalted: false,
+        recoveryStartedAt: null,
+        lastError: null,
+      }, now);
+    }
+
+    return this.updateExecutionRuntime(qmonEngine, market, {
+      orderId: null,
+      pendingVenueOrders: [],
+      isHalted: false,
+      recoveryStartedAt: null,
+      lastError: null,
+    }, now);
   }
 
   private async processPendingSeatOrder(
@@ -643,33 +596,23 @@ export class QmonLiveExecutionService {
     market: PolymarketMarket,
   ): Promise<void> {
     const marketKey = population.market;
-    const intentKey = this.buildPendingIntentKey(pendingOrder);
-    const currentMarketState = this.getMarketState(marketKey);
+    const pendingIntentKey = this.buildPendingIntentKey(pendingOrder);
 
-    if (currentMarketState.pendingIntentKey === intentKey && currentMarketState.submittedAt !== null) {
-      await this.haltMarket(qmonEngine, marketKey, `duplicate live intent blocked: ${intentKey}`);
-      return;
-    }
-
-    const attemptedMarketState = await this.recordAttempt(marketKey);
-
-    if (this.shouldHaltForAttemptRate(attemptedMarketState)) {
-      await this.haltMarket(qmonEngine, marketKey, "live attempt rate exceeded");
-      return;
-    }
-
-    const pendingMarketState: LiveMarketState = {
-      ...attemptedMarketState,
-      routeState: "armed",
-      executionState: pendingOrder.kind === "entry" ? "real-pending-entry" : "real-pending-exit",
-      isHalted: false,
-      pendingIntentKey: intentKey,
+    await this.updateExecutionRuntime(qmonEngine, marketKey, {
+      pendingIntent: pendingOrder,
       submittedAt: Date.now(),
       orderId: null,
+      pendingVenueOrders: [],
+      isHalted: false,
+      recoveryStartedAt: null,
       lastError: null,
-    };
+    }, Date.now());
+    this.logLiveExecutionEvent(
+      "live-sync-attempt",
+      marketKey,
+      `attempt kind=${pendingOrder.kind} action=${pendingOrder.action} shares=${pendingOrder.requestedShares.toFixed(4)} price=${pendingOrder.limitPrice.toFixed(4)} key=${pendingIntentKey}`,
+    );
 
-    await this.setMarketState(marketKey, pendingMarketState);
     const attemptResult = await this.postAndConfirmOrder(market, marketKey, pendingOrder);
     const confirmation = attemptResult.confirmation;
     const executedPrice = confirmation?.price ?? pendingOrder.limitPrice;
@@ -679,29 +622,41 @@ export class QmonLiveExecutionService {
     if (confirmation !== null && confirmation.ok && confirmation.status === "confirmed") {
       if (!hasTraceableOrderId) {
         qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
-        await this.haltMarket(qmonEngine, marketKey, "confirmed live order missing traceable orderId");
+        await this.updateExecutionRuntime(qmonEngine, marketKey, {
+          pendingIntent: pendingOrder,
+          isHalted: true,
+          recoveryStartedAt: null,
+          lastError: "confirmed live order missing traceable orderId",
+        }, Date.now());
+        this.logLiveWarning(marketKey, "live-routing-halted", "confirmed live order missing traceable orderId");
         return;
       }
 
       qmonEngine.applyRealSeatPendingOrderFill(marketKey, executedPrice, executedSize, Date.now());
       await this.refreshBalanceSnapshot();
+
       const updatedPopulation = qmonEngine.getPopulation(marketKey);
-      const nextLivePosition = this.createLivePositionStateFromPopulation(updatedPopulation);
-      const currentMarketStateAfterFill = this.getMarketState(marketKey);
-      const confirmedMarketState: LiveMarketState = {
-        ...currentMarketStateAfterFill,
-        pendingIntentKey: null,
+      const confirmedVenueSeat = this.createConfirmedVenueSeatFromPopulation(updatedPopulation);
+
+      await this.updateExecutionRuntime(qmonEngine, marketKey, {
+        pendingIntent: null,
+        orderId: null,
         submittedAt: null,
-        orderId: attemptResult.orderId,
-        livePosition: nextLivePosition,
+        confirmedVenueSeat,
+        pendingVenueOrders: [],
+        isHalted: false,
+        recoveryStartedAt: null,
         lastError: null,
-        executionState: this.resolveExecutionState(currentMarketStateAfterFill.routeState, updatedPopulation, nextLivePosition, null),
-      };
+        lastReconciledAt: Date.now(),
+      }, Date.now());
 
-      await this.setMarketState(marketKey, confirmedMarketState);
-
-      if (updatedPopulation !== null && this.hasLiveSeatDivergence(updatedPopulation, this.getMarketState(marketKey))) {
-        await this.haltMarket(qmonEngine, marketKey, "confirmed live order did not reconcile cleanly with local seat state");
+      if (updatedPopulation !== null && this.hasLiveSeatDivergence(updatedPopulation, this.getExecutionRuntime(updatedPopulation, "real"))) {
+        await this.updateExecutionRuntime(qmonEngine, marketKey, {
+          isHalted: true,
+          recoveryStartedAt: null,
+          lastError: "confirmed live order did not reconcile cleanly with local seat state",
+        }, Date.now());
+        this.logLiveWarning(marketKey, "live-routing-halted", "confirmed live order did not reconcile cleanly with local seat state");
       }
 
       return;
@@ -710,13 +665,18 @@ export class QmonLiveExecutionService {
     const errorMessage = attemptResult.errorMessage ?? confirmation?.error?.message ?? (confirmation !== null ? `live order ${confirmation.status}` : "live order failed");
 
     if (attemptResult.orderId !== null) {
-      await this.enterRecoveryMarket(qmonEngine, marketKey, errorMessage, attemptResult.orderId);
+      await this.updateExecutionRuntime(qmonEngine, marketKey, {
+        pendingIntent: pendingOrder,
+        orderId: attemptResult.orderId,
+        isHalted: true,
+        recoveryStartedAt: Date.now(),
+        lastError: errorMessage,
+      }, Date.now());
+      this.logLiveWarning(marketKey, "live-recovery-required", errorMessage);
       return;
     }
 
     qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
-    const updatedPopulation = qmonEngine.getPopulation(marketKey);
-    const failedMarketState = await this.recordFailure(marketKey);
 
     if (this.isBalanceError(errorMessage)) {
       this.balanceSnapshot = {
@@ -727,26 +687,25 @@ export class QmonLiveExecutionService {
     }
 
     if (errorMessage.includes("traceable orderId") || errorMessage.includes("without id")) {
-      await this.haltMarket(qmonEngine, marketKey, errorMessage);
+      await this.updateExecutionRuntime(qmonEngine, marketKey, {
+        pendingIntent: pendingOrder,
+        isHalted: true,
+        recoveryStartedAt: null,
+        lastError: errorMessage,
+      }, Date.now());
+      this.logLiveWarning(marketKey, "live-routing-halted", errorMessage);
       return;
     }
 
-    if (this.shouldHaltForFailureRate(failedMarketState)) {
-      await this.haltMarket(qmonEngine, marketKey, `live failure rate exceeded: ${errorMessage}`);
-      return;
-    }
-
-    const clearedMarketState: LiveMarketState = {
-      ...failedMarketState,
-      pendingIntentKey: null,
-      submittedAt: null,
+    await this.updateExecutionRuntime(qmonEngine, marketKey, {
+      pendingIntent: null,
       orderId: null,
-      livePosition: failedMarketState.livePosition,
-      executionState: this.resolveExecutionState(failedMarketState.routeState, updatedPopulation, failedMarketState.livePosition, errorMessage),
+      submittedAt: null,
+      pendingVenueOrders: [],
       lastError: errorMessage,
-    };
-
-    await this.setMarketState(marketKey, clearedMarketState);
+      isHalted: false,
+      recoveryStartedAt: null,
+    }, Date.now());
     this.logLiveWarning(marketKey, "live-order-failed", errorMessage);
   }
 
@@ -795,16 +754,11 @@ export class QmonLiveExecutionService {
           return liveOrderAttemptResult;
         }
 
-        const afterPostMarketState = this.getMarketState(marketKey);
-        const postedMarketState: LiveMarketState = {
-          ...afterPostMarketState,
-          orderId: postedOrderId,
-        };
-        await this.setMarketState(marketKey, postedMarketState);
         this.logLiveExecutionEvent("live-order-posted", marketKey, `posted ${op} ${direction} ${size.toFixed(2)} @ ${price.toFixed(4)} id=${postedOrderId}`);
         const confirmation = await this.orderService.waitForOrderConfirmation({
           order: postedOrder,
           timeoutMs: this.confirmationTimeoutMs,
+          shouldCancelOnTimeout: false,
         });
 
         if (confirmation.ok && confirmation.status === "confirmed") {
@@ -832,6 +786,90 @@ export class QmonLiveExecutionService {
     return liveOrderAttemptResult;
   }
 
+  private async listActiveOrdersPendingConfirmation(): Promise<readonly PendingConfirmationOrder[]> {
+    let pendingConfirmationOrders: readonly PendingConfirmationOrder[] = [];
+
+    try {
+      pendingConfirmationOrders = await this.orderService.listActiveOrdersPendingConfirmation();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logLiveWarning("system", "live-order-failed", `pending confirmation scan failed: ${message}`);
+    }
+
+    return pendingConfirmationOrders;
+  }
+
+  private asString(value: unknown): string | null {
+    let textValue: string | null = null;
+
+    if (typeof value === "string" && value.trim().length > 0) {
+      textValue = value;
+    }
+
+    return textValue;
+  }
+
+  private asNumber(value: unknown): number | null {
+    let numericValue: number | null = null;
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      numericValue = value;
+    } else if (typeof value === "string" && value.trim().length > 0) {
+      const parsedNumber = Number(value);
+
+      if (Number.isFinite(parsedNumber)) {
+        numericValue = parsedNumber;
+      }
+    }
+
+    return numericValue;
+  }
+
+  private buildPendingVenueOrderSnapshot(pendingConfirmationOrder: PendingConfirmationOrder): QmonPendingVenueOrderSnapshot {
+    const orderRecord = pendingConfirmationOrder as unknown as Record<string, unknown>;
+    const rawSide = this.asString(orderRecord.side);
+    const rawOutcome = this.asString(orderRecord.outcome);
+    let side: QmonPendingVenueOrderSnapshot["side"] = null;
+    let outcome: QmonPendingVenueOrderSnapshot["outcome"] = null;
+
+    if (rawSide === "buy" || rawSide === "sell") {
+      side = rawSide;
+    }
+
+    if (rawOutcome === "up" || rawOutcome === "down") {
+      outcome = rawOutcome;
+    }
+
+    return {
+      orderId: this.asString(orderRecord.id) ?? "unknown-order",
+      marketSlug: this.asString(orderRecord.marketSlug) ?? this.asString(orderRecord.market) ?? this.asString(orderRecord.slug),
+      side,
+      outcome,
+      size: this.asNumber(orderRecord.size) ?? this.asNumber(orderRecord.remainingSize) ?? this.asNumber(orderRecord.original_size),
+      price: this.asNumber(orderRecord.price),
+      status: this.asString(orderRecord.status),
+      createdAt: this.asNumber(orderRecord.createdAt) ?? this.asNumber(orderRecord.created_at),
+    };
+  }
+
+  private filterPendingVenueOrdersForMarket(
+    pendingVenueOrders: readonly PendingConfirmationOrder[],
+    trackedOrderId: string | null,
+    marketSlug: string | null,
+  ): readonly QmonPendingVenueOrderSnapshot[] {
+    const marketPendingVenueOrders = pendingVenueOrders
+      .map((pendingVenueOrder) => this.buildPendingVenueOrderSnapshot(pendingVenueOrder))
+      .filter((pendingVenueOrder) => {
+        const isTrackedOrder = trackedOrderId !== null && pendingVenueOrder.orderId === trackedOrderId;
+        const isMatchingSlug = marketSlug !== null && pendingVenueOrder.marketSlug === marketSlug;
+
+        return isTrackedOrder || isMatchingSlug;
+      });
+
+    return marketPendingVenueOrders;
+  }
+
   private buildLiveOrderErrorMessage(
     error: unknown,
     marketSlug: string,
@@ -841,9 +879,8 @@ export class QmonLiveExecutionService {
     price: number,
   ): string {
     const errorDetails = this.describeUnknownError(error);
-    const message = `Failed to post order for market=${marketSlug} op=${op} direction=${direction} size=${size.toFixed(4)} price=${price.toFixed(4)}. ${errorDetails}`;
 
-    return message;
+    return `Failed to post order for market=${marketSlug} op=${op} direction=${direction} size=${size.toFixed(4)} price=${price.toFixed(4)}. ${errorDetails}`;
   }
 
   private describeUnknownError(error: unknown): string {
@@ -857,6 +894,7 @@ export class QmonLiveExecutionService {
             ? String(error.cause)
             : null;
       const errorStack = error.stack?.split("\n").slice(0, 3).join(" | ") ?? null;
+
       errorDetails = `${error.name}: ${error.message}`;
 
       if (errorCause !== null) {
@@ -903,7 +941,7 @@ export class QmonLiveExecutionService {
     const windowSignals = assetSignals?.windows?.[window ?? ""] ?? null;
     const windowStartMs = windowSignals?.prices?.marketStartMs ?? null;
     const cachedLiveMarket = this.liveMarketCacheByMarket.get(marketKey) ?? null;
-    let liveMarket: PolymarketMarket | null = cachedLiveMarket?.market ?? null;
+    let liveMarket = cachedLiveMarket?.market ?? null;
 
     if (cachedLiveMarket === null || cachedLiveMarket.windowStartMs !== windowStartMs) {
       try {
@@ -924,16 +962,12 @@ export class QmonLiveExecutionService {
           liveMarket = activeLiveMarket;
           this.logLiveExecutionEvent("live-market-resolved", marketKey, activeLiveMarket.slug);
         } else {
-          await this.setMarketStateFromPopulation(null, "live-market-not-found", marketKey);
           this.logLiveWarning(marketKey, "live-market-resolution-failed", `no active Polymarket market found for ${marketKey}`);
-          liveMarket = null;
         }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
 
-        await this.setMarketStateFromPopulation(null, message, marketKey);
         this.logLiveWarning(marketKey, "live-market-resolution-failed", message);
-        liveMarket = null;
       }
     }
 
@@ -951,8 +985,8 @@ export class QmonLiveExecutionService {
   }
 
   private isBalanceError(message: string): boolean {
-    let isBalanceError = false;
     const normalizedMessage = message.toLowerCase();
+    let isBalanceError = false;
 
     for (const errorPattern of BALANCE_ERROR_PATTERNS) {
       if (normalizedMessage.includes(errorPattern)) {
@@ -969,6 +1003,7 @@ export class QmonLiveExecutionService {
         {
           market,
           details: detail,
+          isSeat: true,
         },
         eventType,
       );
@@ -985,6 +1020,7 @@ export class QmonLiveExecutionService {
         market: market === "system" ? null : market,
         warningCode,
         details,
+        isSeat: market !== "system",
       });
     }
 
@@ -995,8 +1031,7 @@ export class QmonLiveExecutionService {
 
   private buildRealActivityLogLine(activityCode: string, market: MarketKey | null, details: string): string {
     const marketLabel = market ?? "system";
-    const logLine = `[real-activity] code=${activityCode} market=${marketLabel} ${details}`;
 
-    return logLine;
+    return `[real-activity] code=${activityCode} market=${marketLabel} ${details}`;
   }
 }

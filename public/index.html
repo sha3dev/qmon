@@ -1512,17 +1512,22 @@
 
         async fetchFastData() {
           try {
-            const [familyRes, statsRes, signalsRes, runtimeStatusRes] = await Promise.all([
-              fetch('/api/qmons/summary'),
+            const [dashboardRes, statsRes, signalsRes] = await Promise.all([
+              fetch('/api/qmons/dashboard'),
               fetch('/api/qmons/stats'),
-              fetch('/api/signals/structured'),
-              fetch('/api/runtime-status')
+              fetch('/api/signals/structured')
             ]);
 
-            if (familyRes.ok) {
-              const data = await familyRes.json();
-              this.familyState = data;
-              this.rawQmons = this.flattenQmons(data);
+            if (dashboardRes.ok) {
+              const data = await dashboardRes.json();
+              this.familyState = data.familyState;
+              this.rawQmons = this.flattenQmons(data.familyState);
+              this.runtimeStatus = data.runtimeExecutionStatus;
+
+              if (data.diagnosticsOverview) {
+                this.diagnosticsByRange['24h'] = data.diagnosticsOverview;
+              }
+
               this.connected = true;
             } else {
               this.connected = false;
@@ -1534,10 +1539,6 @@
 
             if (signalsRes.ok) {
               this.latestSignals = await signalsRes.json();
-            }
-
-            if (runtimeStatusRes.ok) {
-              this.runtimeStatus = await runtimeStatusRes.json();
             }
 
             this.calculateMarketPnls();
@@ -1807,7 +1808,7 @@
 
           try {
             const [response, diagnosticsResponse] = await Promise.all([
-              fetch(`/api/qmons/diagnostics/events?market=${encodeURIComponent(market)}&category=position&range=${encodeURIComponent(this.diagnosticsRange)}&limit=200`),
+              fetch(`/api/qmons/market-activity?market=${encodeURIComponent(market)}&range=${encodeURIComponent(this.diagnosticsRange)}&limit=200`),
               fetch(`/api/qmons/diagnostics/market?market=${encodeURIComponent(market)}&range=${encodeURIComponent(this.diagnosticsRange)}`)
             ]);
 
@@ -2153,6 +2154,27 @@
             }
 
             if (activityEvent.eventType !== 'position-closed') {
+              completedSeatTrades.push({
+                id: activityEvent.eventId || `${activityEvent.timestamp}-${activityEvent.eventType || 'event'}`,
+                type: this.marketActivityVisualType(activityEvent),
+                timestamp: activityEvent.timestamp,
+                market: activityEvent.market || market || '—',
+                qmonId: activityEvent.qmonId || 'VENUE',
+                message: this.marketActivityAction(activityEvent),
+                entryText: activityEvent.orderId || '—',
+                entryClass: 'neutral',
+                exitText: activityEvent.executionPrice !== null && activityEvent.executionPrice !== undefined
+                  ? Number(activityEvent.executionPrice).toFixed(4)
+                  : '—',
+                exitClass: 'neutral',
+                pnlText: activityEvent.cashflow !== null && activityEvent.cashflow !== undefined
+                  ? this.formatPnl(activityEvent.cashflow)
+                  : '—',
+                pnlClass: this.pnlClass(activityEvent.cashflow || 0),
+                sizeText: activityEvent.shareCount !== null && activityEvent.shareCount !== undefined
+                  ? Number(activityEvent.shareCount).toFixed(2)
+                  : '—',
+              });
               continue;
             }
 
@@ -2229,9 +2251,47 @@
           return completedSeatTrades.sort((left, right) => right.timestamp - left.timestamp).slice(0, 100);
         },
 
+        marketActivityVisualType(activityEvent) {
+          if (activityEvent.category === 'warning') {
+            return 'warning';
+          }
+
+          if (String(activityEvent.eventType || '').includes('confirmed')) {
+            return 'success';
+          }
+
+          if (String(activityEvent.eventType || '').includes('posted') || String(activityEvent.eventType || '').includes('balance')) {
+            return 'order';
+          }
+
+          if (String(activityEvent.eventType || '').includes('halted')) {
+            return 'danger';
+          }
+
+          return 'info';
+        },
+
         marketActivityAction(activityEvent) {
           if (activityEvent.eventType === 'position-opened') {
             return activityEvent.action || 'OPEN';
+          }
+
+          if (activityEvent.eventType && activityEvent.eventType.startsWith('live-')) {
+            const liveLabels = {
+              'live-order-posted': 'ORDER_POSTED',
+              'live-order-confirmed': 'ORDER_CONFIRMED',
+              'live-order-cancelled': 'ORDER_CANCELLED',
+              'live-recovery-required': 'RECOVERY',
+              'live-routing-halted': 'HALTED',
+              'live-balance-refreshed': 'BALANCE',
+              'live-market-resolved': 'MARKET_SYNC',
+            };
+
+            return liveLabels[activityEvent.eventType] || String(activityEvent.eventType).replaceAll('-', '_').toUpperCase();
+          }
+
+          if (activityEvent.warningCode) {
+            return String(activityEvent.warningCode).replaceAll('-', '_').toUpperCase();
           }
 
           if (activityEvent.reason === 'market-settled') {
