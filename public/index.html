@@ -1,0 +1,2630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QMON — Polymarket Quant</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <style>
+    :root {
+      --bg-primary: #0f1117;
+      --bg-secondary: #1a1d27;
+      --bg-card: #222636;
+      --bg-card-hover: #2a2f45;
+      --border: #2d3148;
+      --text-primary: #e4e6f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5e6175;
+      --green-strong: #00e676;
+      --green-mid: #66bb6a;
+      --green-faint: #2e4a3e;
+      --red-strong: #ff1744;
+      --red-mid: #ef5350;
+      --red-faint: #4a2e2e;
+      --neutral: #455a64;
+      --accent: #7c4dff;
+      --accent-dim: rgba(124,77,255,0.15);
+      --yellow: #ffd740;
+      --orange: #ff9800;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      background: var(--bg-primary); color: var(--text-primary);
+      font-size: 12px; line-height: 1.4; min-height: 100vh;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+    /* Header */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 20px; background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-left { display: flex; align-items: center; gap: 20px; }
+    .header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.5px; }
+    .header h1 span { color: var(--accent); }
+    .view-tabs { display: flex; gap: 4px; background: var(--bg-card); padding: 3px; border-radius: 5px; }
+    .view-tab {
+      font-size: 10px; padding: 6px 14px; border-radius: 4px;
+      background: transparent; color: var(--text-secondary);
+      cursor: pointer; transition: all 0.15s ease; text-transform: uppercase; letter-spacing: 0.5px;
+      border: none;
+    }
+    .view-tab:hover { color: var(--text-primary); }
+    .view-tab.active { background: var(--accent); color: var(--bg-primary); font-weight: 700; }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .nav-link {
+      font-size: 11px; color: var(--text-secondary);
+      text-decoration: none; padding: 5px 10px;
+      border-radius: 4px; transition: all 0.15s ease;
+    }
+    .nav-link:hover { background: var(--bg-card); color: var(--text-primary); }
+    .status { font-size: 11px; color: var(--text-secondary); }
+    .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+    .dot-live { background: var(--green-strong); animation: pulse 2s infinite; }
+    .dot-off { background: var(--red-strong); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* Dashboard layout */
+    .dashboard { padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    /* System status banner */
+    .status-banner {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: 6px;
+    }
+    .status-banner.warning { border-color: var(--yellow); background: rgba(255,215,64,0.08); }
+    .status-banner-icon { font-size: 14px; }
+    .status-banner-text { flex: 1; }
+    .status-banner-title { font-size: 10px; font-weight: 700; color: var(--yellow); margin-bottom: 2px; }
+    .status-banner-desc { font-size: 9px; color: var(--text-secondary); }
+
+    /* Market PnL bar */
+    .market-pnl-bar {
+      display: flex; gap: 10px; padding: 10px 16px;
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 6px; overflow-x: auto;
+    }
+    .market-pnl-item {
+      display: flex; flex-direction: column; min-width: 100px; padding: 8px 12px;
+      background: var(--bg-card); border-radius: 5px; border: 1px solid var(--border);
+    }
+    .market-pnl-item.real-routed {
+      border-color: rgba(0,230,118,0.45);
+      box-shadow: inset 0 0 0 1px rgba(0,230,118,0.12);
+    }
+    .market-pnl-item.total {
+      background: linear-gradient(180deg, rgba(124,77,255,0.18), rgba(34,38,54,0.95));
+      border-color: rgba(124,77,255,0.45);
+      box-shadow: inset 0 0 0 1px rgba(124,77,255,0.12);
+    }
+    .market-pnl-item.total .market-pnl-name {
+      color: var(--accent);
+    }
+    .market-pnl-name { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 2px; }
+    .market-pnl-val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .market-pnl-val.green { color: var(--green-mid); }
+    .market-pnl-val.red { color: var(--red-mid); }
+    .market-pnl-val.orange { color: var(--orange); }
+    .market-pnl-champion { font-size: 9px; color: var(--accent); font-weight: 700; letter-spacing: 0.4px; }
+    .market-pnl-subval { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .market-route-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 2px 6px; border-radius: 999px; font-size: 8px; font-weight: 700; letter-spacing: 0.4px;
+      border: 1px solid var(--border);
+    }
+    .market-route-badge.real {
+      color: var(--green-mid);
+      background: rgba(0,230,118,0.12);
+      border-color: rgba(0,230,118,0.28);
+    }
+    .market-route-badge.paper {
+      color: var(--text-secondary);
+      background: rgba(94,97,117,0.16);
+      border-color: rgba(94,97,117,0.28);
+    }
+    .market-route-badge.pending {
+      color: var(--orange);
+      background: rgba(255,176,32,0.14);
+      border-color: rgba(255,176,32,0.28);
+    }
+    .market-route-badge.error {
+      color: var(--red-mid);
+      background: rgba(255,82,82,0.14);
+      border-color: rgba(255,82,82,0.28);
+    }
+    .market-route-badge.halted {
+      color: #ff8a65;
+      background: rgba(255,138,101,0.14);
+      border-color: rgba(255,138,101,0.28);
+    }
+    .market-route-legend {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-bottom: -6px;
+    }
+    .market-route-legend-label {
+      font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .diagnostics-panel {
+      display: flex; flex-direction: column; gap: 10px;
+      padding: 10px 14px; background: linear-gradient(180deg, rgba(124,77,255,0.08), rgba(26,29,39,0.96));
+      border: 1px solid rgba(124,77,255,0.18); border-radius: 6px;
+    }
+    .diagnostics-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .diagnostics-title { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
+    .diagnostics-subtitle { font-size: 9px; color: var(--text-secondary); margin-top: 3px; max-width: 720px; }
+    .diagnostics-range-tabs { display: flex; gap: 6px; }
+    .diagnostics-toggle {
+      font-size: 9px; padding: 5px 10px; border-radius: 4px;
+      background: var(--bg-card); color: var(--text-secondary);
+      cursor: pointer; border: 1px solid var(--border);
+      transition: all 0.15s ease; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .diagnostics-toggle:hover { border-color: var(--accent); color: var(--text-primary); }
+    .diagnostics-summary-strip {
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .diagnostics-summary-card {
+      padding: 9px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+      min-height: 58px;
+    }
+    .diagnostics-summary-label {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .diagnostics-summary-value {
+      margin-top: 4px; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .diagnostics-summary-note {
+      margin-top: 2px; font-size: 8px; color: var(--text-secondary);
+    }
+    .diagnostics-warmup {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+    }
+    .diagnostics-warmup-copy { display: flex; flex-direction: column; gap: 4px; }
+    .diagnostics-warmup-title { font-size: 10px; font-weight: 700; color: var(--text-primary); }
+    .diagnostics-warmup-text { font-size: 9px; color: var(--text-secondary); }
+    .diagnostics-warmup-metrics { display: flex; gap: 6px; flex-wrap: wrap; }
+    .diagnostics-warmup-pill {
+      padding: 4px 8px; border-radius: 999px; background: rgba(124,77,255,0.12);
+      border: 1px solid rgba(124,77,255,0.22); font-size: 8px; color: var(--text-secondary);
+    }
+    .diagnostics-brief {
+      display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px;
+    }
+    .diagnostics-block {
+      padding: 11px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+      min-height: 112px;
+    }
+    .diagnostics-block-title {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 8px;
+    }
+    .diagnostics-focus-list { display: flex; flex-direction: column; gap: 7px; }
+    .diagnostics-focus-item {
+      display: grid; grid-template-columns: 78px 1fr auto; gap: 8px; align-items: center; font-size: 10px;
+    }
+    .diagnostics-market-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 4px 7px; border-radius: 999px; background: rgba(124,77,255,0.12); color: var(--accent);
+      font-weight: 700; letter-spacing: 0.4px;
+    }
+    .diagnostics-market-badge.good {
+      background: rgba(0,230,118,0.12); color: var(--green-mid);
+    }
+    .diagnostics-focus-metric { font-size: 9px; color: var(--text-muted); }
+    .diagnostics-kpi-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px;
+    }
+    .diagnostics-kpi-label { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .diagnostics-kpi-value { font-size: 17px; font-weight: 700; margin-top: 3px; font-variant-numeric: tabular-nums; }
+    .diagnostics-kpi-note { font-size: 9px; color: var(--text-secondary); margin-top: 2px; }
+    .diagnostics-market-table { display: flex; flex-direction: column; gap: 6px; }
+    .diagnostics-market-row, .diagnostics-market-header {
+      display: grid; grid-template-columns: 90px 72px 72px 72px 64px 1fr;
+      gap: 10px; align-items: center;
+    }
+    .diagnostics-market-header {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .diagnostics-market-row {
+      padding: 9px 10px; background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 5px; font-size: 10px;
+    }
+    .diagnostics-market-row.attention {
+      border-color: rgba(255, 152, 0, 0.35);
+      background: linear-gradient(180deg, rgba(255,152,0,0.08), rgba(34,38,54,0.98));
+    }
+    .diagnostics-market-row.good {
+      border-color: rgba(0, 230, 118, 0.22);
+      background: linear-gradient(180deg, rgba(0,230,118,0.05), rgba(34,38,54,0.98));
+    }
+    .diagnostics-flags { display: flex; flex-wrap: wrap; gap: 8px; }
+    .diagnostics-flag {
+      padding: 5px 8px; border-radius: 999px; font-size: 8px; letter-spacing: 0.3px;
+      background: rgba(255, 152, 0, 0.12); border: 1px solid rgba(255, 152, 0, 0.35); color: #ffcc80;
+    }
+    .diagnostics-empty { font-size: 10px; color: var(--text-muted); }
+    .diagnostics-market-name { font-weight: 700; cursor: pointer; }
+    .diagnostics-row-flags { color: var(--text-secondary); }
+    .diagnostics-modal-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 12px;
+    }
+    .diagnostics-modal-card {
+      padding: 9px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px;
+    }
+    .diagnostics-modal-label { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .diagnostics-modal-value { font-size: 13px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+    @media (max-width: 980px) {
+      .diagnostics-summary-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .diagnostics-brief {
+        grid-template-columns: 1fr;
+      }
+      .diagnostics-market-row, .diagnostics-market-header {
+        grid-template-columns: 88px 64px 64px 64px 52px 1fr;
+      }
+    }
+
+    /* Filters bar - BUTTONS version */
+    .filters-bar {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+      padding: 10px 16px; background: var(--bg-secondary);
+      border: 1px solid var(--border); border-radius: 6px;
+    }
+    .filter-section { display: flex; align-items: center; gap: 8px; }
+    .filter-section-title { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .filter-chips { display: flex; gap: 4px; }
+    .filter-chip {
+      font-size: 9px; padding: 4px 10px; border-radius: 4px;
+      background: var(--bg-card); color: var(--text-secondary);
+      cursor: pointer; transition: all 0.15s ease; border: 1px solid var(--border);
+      text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;
+    }
+    .filter-chip:hover { border-color: var(--accent); color: var(--text-primary); }
+    .filter-chip.active { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); }
+    .filter-input {
+      font-family: inherit; font-size: 10px; padding: 4px 8px;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--text-primary); width: 120px;
+    }
+    .filter-input:focus { outline: none; border-color: var(--accent); }
+
+    /* Activity feed */
+    .activity-section {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 6px; padding: 12px 16px;
+    }
+    .activity-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px;
+    }
+    .activity-title { font-size: 10px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
+    .activity-feed {
+      display: flex; flex-direction: column; gap: 0;
+      max-height: 180px; overflow-y: auto;
+    }
+    .activity-header-row {
+      display: grid; grid-template-columns: 70px 55px 75px 1fr 50px;
+      gap: 12px; padding: 6px 10px; background: var(--bg-card);
+      border-bottom: 1px solid var(--border); font-size: 8px;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .activity-item {
+      display: grid; grid-template-columns: 70px 55px 75px 1fr 50px;
+      gap: 12px; align-items: center;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      transition: background 0.15s ease; font-size: 10px;
+    }
+    .activity-item:last-child { border-bottom: none; }
+    .activity-item:hover { background: var(--bg-card); }
+    .activity-item.trade { background: rgba(0,230,118,0.05); }
+    .activity-item.trade:hover { background: rgba(0,230,118,0.1); }
+    .activity-item.trigger { background: rgba(255,215,64,0.05); }
+    .activity-item.trigger:hover { background: rgba(255,215,64,0.1); }
+    .activity-item.exit { background: rgba(239,83,80,0.05); }
+    .activity-item.exit:hover { background: rgba(239,83,80,0.1); }
+    .activity-item.order { background: rgba(124,77,255,0.08); }
+    .activity-item.order:hover { background: rgba(124,77,255,0.14); }
+    .activity-item.info { background: rgba(124,77,255,0.08); }
+    .activity-item.info:hover { background: rgba(124,77,255,0.14); }
+    .activity-item.success { background: rgba(0,230,118,0.05); }
+    .activity-item.success:hover { background: rgba(0,230,118,0.1); }
+    .activity-item.danger { background: rgba(239,83,80,0.08); }
+    .activity-item.danger:hover { background: rgba(239,83,80,0.14); }
+    .activity-item.warning { background: rgba(255,23,68,0.08); }
+    .activity-item.warning:hover { background: rgba(255,23,68,0.14); }
+    .activity-time { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+    .activity-market { color: var(--accent); font-weight: 700; cursor: pointer; transition: opacity 0.15s ease; }
+    .activity-market:hover { opacity: 0.7; }
+    .activity-qmon { color: var(--accent); font-weight: 700; cursor: pointer; transition: opacity 0.15s ease; }
+    .activity-qmon:hover { opacity: 0.7; }
+    .activity-action { font-weight: 600; }
+    .activity-action.info { color: var(--accent); }
+    .activity-action.success { color: var(--green-mid); }
+    .activity-action.warning { color: var(--yellow); }
+    .activity-action.danger { color: var(--red-strong); }
+    .activity-pnl { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+    .activity-pnl.green { color: var(--green-mid); }
+    .activity-pnl.red { color: var(--red-mid); }
+    .activity-pnl.orange { color: var(--orange); }
+    .activity-empty { font-size: 10px; color: var(--text-muted); text-align: center; padding: 20px; }
+
+    /* Modal rows */
+    .modal-row { align-items: flex-start; gap: 12px; }
+    .modal-row .modal-key { flex: 0 0 auto; }
+    .modal-row .modal-val {
+      margin-left: auto;
+      display: block;
+      text-align: right;
+    }
+
+    /* QMON cards grid */
+    .qmon-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;
+    }
+
+    /* QMON card */
+    .qmon-card {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden; transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    .qmon-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(124,77,255,0.15); }
+    .qmon-card.has-position { border-color: var(--accent); background: rgba(124,77,255,0.03); }
+
+    /* Card header */
+    .qmon-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px; background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    .qmon-id { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
+    .qmon-market { font-size: 9px; color: var(--text-muted); margin-left: 6px; }
+    .qmon-head-id { display:flex; align-items:center; gap:8px; }
+    .qmon-mode {
+      font-size: 8px; padding: 3px 8px; border-radius: 3px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .mode-champion { background: var(--green-faint); color: var(--green-mid); border: 1px solid var(--green-mid); }
+    .mode-candidate { background: var(--accent-dim); color: var(--accent); }
+    .mode-not-ready { background: rgba(69,90,100,0.2); color: var(--text-secondary); border: 1px solid var(--border); }
+    .mode-retired { background: rgba(69,90,100,0.2); color: var(--text-muted); }
+
+    /* Card body */
+    .qmon-body { padding: 10px 12px; }
+
+    /* PnL display */
+    .pnl-section {
+      text-align: center; padding: 10px; margin-bottom: 10px;
+      background: var(--bg-card); border-radius: 5px;
+      border: 1px solid var(--border);
+    }
+    .pnl-label { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .pnl-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .pnl-val.green { color: var(--green-mid); }
+    .pnl-val.red { color: var(--red-mid); }
+    .pnl-val.orange { color: var(--orange); }
+    .pnl-position { font-size: 9px; color: var(--text-muted); margin-top: 4px; }
+    .pnl-position span { font-weight: 600; }
+    .selection-summary { font-size: 9px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6; display:flex; flex-wrap:wrap; gap:6px; justify-content:center; align-items:center; }
+    .state-badge {
+      font-size: 8px; padding: 3px 8px; border-radius: 3px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid var(--border);
+    }
+    .state-badge.ready { background: var(--green-faint); color: var(--green-mid); border-color: var(--green-mid); }
+    .state-badge.not-ready { background: rgba(69,90,100,0.2); color: var(--text-secondary); }
+    .window-pnl-label { color: var(--text-muted); text-transform: uppercase; }
+
+    /* Gen info */
+    .gen-info { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-muted); margin-top: 8px; }
+    .gen-badge {
+      display:inline-flex; align-items:center; justify-content:center;
+      min-width:22px; min-height:20px; padding: 3px 8px; border-radius: 3px;
+      font-size: 8px; font-weight: 700; line-height:1;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border:1px solid transparent;
+    }
+    .gen-badge.gen-0 { background: rgba(94,97,117,0.16); color: #b6bbd1; border-color: rgba(182,187,209,0.28); }
+    .gen-badge.gen-1 { background: rgba(0,200,255,0.14); color: #53d8ff; border-color: rgba(83,216,255,0.28); }
+    .gen-badge.gen-2 { background: rgba(0,230,118,0.12); color: var(--green-mid); border-color: rgba(102,187,106,0.28); }
+    .gen-badge.gen-3 { background: rgba(255,215,64,0.14); color: var(--yellow); border-color: rgba(255,215,64,0.28); }
+    .gen-badge.gen-4 { background: rgba(255,152,0,0.14); color: var(--orange); border-color: rgba(255,152,0,0.28); }
+    .gen-badge.gen-5 { background: rgba(255,23,68,0.14); color: var(--red-mid); border-color: rgba(239,83,80,0.28); }
+
+    /* Pagination */
+    .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+    .page-btn {
+      font-size: 10px; padding: 4px 10px; border-radius: 4px;
+      background: var(--bg-card); color: var(--text-secondary);
+      cursor: pointer; border: 1px solid var(--border);
+      transition: all 0.15s ease;
+    }
+    .page-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .page-btn.active { background: var(--accent); color: var(--bg-primary); border-color: var(--accent); }
+
+    /* Empty state */
+    .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+    .empty-state-text { font-size: 11px; }
+
+    /* Modal overlay */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+
+    /* Utility color classes */
+    .green { color: var(--green-mid); }
+    .red { color: var(--red-mid); }
+    .orange { color: var(--orange); }
+    .neutral { color: var(--text-secondary); }
+  </style>
+</head>
+<body x-data="qmonDashboard()" x-init="init()">
+
+  <div class="header">
+    <div class="header-left">
+      <h1><span>QMON</span> DASHBOARD</h1>
+    </div>
+    <div class="header-right">
+      <a href="/signals.html" class="nav-link">SIGNALS →</a>
+      <div class="status">
+        <span class="dot" :class="connected ? 'dot-live' : 'dot-off'"></span>
+        <span x-text="connected ? 'LIVE' : 'OFFLINE'"></span>
+        <span style="margin-left:8px; color:var(--accent);" x-text="executionModeLabel"></span>
+        <span style="margin-left:8px; color:var(--text-secondary);" x-text="realBalanceLabel"></span>
+        <span style="margin-left:8px; color:var(--text-muted);" x-text="lastUpdate"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- QMONS View -->
+  <div class="dashboard">
+    <div class="market-route-legend" x-show="marketPnls.length > 0">
+      <span class="market-route-legend-label">Routing</span>
+      <span class="market-route-badge real">REAL</span>
+      <span class="market-route-badge paper">PAPER</span>
+      <span class="market-route-badge pending">PENDING</span>
+      <span class="market-route-badge error">ERROR</span>
+      <span class="market-route-badge halted">HALTED</span>
+    </div>
+
+    <!-- Seat / consolidated PnL bar -->
+    <div class="market-pnl-bar" x-show="marketPnls.length > 0">
+      <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
+        <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL</span>
+        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalRealMarketPnl)" x-text="'REAL ' + formatPnl(totalRealMarketPnl)"></span>
+        <span class="market-pnl-subval" x-text="'PAPER ' + formatPnl(totalPaperMarketPnl)"></span>
+      </div>
+      <template x-for="mp in marketPnls" :key="mp.market">
+        <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">
+          <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
+          <span class="market-route-badge" :class="mp.routeClass" x-text="mp.routeLabel"></span>
+          <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(mp.pnl)" x-text="formatPnl(mp.pnl)"></span>
+          <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
+        </div>
+      </template>
+    </div>
+
+    <div class="diagnostics-panel">
+      <div class="diagnostics-head">
+        <div>
+          <div class="diagnostics-title">EXECUTION HEALTH</div>
+          <div class="diagnostics-subtitle" x-text="diagnosticsHeadline"></div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <div class="diagnostics-range-tabs">
+            <button class="filter-chip" :class="{ active: diagnosticsRange === '24h' }" @click="diagnosticsRange = '24h'">24H</button>
+            <button class="filter-chip" :class="{ active: diagnosticsRange === '7d' }" @click="diagnosticsRange = '7d'">7D</button>
+            <button class="filter-chip" :class="{ active: diagnosticsRange === '30d' }" @click="diagnosticsRange = '30d'">30D</button>
+          </div>
+          <button class="diagnostics-toggle" @click="diagnosticsExpanded = !diagnosticsExpanded" x-text="diagnosticsExpanded ? 'Hide Detail' : 'Show Detail'"></button>
+        </div>
+      </div>
+
+      <div class="diagnostics-summary-strip" x-show="currentDiagnosticsOverview">
+        <div class="diagnostics-summary-card">
+          <div class="diagnostics-summary-label">Seat PnL</div>
+          <div class="diagnostics-summary-value" :class="pnlClass(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)" x-text="formatPnl(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)"></div>
+          <div class="diagnostics-summary-note" x-text="'Trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
+        </div>
+        <div class="diagnostics-summary-card">
+          <div class="diagnostics-summary-label">Fill Rate</div>
+          <div class="diagnostics-summary-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
+          <div class="diagnostics-summary-note" x-text="'Fail ' + formatPct(currentDiagnosticsOverview?.totals?.orderFailureRate || 0)"></div>
+        </div>
+        <div class="diagnostics-summary-card">
+          <div class="diagnostics-summary-label">Warnings</div>
+          <div class="diagnostics-summary-value" x-text="formatCount(currentDiagnosticsOverview?.totals?.warningCount || 0)"></div>
+          <div class="diagnostics-summary-note" x-text="'Events ' + formatCount(currentDiagnosticsOverview?.totals?.totalEvents || 0)"></div>
+        </div>
+        <div class="diagnostics-summary-card">
+          <div class="diagnostics-summary-label">Avg Impact</div>
+          <div class="diagnostics-summary-value" x-text="formatNullableBps(currentDiagnosticsOverview?.totals?.avgPriceImpactBps)"></div>
+          <div class="diagnostics-summary-note" x-text="'Realized ' + formatPnl(currentDiagnosticsOverview?.totals?.totalRealizedPnl || 0)"></div>
+        </div>
+        <div class="diagnostics-summary-card">
+          <div class="diagnostics-summary-label">Attention</div>
+          <div class="diagnostics-summary-value" x-text="formatCount(diagnosticsAttentionMarkets.length)"></div>
+          <div class="diagnostics-summary-note" x-text="diagnosticsAttentionMarkets[0] ? diagnosticsAttentionMarkets[0].market.toUpperCase() + ' leads' : 'No urgent issues'"></div>
+        </div>
+      </div>
+
+      <div x-show="diagnosticsExpanded">
+      <div class="diagnostics-brief" x-show="currentDiagnosticsOverview">
+        <div class="diagnostics-block">
+          <div class="diagnostics-block-title">Needs Attention</div>
+          <div class="diagnostics-focus-list">
+            <template x-for="marketRow in diagnosticsAttentionMarkets" :key="marketRow.market">
+              <div class="diagnostics-focus-item">
+                <span class="diagnostics-market-badge" x-text="marketRow.market.toUpperCase()"></span>
+                <span x-text="diagnosticsPrimaryIssue(marketRow)"></span>
+                <span class="diagnostics-focus-metric" x-text="diagnosticsIssueMetric(marketRow)"></span>
+              </div>
+            </template>
+            <div class="diagnostics-empty" x-show="diagnosticsAttentionMarkets.length === 0">No urgent execution issues in this range.</div>
+          </div>
+        </div>
+        <div class="diagnostics-block">
+          <div class="diagnostics-block-title">System Snapshot</div>
+          <div class="diagnostics-kpi-grid">
+            <div>
+              <div class="diagnostics-kpi-label">Seat PnL</div>
+              <div class="diagnostics-kpi-value" :class="pnlClass(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)" x-text="formatPnl(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)"></div>
+              <div class="diagnostics-kpi-note" x-text="'Trades: ' + (currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
+            </div>
+            <div>
+              <div class="diagnostics-kpi-label">Fill Rate</div>
+              <div class="diagnostics-kpi-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
+              <div class="diagnostics-kpi-note" x-text="'Order fail: ' + formatPct(currentDiagnosticsOverview?.totals?.orderFailureRate || 0)"></div>
+            </div>
+            <div>
+              <div class="diagnostics-kpi-label">Warnings</div>
+              <div class="diagnostics-kpi-value" x-text="formatCount(currentDiagnosticsOverview?.totals?.warningCount || 0)"></div>
+              <div class="diagnostics-kpi-note" x-text="'Events: ' + formatCount(currentDiagnosticsOverview?.totals?.totalEvents || 0)"></div>
+            </div>
+            <div>
+              <div class="diagnostics-kpi-label">Avg Impact</div>
+              <div class="diagnostics-kpi-value" x-text="formatNullableBps(currentDiagnosticsOverview?.totals?.avgPriceImpactBps)"></div>
+              <div class="diagnostics-kpi-note" x-text="'Realized: ' + formatPnl(currentDiagnosticsOverview?.totals?.totalRealizedPnl || 0)"></div>
+            </div>
+          </div>
+        </div>
+        <div class="diagnostics-block">
+          <div class="diagnostics-block-title">Best Markets</div>
+          <div class="diagnostics-focus-list">
+            <template x-for="marketRow in diagnosticsBestMarkets" :key="marketRow.market">
+              <div class="diagnostics-focus-item">
+                <span class="diagnostics-market-badge good" x-text="marketRow.market.toUpperCase()"></span>
+                <span x-text="diagnosticsPositiveSummary(marketRow)"></span>
+                <span class="diagnostics-focus-metric" x-text="'warn ' + marketRow.warningCount"></span>
+              </div>
+            </template>
+            <div class="diagnostics-empty" x-show="diagnosticsBestMarkets.length === 0">No market has built a clean enough track record yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="diagnostics-flags" x-show="currentDiagnosticsOverview">
+        <template x-for="flag in currentDiagnosticsFlags" :key="flag.key">
+          <div class="diagnostics-flag" x-text="flag.market ? flag.market.toUpperCase() + ' · ' + flag.message : flag.message"></div>
+        </template>
+        <div class="diagnostics-empty" x-show="currentDiagnosticsFlags.length === 0">No inefficiency flags in this range.</div>
+      </div>
+
+      <div class="diagnostics-market-table" x-show="currentDiagnosticsOverview" style="max-height:260px; overflow-y:auto;">
+        <div class="diagnostics-market-header">
+          <span>Market</span>
+          <span style="text-align:right;">Seat</span>
+          <span style="text-align:right;">Fill</span>
+          <span style="text-align:right;">Fail</span>
+          <span style="text-align:right;">Warn</span>
+          <span>Operator Read</span>
+        </div>
+        <template x-for="marketRow in currentDiagnosticsMarkets" :key="marketRow.market">
+          <div class="diagnostics-market-row" :class="diagnosticsRowClass(marketRow)">
+            <span class="diagnostics-market-name" x-text="marketRow.market.toUpperCase()" @click="openMarketActivity(marketRow.market)"></span>
+            <span style="text-align:right;" :class="pnlClass(marketRow.seatRealizedPnl)" x-text="formatPnl(marketRow.seatRealizedPnl)"></span>
+            <span style="text-align:right;" x-text="formatPct(marketRow.fillRate)"></span>
+            <span style="text-align:right;" x-text="formatPct(marketRow.orderFailureRate)"></span>
+            <span style="text-align:right;" x-text="marketRow.warningCount"></span>
+            <span class="diagnostics-row-flags" x-text="diagnosticsRowSummary(marketRow)"></span>
+          </div>
+        </template>
+        <div class="diagnostics-empty" x-show="currentDiagnosticsMarkets.length === 0">No market summaries yet.</div>
+      </div>
+      </div>
+    </div>
+
+    <!-- Filters bar - BUTTONS -->
+    <div class="filters-bar">
+      <div class="filter-section">
+        <input type="text" class="filter-input" x-model="searchQuery" placeholder="Search ID or market...">
+      </div>
+      <div class="filter-section">
+        <span class="filter-section-title">MARKET</span>
+        <div class="filter-chips">
+          <button class="filter-chip" :class="{ active: filterMarket === '' }" @click="filterMarket = ''">ALL</button>
+          <template x-for="m in availableMarkets" :key="m">
+            <button class="filter-chip" :class="{ active: filterMarket === m }" @click="filterMarket = m" x-text="m"></button>
+          </template>
+        </div>
+      </div>
+      <div class="filter-section">
+        <span class="filter-section-title">ROLE</span>
+        <div class="filter-chips">
+          <button class="filter-chip" :class="{ active: filterRole === '' }" @click="filterRole = ''">ALL</button>
+          <button class="filter-chip" :class="{ active: filterRole === 'champion' }" @click="filterRole = 'champion'">CHAMPION</button>
+          <button class="filter-chip" :class="{ active: filterRole === 'candidate' }" @click="filterRole = 'candidate'">CANDIDATE</button>
+        </div>
+      </div>
+      <div class="filter-section">
+        <button class="filter-chip" :class="{ active: filterPosition }" @click="filterPosition = !filterPosition">HAS POSITION</button>
+      </div>
+      <span style="font-size:9px; color:var(--text-muted); margin-left:auto;" x-text="filteredQmons.length + ' QMONs'"></span>
+    </div>
+
+    <!-- CPnL log -->
+    <div class="activity-section">
+      <div class="activity-header">
+        <span class="activity-title">CPNL LOG</span>
+        <span class="activity-title" style="color:var(--text-muted);" x-text="cpnlLogItems.length + ' rows'"></span>
+      </div>
+      <div class="activity-feed">
+        <div class="activity-header-row">
+          <span>TIME</span>
+          <span>MARKET</span>
+          <span>FLOW</span>
+          <span style="text-align:right;">CASHFLOW</span>
+        </div>
+        <template x-for="item in cpnlLogItems.slice(0, 100)" :key="item.id">
+          <div class="activity-item" :class="item.type">
+            <span class="activity-time" x-text="formatTime(item.timestamp)"></span>
+            <span class="activity-market" x-text="item.market.toUpperCase()" @click="openMarketActivity(item.market)"></span>
+            <span class="activity-action" :class="item.type" x-text="item.message"></span>
+            <span class="activity-pnl" :class="item.cashflowClass" x-text="item.cashflowText"></span>
+          </div>
+        </template>
+        <div class="activity-empty" x-show="cpnlLogItems.length === 0">
+          Waiting for CPnL cash flows...
+        </div>
+      </div>
+    </div>
+
+    <!-- QMON cards grid -->
+    <div class="qmon-grid">
+      <template x-for="qmon in paginatedQmons" :key="qmon.id">
+        <div class="qmon-card" :class="{ 'has-position': qmon.position.action }" @click="openModal(qmon)">
+          <!-- Header -->
+          <div class="qmon-head">
+            <div class="qmon-head-id">
+              <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
+              <div>
+              <span class="qmon-id" x-text="qmon.id"></span>
+              <span class="qmon-market" x-text="qmon.market"></span>
+              </div>
+            </div>
+            <span class="qmon-mode" :class="'mode-' + roleClass(qmon)" x-text="roleLabel(qmon)"></span>
+          </div>
+
+          <!-- Body -->
+          <div class="qmon-body">
+            <!-- PnL -->
+            <div class="pnl-section">
+              <div class="pnl-label">PNL</div>
+              <div class="pnl-val" :class="pnlClass(getDisplayPnl(qmon))" x-text="formatPnl(getDisplayPnl(qmon))"></div>
+              <div class="selection-summary">
+                <span>
+                  <span class="window-pnl-label">WINDOW</span>
+                  <span :class="windowPnlClass(qmon)" x-text="formatPnl(getCurrentWindowDisplayPnl(qmon))"></span>
+                </span>
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
+              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
+                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Fitness</div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="pnlClass(qmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(qmon.metrics.fitnessScore)"></div>
+              </div>
+              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
+                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Est. EV</div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="pnlClass(qmon.metrics.totalEstimatedNetEvUsd || 0)" x-text="formatPnl(qmon.metrics.totalEstimatedNetEvUsd || 0)"></div>
+              </div>
+              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
+                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Fee Ratio</div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="costRateClass(qmon.metrics.feeRatio)" x-text="formatRatio(qmon.metrics.feeRatio)"></div>
+              </div>
+              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
+                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Entry Model</div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(qmon.position.directionalAlpha ?? qmon.position.entryScore)" x-text="formatNullableScore(qmon.position.directionalAlpha ?? qmon.position.entryScore)"></div>
+              </div>
+            </div>
+
+            <!-- Gen info -->
+            <div class="gen-info">
+              <span style="color:var(--accent);">AGE <span x-text="qmon.windowsLived ?? 0"></span>w</span>
+              <span x-text="formatDate(qmon.createdAt)"></span>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination" x-show="totalPages > 1">
+      <template x-for="page in visiblePages" :key="page">
+        <button class="page-btn" :class="{ active: currentPage === page }" @click="currentPage = page" x-text="page + 1"></button>
+      </template>
+    </div>
+
+    <!-- Empty state -->
+    <div class="empty-state" x-show="filteredQmons.length === 0">
+      <div class="empty-state-text">No QMONs match your filters.</div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" x-show="modalOpen" @click.self="closeModal()" style="display:none;">
+    <template x-if="selectedQmonLoading">
+      <div class="modal-card" style="background:var(--bg-secondary); border:1px solid var(--accent); border-radius:10px; max-width:520px; width:90%; padding:20px; position:relative;">
+        <button class="modal-close" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer; line-height:1;" @click="closeModal()">×</button>
+        <div class="modal-title" style="font-size:16px; font-weight:700; color:var(--accent); margin-bottom:6px;">Loading QMON</div>
+        <div style="font-size:11px; color:var(--text-secondary);" x-text="selectedQmonId ? 'Fetching full state for ' + selectedQmonId + '…' : 'Fetching full state…'"></div>
+      </div>
+    </template>
+    <template x-if="selectedQmon">
+      <div class="modal-card" style="background:var(--bg-secondary); border:1px solid var(--accent); border-radius:10px; max-width:600px; width:90%; max-height:85vh; overflow-y:auto; padding:20px 48px 20px 20px; position:relative;">
+        <div style="position:absolute; top:12px; right:16px; display:flex; align-items:center; gap:8px;">
+          <button class="diagnostics-toggle" style="padding:4px 9px;" @click="exportSelectedQmon()">Export</button>
+          <button class="modal-close" style="background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer; line-height:1;" @click="closeModal()">×</button>
+        </div>
+        <div class="modal-title" style="font-size:16px; font-weight:700; color:var(--accent); margin-bottom:4px; padding-right:8px;">
+          <span x-text="selectedQmon.id"></span>
+          <span style="color:var(--text-muted); font-size:12px; margin-left:8px;" x-text="selectedQmon.market"></span>
+        </div>
+        <div class="modal-subtitle" style="font-size:11px; color:var(--text-secondary); margin-bottom:14px;">
+          Generation <span x-text="selectedQmon.generation"></span> •
+          Age <span style="color:var(--accent); font-weight:600;" x-text="(selectedQmon.windowsLived ?? 0) + ' windows'"></span> •
+          <span class="qmon-mode" :class="'mode-' + roleClass(selectedQmon)" x-text="roleLabel(selectedQmon)"></span>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">PERFORMANCE</div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getDisplayPnl(selectedQmon))" x-text="formatPnl(getDisplayPnl(selectedQmon))"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Realized PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.totalPnl)" x-text="formatPnl(selectedQmon.metrics.totalPnl)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Window Realized PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getCurrentWindowRealizedPnl(selectedQmon))" x-text="formatPnl(getCurrentWindowRealizedPnl(selectedQmon))"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">uPnL</span>
+            <span class="modal-val" style="font-size:11px; font-weight:600; margin-left:auto; display:block; width:100%; text-align:right;" :class="pnlClass(getOpenPnl(selectedQmon))" x-text="formatPnl(getOpenPnl(selectedQmon))"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Win Rate</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="winRateClass(selectedQmon.metrics.winRate, selectedQmon.metrics.totalTrades)" x-text="selectedQmon.metrics.totalTrades > 0 ? formatPercent(selectedQmon.metrics.winRate) : '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Total Trades</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.metrics.totalTrades)" x-text="selectedQmon.metrics.totalTrades"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Net EV</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.totalEstimatedNetEvUsd || 0)" x-text="formatPnl(selectedQmon.metrics.totalEstimatedNetEvUsd || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Net PnL / Trade</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.netPnlPerTrade || 0)" x-text="formatNullableScore(selectedQmon.metrics.netPnlPerTrade)"></span>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">CHAMPION SELECTION</div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fitness Score</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(selectedQmon.metrics.fitnessScore)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Promotion Score</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.championScore || 0)" x-text="formatNullableScore(selectedQmon.metrics.championScore)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Median Window PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.paperWindowMedianPnl || 0)" x-text="formatNullableScore(selectedQmon.metrics.paperWindowMedianPnl)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Last 10 Window PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.paperWindowPnlSum || 0)" x-text="formatPnl(selectedQmon.metrics.paperWindowPnlSum || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Last 30 Window PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.paperLongWindowPnlSum || 0)" x-text="formatPnl(selectedQmon.metrics.paperLongWindowPnlSum || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Negative Window Rate</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="negativeRateClass(selectedQmon.metrics.negativeWindowRateLast10 || 0, selectedQmon.paperWindowPnls?.length || 0)" x-text="formatPercent(selectedQmon.metrics.negativeWindowRateLast10 || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Worst Window PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.worstWindowPnlLast10 || 0)" x-text="selectedQmon.metrics.worstWindowPnlLast10 === null ? '—' : formatPnl(selectedQmon.metrics.worstWindowPnlLast10)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Ready History</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="Math.min(selectedQmon.paperWindowPnls?.length || 0, 10) + ' / 10'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Recent Slippage</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="costClass(selectedQmon.metrics.recentAvgSlippageBps || 0)" x-text="formatBps(selectedQmon.metrics.recentAvgSlippageBps || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fee Ratio</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="costRateClass(selectedQmon.metrics.feeRatio)" x-text="formatRatio(selectedQmon.metrics.feeRatio)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Slippage Ratio</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="costRateClass(selectedQmon.metrics.slippageRatio)" x-text="formatRatio(selectedQmon.metrics.slippageRatio)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Gross Alpha Capture</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.grossAlphaCapture || 0)" x-text="formatPnl(selectedQmon.metrics.grossAlphaCapture || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">No-Trade Discipline</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(selectedQmon.metrics.noTradeDisciplineScore)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Total Fees Paid</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(-(selectedQmon.metrics.totalFeesPaid || 0))" x-text="formatPnl(-(selectedQmon.metrics.totalFeesPaid || 0))"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Champion Ready</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="booleanStateClass(selectedQmon.metrics.isChampionEligible)" x-text="selectedQmon.metrics.isChampionEligible ? 'YES' : 'NO'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="!selectedQmon.metrics.isChampionEligible">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Why Not</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600; margin-left:auto; display:block; width:100%; max-width:60%; text-align:right;" :title="formatChampionReasons(selectedQmon.metrics.championEligibilityReasons)" x-text="formatChampionReasonCodes(selectedQmon.metrics.championEligibilityReasons)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Role / Lifecycle</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="roleLabel(selectedQmon) + ' · ' + selectedQmon.lifecycle.toUpperCase()"></span>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">CURRENT POSITION</div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Action</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(selectedQmon.position.action)" x-text="formatPositionAction(selectedQmon.position.action)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Score</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(selectedQmon.position.entryScore)" x-text="selectedQmon.position.entryScore?.toFixed(2) ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Price</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.position.entryPrice)" x-text="selectedQmon.position.entryPrice?.toFixed(3) ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Shares</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.position.shareCount)" x-text="selectedQmon.position.shareCount ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entered At</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="selectedQmon.position.enteredAt ? formatDateTime(selectedQmon.position.enteredAt) : '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Directional Alpha</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(selectedQmon.position.directionalAlpha ?? selectedQmon.position.entryScore)" x-text="formatNullableScore(selectedQmon.position.directionalAlpha ?? selectedQmon.position.entryScore)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Edge</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(selectedQmon.position.estimatedEdgeBps)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Net EV</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.position.estimatedNetEvUsd || 0)" x-text="formatNullablePnl(selectedQmon.position.estimatedNetEvUsd)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Predicted Slippage</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(selectedQmon.position.predictedSlippageBps)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fill Quality</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(selectedQmon.position.predictedFillQuality)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Signal Agreement</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="selectedQmon.position.signalAgreementCount ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Dominant Block</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatDominantSignalGroup(selectedQmon.position.dominantSignalGroup)"></span>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">ENTRY POLICY</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Min Edge</span>
+              <span style="color:var(--accent); font-weight:600;" x-text="formatNullableBps(selectedQmon.genome.entryPolicy?.minEdgeBps)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Min Net EV</span>
+              <span style="color:var(--accent); font-weight:600;" x-text="formatNullablePnl(selectedQmon.genome.entryPolicy?.minNetEvUsd)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Min Confirmations</span>
+              <span style="font-weight:600;" :class="countClass(selectedQmon.genome.entryPolicy?.minConfirmations)" x-text="selectedQmon.genome.entryPolicy?.minConfirmations ?? '—'"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Min Fill Quality</span>
+              <span style="font-weight:600;" x-text="formatRatio(selectedQmon.genome.entryPolicy?.minFillQuality)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Max Spread Penalty</span>
+              <span style="font-weight:600;" x-text="formatNullableBps(selectedQmon.genome.entryPolicy?.maxSpreadPenaltyBps)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Max Slippage</span>
+              <span style="font-weight:600;" :class="costClass(selectedQmon.genome.entryPolicy?.maxSlippageBps)" x-text="formatNullableBps(selectedQmon.genome.entryPolicy?.maxSlippageBps)"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">EXECUTION &amp; EXIT POLICY</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Size Tier</span>
+              <span style="font-weight:600;" :class="countClass(selectedQmon.genome.executionPolicy?.sizeTier)" x-text="selectedQmon.genome.executionPolicy?.sizeTier ?? '—'"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Max Trades / Window</span>
+              <span style="font-weight:600;" :class="countClass(selectedQmon.genome.executionPolicy?.maxTradesPerWindow)" x-text="selectedQmon.genome.executionPolicy?.maxTradesPerWindow ?? selectedQmon.genome.maxTradesPerWindow"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Cooldown</span>
+              <span style="font-weight:600;" x-text="formatCooldownProfile(selectedQmon.genome.executionPolicy?.cooldownProfile)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Stop Loss</span>
+              <span style="font-weight:600;" :class="optionalGeneClass(selectedQmon.genome.exitPolicy?.extremeStopLossPct ?? selectedQmon.genome.stopLossPct)" x-text="formatNullablePercent(selectedQmon.genome.exitPolicy?.extremeStopLossPct ?? selectedQmon.genome.stopLossPct)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Take Profit</span>
+              <span style="font-weight:600;" :class="optionalGeneClass(selectedQmon.genome.exitPolicy?.extremeTakeProfitPct ?? selectedQmon.genome.takeProfitPct)" x-text="formatNullablePercent(selectedQmon.genome.exitPolicy?.extremeTakeProfitPct ?? selectedQmon.genome.takeProfitPct)"></span>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">Thesis Exit</span>
+              <span style="font-weight:600;" x-text="formatThesisPolicy(selectedQmon.genome.exitPolicy?.thesisInvalidationPolicy)"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">GATE SETTINGS</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px;">
+            <div>
+              <div style="font-size:9px; color:var(--text-muted); margin-bottom:4px;">TIME WINDOW</div>
+              <div style="display:flex; gap:4px;">
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.timeWindowGenes[0] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Early</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.timeWindowGenes[1] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Mid</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.timeWindowGenes[2] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Late</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:9px; color:var(--text-muted); margin-bottom:4px;">DIRECTION</div>
+              <div style="display:flex; gap:4px;">
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.directionRegimeGenes[0] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Up</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.directionRegimeGenes[1] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Down</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.directionRegimeGenes[2] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Flat</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:9px; color:var(--text-muted); margin-bottom:4px;">VOLATILITY</div>
+              <div style="display:flex; gap:4px;">
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.volatilityRegimeGenes[0] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">High</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.volatilityRegimeGenes[1] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Norm</span>
+                <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.volatilityRegimeGenes[2] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Low</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">EXCHANGE WEIGHTS</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:6px;">
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); text-align:center;">
+              <div style="font-size:8px; color:var(--text-muted);">BINANCE</div>
+              <div style="font-weight:600;" :class="countClass((selectedQmon.genome.exchangeWeights?.[0] ?? 0) * 100)" x-text="((selectedQmon.genome.exchangeWeights?.[0] ?? 0) * 100).toFixed(0) + '%'"></div>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); text-align:center;">
+              <div style="font-size:8px; color:var(--text-muted);">COINBASE</div>
+              <div style="font-weight:600;" :class="countClass((selectedQmon.genome.exchangeWeights?.[1] ?? 0) * 100)" x-text="((selectedQmon.genome.exchangeWeights?.[1] ?? 0) * 100).toFixed(0) + '%'"></div>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); text-align:center;">
+              <div style="font-size:8px; color:var(--text-muted);">KRAKEN</div>
+              <div style="font-weight:600;" :class="countClass((selectedQmon.genome.exchangeWeights?.[2] ?? 0) * 100)" x-text="((selectedQmon.genome.exchangeWeights?.[2] ?? 0) * 100).toFixed(0) + '%'"></div>
+            </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); text-align:center;">
+              <div style="font-size:8px; color:var(--text-muted);">OKX</div>
+              <div style="font-weight:600;" :class="countClass((selectedQmon.genome.exchangeWeights?.[3] ?? 0) * 100)" x-text="((selectedQmon.genome.exchangeWeights?.[3] ?? 0) * 100).toFixed(0) + '%'"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">PREDICTIVE SIGNAL GENES</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+            <template x-for="gene in (selectedQmon.genome.predictiveSignalGenes || [])" :key="gene.signalId">
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-radius:4px; background:var(--bg-card);">
+                <span style="font-size:10px; color:var(--text-secondary); font-weight:600;" x-text="gene.signalId"></span>
+                <span style="font-size:9px; color:var(--text-muted);" x-text="formatSignalGene(gene)"></span>
+              </div>
+            </template>
+          </div>
+          <div style="font-size:9px; color:var(--text-muted); padding:8px;" x-show="!(selectedQmon.genome.predictiveSignalGenes || []).length">No predictive genes</div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">MICROSTRUCTURE SIGNAL GENES</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
+            <template x-for="gene in (selectedQmon.genome.microstructureSignalGenes || [])" :key="gene.signalId">
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 8px; border-radius:4px; background:var(--bg-card);">
+                <span style="font-size:10px; color:var(--text-secondary); font-weight:600;" x-text="gene.signalId"></span>
+                <span style="font-size:9px; color:var(--text-muted);" x-text="formatSignalGene(gene)"></span>
+              </div>
+            </template>
+          </div>
+          <div style="font-size:9px; color:var(--text-muted); padding:8px;" x-show="!(selectedQmon.genome.microstructureSignalGenes || []).length">No microstructure genes</div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="(selectedQmon.metrics.regimeBreakdown || []).length > 0">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">REGIME BREAKDOWN</div>
+          <table style="width:100%; border-collapse:collapse; font-size:10px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:4px 6px; color:var(--text-muted); font-size:8px; font-weight:600;">REGIME</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">TRADES</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">PNL</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">EV</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="regimeSlice in (selectedQmon.metrics.regimeBreakdown || []).slice(0, 8)" :key="regimeSlice.regime">
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
+                  <td style="padding:5px 6px; color:var(--text-secondary); font-weight:600; white-space:nowrap;" x-text="regimeSlice.regime"></td>
+                  <td style="text-align:right; padding:4px 3px;" x-text="regimeSlice.tradeCount"></td>
+                  <td style="text-align:right; padding:4px 3px;" :class="pnlClass(regimeSlice.totalPnl)" x-text="formatPnl(regimeSlice.totalPnl)"></td>
+                  <td style="text-align:right; padding:4px 3px;" :class="pnlClass(regimeSlice.estimatedNetEvUsd)" x-text="formatPnl(regimeSlice.estimatedNetEvUsd)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">TRIGGERS</div>
+          <div class="gene-list" style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+            <template x-for="gene in selectedQmon.genome.triggerGenes" :key="gene.triggerId">
+              <div class="gene-item" style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;" x-show="gene.isEnabled">
+                <span class="gene-name" style="color:var(--text-secondary);" x-text="triggerLabel(gene.triggerId)"></span>
+                <span style="color:#00c8ff; font-weight:700;">ON</span>
+              </div>
+            </template>
+          </div>
+          <div x-show="!selectedQmon.genome.triggerGenes || !selectedQmon.genome.triggerGenes.some(g => g.isEnabled)" style="font-size:10px; color:var(--text-muted); padding:8px;">No triggers enabled</div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="(selectedQmon.metrics.triggerBreakdown || []).length > 0">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">TRIGGER BREAKDOWN</div>
+          <table style="width:100%; border-collapse:collapse; font-size:10px;">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border);">
+                <th style="text-align:left; padding:4px 6px; color:var(--text-muted); font-size:8px; font-weight:600;">TRIGGER</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">TRADES</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">PNL</th>
+                <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">EV</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="triggerSlice in (selectedQmon.metrics.triggerBreakdown || []).slice(0, 8)" :key="triggerSlice.triggerId">
+                <tr style="border-bottom:1px solid rgba(255,255,255,0.03);">
+                  <td style="padding:5px 6px; color:var(--text-secondary); font-weight:600; white-space:nowrap;" x-text="triggerSlice.triggerId"></td>
+                  <td style="text-align:right; padding:4px 3px;" x-text="triggerSlice.tradeCount"></td>
+                  <td style="text-align:right; padding:4px 3px;" :class="pnlClass(triggerSlice.totalPnl)" x-text="formatPnl(triggerSlice.totalPnl)"></td>
+                  <td style="text-align:right; padding:4px 3px;" :class="pnlClass(triggerSlice.estimatedNetEvUsd)" x-text="formatPnl(triggerSlice.estimatedNetEvUsd)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="modal-section" style="border-bottom:none;">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">
+            TRADE HISTORY <span style="color:var(--text-muted); font-weight:400; margin-left:4px;" x-text="'(last ' + Math.min(20, selectedQmon.decisionHistory?.length || 0) + ' of ' + (selectedQmon.decisionHistory?.length || 0) + ')'"></span>
+          </div>
+          <div style="max-height:250px; overflow-y:auto;">
+            <template x-for="(decision, idx) in getTradeHistory(selectedQmon)" :key="idx">
+              <div style="padding:8px 10px; border-radius:4px; background:var(--bg-card); margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                <div style="flex:1;">
+                  <div style="display:flex; align-items:center; gap:8px; margin-bottom:2px;">
+                    <span style="font-size:10px; font-weight:700;" :class="tradeActionClass(decision.displayAction)" x-text="decision.displayAction"></span>
+                    <span style="font-size:9px; color:var(--text-muted);" x-text="formatDateTime(decision.timestamp)"></span>
+                  </div>
+                  <div style="font-size:9px; color:var(--text-secondary);">
+                    <span x-text="decision.cashflowLabel"></span>
+                    <span style="font-weight:600;" :class="pnlClass(decision.cashflow)" x-text="formatPnl(decision.cashflow)"></span>
+                    <template x-if="decision.executionPrice !== null && decision.executionPrice !== undefined">
+                      <span style="color:var(--text-muted); margin-left:6px;">• @ $<span x-text="decision.executionPrice.toFixed(2)"></span></span>
+                    </template>
+                    <template x-if="decision.shareCount !== null && decision.shareCount !== undefined">
+                      <span style="color:var(--text-muted); margin-left:6px;">• <span x-text="decision.shareCount.toFixed(2)"></span> sh</span>
+                    </template>
+                    <template x-if="decision.triggeredBy && decision.triggeredBy.length > 0">
+                      <span style="color:var(--text-muted); margin-left:6px;">• <span x-text="decision.triggeredBy.map(t => triggerLabel(t)).join(', ')"></span></span>
+                    </template>
+                    <template x-if="decision.estimatedNetEvUsd !== null && decision.estimatedNetEvUsd !== undefined">
+                      <span style="color:var(--text-muted); margin-left:6px;">• EV <span :class="pnlClass(decision.estimatedNetEvUsd)" x-text="formatPnl(decision.estimatedNetEvUsd)"></span></span>
+                    </template>
+                    <template x-if="decision.directionalAlpha !== null && decision.directionalAlpha !== undefined">
+                      <span style="color:var(--text-muted); margin-left:6px;">• α <span :class="scoreClass(decision.directionalAlpha)" x-text="Number(decision.directionalAlpha).toFixed(2)"></span></span>
+                    </template>
+                    <template x-if="decision.tradeabilityRejectReason">
+                      <span style="color:var(--yellow); margin-left:6px;" x-text="'• ' + formatTradeabilityReason(decision.tradeabilityRejectReason)"></span>
+                    </template>
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <template x-if="decision.isExit">
+                    <div>
+                      <template x-if="decision.netPnl !== null">
+                        <div>
+                          <div style="font-size:11px; font-weight:700;" :class="decision.netPnl >= 0 ? 'green' : 'red'" x-text="formatPnl(decision.netPnl)"></div>
+                          <div style="font-size:9px; color:var(--text-muted);">NET PNL</div>
+                        </div>
+                      </template>
+                      <template x-if="decision.netPnl === null">
+                        <div style="font-size:9px; color:var(--text-muted);">CASH IN</div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!decision.isExit">
+                    <span style="font-size:9px; color:var(--text-muted);">ENTRY</span>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <div x-show="!selectedQmon.decisionHistory || selectedQmon.decisionHistory.length === 0" style="font-size:10px; color:var(--text-muted); padding:12px; text-align:center;">No trade history</div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <div class="modal-overlay" x-show="marketActivityOpen" @click.self="closeMarketActivity()" style="display:none;">
+    <div class="modal-card" style="background:var(--bg-secondary); border:1px solid var(--accent); border-radius:10px; max-width:900px; width:94%; max-height:85vh; overflow-y:auto; padding:20px; position:relative;">
+      <button class="modal-close" style="position:absolute; top:12px; right:16px; background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer; line-height:1;" @click="closeMarketActivity()">×</button>
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:14px;">
+          <div>
+            <div class="modal-title" style="font-size:16px; font-weight:700; color:var(--accent); margin-bottom:4px;">
+              <span x-text="selectedMarketActivity.market?.toUpperCase() || 'MARKET'"></span>
+              <span style="color:var(--text-muted); font-size:12px; margin-left:8px;">MARKET CPNL DRILLDOWN</span>
+            </div>
+            <div class="modal-subtitle" style="font-size:11px; color:var(--text-secondary);">
+            <span x-show="selectedMarketActivity.championId" style="color:var(--accent); font-weight:600;" x-text="'👑 ' + selectedMarketActivity.championId"></span>
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:16px; font-weight:700;" :class="pnlClass(selectedMarketActivity.pnl || 0)" x-text="formatPnl(selectedMarketActivity.pnl || 0)"></div>
+          </div>
+        </div>
+
+      <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;" x-show="marketActivityLoading">Loading market activity...</div>
+      <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;" x-show="!marketActivityLoading" x-text="(marketActivityItems?.length || 0) + ' CPnL rows'"></div>
+
+      <div class="diagnostics-modal-grid" x-show="selectedMarketDiagnostics && !marketActivityLoading">
+        <div class="diagnostics-modal-card">
+          <div class="diagnostics-modal-label">Seat Realized PnL</div>
+          <div class="diagnostics-modal-value" :class="pnlClass(selectedMarketDiagnostics?.seatRealizedPnl || 0)" x-text="formatPnl(selectedMarketDiagnostics?.seatRealizedPnl || 0)"></div>
+        </div>
+        <div class="diagnostics-modal-card">
+          <div class="diagnostics-modal-label">Fill Rate</div>
+          <div class="diagnostics-modal-value" x-text="formatPct(selectedMarketDiagnostics?.fillRate || 0)"></div>
+        </div>
+        <div class="diagnostics-modal-card">
+          <div class="diagnostics-modal-label">Order Fail</div>
+          <div class="diagnostics-modal-value" x-text="formatPct(selectedMarketDiagnostics?.orderFailureRate || 0)"></div>
+        </div>
+        <div class="diagnostics-modal-card">
+          <div class="diagnostics-modal-label">Warnings</div>
+          <div class="diagnostics-modal-value" x-text="selectedMarketDiagnostics?.warningCount || 0"></div>
+        </div>
+      </div>
+
+      <div class="diagnostics-flags" x-show="selectedMarketDiagnostics && selectedMarketDiagnostics.flags?.length > 0 && !marketActivityLoading" style="margin-bottom:10px;">
+        <template x-for="flag in selectedMarketDiagnostics.flags" :key="flag.key">
+          <div class="diagnostics-flag" x-text="flag.message"></div>
+        </template>
+      </div>
+
+      <div style="max-height:60vh; overflow-y:auto;" x-show="!marketActivityLoading">
+        <div class="activity-header-row" style="grid-template-columns:80px 70px 90px 80px 80px 80px 70px;">
+          <span>TIME</span>
+          <span>QMON</span>
+          <span>FLOW</span>
+          <span style="text-align:right;">IN</span>
+          <span style="text-align:right;">OUT</span>
+          <span style="text-align:right;">NET</span>
+          <span style="text-align:right;">SIZE</span>
+        </div>
+        <template x-for="item in marketActivityItems" :key="item.id">
+          <div class="activity-item" :class="item.type" style="grid-template-columns:80px 70px 90px 80px 80px 80px 70px;">
+            <span class="activity-time" x-text="formatTime(item.timestamp)"></span>
+            <span class="activity-qmon" x-text="item.qmonId" @click="openModalForId(item.qmonId)"></span>
+            <span class="activity-action" :class="item.type" x-text="item.message"></span>
+            <span class="activity-pnl" :class="item.entryClass" x-text="item.entryText"></span>
+            <span class="activity-pnl" :class="item.exitClass" x-text="item.exitText"></span>
+            <span class="activity-pnl" :class="item.pnlClass" x-text="item.pnlText"></span>
+            <span class="activity-pnl" x-text="item.sizeText"></span>
+          </div>
+        </template>
+        <div class="activity-empty" x-show="marketActivityItems.length === 0">
+          No seat trades recorded for this market in this range.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function qmonDashboard() {
+      return {
+        connected: false,
+        lastUpdate: '—',
+        modalOpen: false,
+        selectedQmon: null,
+        selectedQmonId: null,
+        selectedQmonLoading: false,
+        marketActivityOpen: false,
+        selectedMarketActivity: { market: '', championId: null, pnl: 0 },
+        selectedMarketDiagnostics: null,
+        marketActivityItems: [],
+        marketActivityLoading: false,
+        familyState: null,
+        rawQmons: [],
+        latestSignals: null,
+        stats: null,
+        runtimeStatus: null,
+        marketPnls: [],
+        diagnosticsRange: '24h',
+        diagnosticsExpanded: false,
+        diagnosticsByRange: { '24h': null, '7d': null, '30d': null },
+
+        searchQuery: '',
+        filterMarket: '',
+        filterRole: '',
+        filterPosition: false,
+        currentPage: 0,
+        pageSize: 20,
+
+        cpnlLogItems: [],
+        fastPollHandle: null,
+        slowPollHandle: null,
+
+        get currentDiagnosticsOverview() {
+          return this.diagnosticsByRange[this.diagnosticsRange] || null;
+        },
+
+        get currentDiagnosticsMarkets() {
+          const overview = this.currentDiagnosticsOverview;
+          return overview?.markets || [];
+        },
+
+        get currentDiagnosticsFlags() {
+          const overview = this.currentDiagnosticsOverview;
+          return overview?.flags || [];
+        },
+
+        get hasMeaningfulDiagnostics() {
+          const overview = this.currentDiagnosticsOverview;
+          const seatTradeCount = overview?.totals?.seatTradeCount || 0;
+
+          return seatTradeCount >= 3;
+        },
+
+        get diagnosticsHeadline() {
+          const overview = this.currentDiagnosticsOverview;
+
+          if (!overview) {
+            return 'Waiting for diagnostics data...';
+          }
+
+          if (!this.hasMeaningfulDiagnostics) {
+            return `Diagnostics are still warming up in ${this.diagnosticsRange}. Rankings are provisional, but warnings and execution flags remain visible while realized seat flow builds.`;
+          }
+
+          const attentionCount = this.diagnosticsAttentionMarkets.length;
+          const bestCount = this.diagnosticsBestMarkets.length;
+          const warningCount = overview.totals?.warningCount || 0;
+          const tradeCount = overview.totals?.seatTradeCount || 0;
+
+          return `${attentionCount} markets need attention, ${bestCount} are behaving cleanly, ${warningCount} warnings and ${tradeCount} seat trades recorded in ${this.diagnosticsRange}.`;
+        },
+
+        get diagnosticsAttentionMarkets() {
+          return [...this.currentDiagnosticsMarkets]
+            .filter((marketRow) => marketRow.flags.length > 0 || marketRow.warningCount > 0 || marketRow.orderFailureRate >= 0.5)
+            .sort((left, right) => {
+              const flagDelta = right.flags.length - left.flags.length;
+              const warningDelta = right.warningCount - left.warningCount;
+              const expireDelta = right.orderFailureRate - left.orderFailureRate;
+              const fillDelta = left.fillRate - right.fillRate;
+
+              return flagDelta || warningDelta || expireDelta || fillDelta;
+            })
+            .slice(0, 3);
+        },
+
+        get diagnosticsBestMarkets() {
+          return [...this.currentDiagnosticsMarkets]
+            .filter((marketRow) => marketRow.flags.length === 0 && marketRow.fillRate > 0)
+            .sort((left, right) => {
+              const pnlDelta = right.seatRealizedPnl - left.seatRealizedPnl;
+              const fillDelta = right.fillRate - left.fillRate;
+              const warningDelta = left.warningCount - right.warningCount;
+
+              return pnlDelta || fillDelta || warningDelta;
+            })
+            .slice(0, 3);
+        },
+
+        get filteredQmons() {
+          let qmons = this.rawQmons;
+
+          if (this.searchQuery) {
+            const q = this.searchQuery.toLowerCase();
+            qmons = qmons.filter(qm =>
+              qm.id.toLowerCase().includes(q) ||
+              qm.market.toLowerCase().includes(q)
+            );
+          }
+
+          if (this.filterMarket) {
+            qmons = qmons.filter(qm => qm.market === this.filterMarket);
+          }
+
+          if (this.filterRole) {
+            qmons = qmons.filter(qm => qm.role === this.filterRole);
+          }
+
+          if (this.filterPosition) {
+            qmons = qmons.filter(qm => qm.position.action !== null);
+          }
+
+          return qmons.sort((a, b) => this.getDisplayPnl(b) - this.getDisplayPnl(a));
+        },
+
+        get paginatedQmons() {
+          const start = this.currentPage * this.pageSize;
+          return this.filteredQmons.slice(start, start + this.pageSize);
+        },
+
+        get totalPages() {
+          return Math.ceil(this.filteredQmons.length / this.pageSize);
+        },
+
+        get executionModeLabel() {
+          return (this.runtimeStatus?.mode || 'paper').toUpperCase();
+        },
+
+        get realBalanceLabel() {
+          const runtimeStatus = this.runtimeStatus;
+          let label = 'BAL —';
+
+          if (runtimeStatus?.mode === 'real') {
+            if (runtimeStatus.balanceUsd !== null && runtimeStatus.balanceUsd !== undefined) {
+              const freshness = runtimeStatus.balanceState === 'fresh' ? '' : ` (${String(runtimeStatus.balanceState || 'stale').toUpperCase()})`;
+              label = `BAL ${runtimeStatus.balanceUsd.toFixed(2)}${freshness}`;
+            } else {
+              label = `BAL ${String(runtimeStatus?.balanceState || 'unavailable').toUpperCase()}`;
+            }
+          }
+
+          return label;
+        },
+
+        get visiblePages() {
+          const pages = [];
+          const total = this.totalPages;
+          const current = this.currentPage;
+          pages.push(0);
+          for (let i = Math.max(1, current - 1); i <= Math.min(total - 2, current + 1); i++) {
+            if (!pages.includes(i)) pages.push(i);
+          }
+          if (total > 1) pages.push(total - 1);
+          return pages.sort((a, b) => a - b);
+        },
+
+        get availableMarkets() {
+          const markets = new Set(this.rawQmons.map(q => q.market));
+          return Array.from(markets).sort();
+        },
+
+        get totalRealMarketPnl() {
+          return this.marketPnls.reduce((runningPnl, marketPnl) => {
+            const nextPnl = marketPnl.route === 'real' ? (marketPnl.pnl || 0) : 0;
+            return runningPnl + nextPnl;
+          }, 0);
+        },
+
+        get totalPaperMarketPnl() {
+          return this.marketPnls.reduce((runningPnl, marketPnl) => {
+            const nextPnl = marketPnl.route === 'paper' ? (marketPnl.pnl || 0) : 0;
+            return runningPnl + nextPnl;
+          }, 0);
+        },
+
+        async init() {
+          this.$watch('searchQuery', () => this.resetPagination());
+          this.$watch('filterMarket', () => this.resetPagination());
+          this.$watch('filterRole', () => this.resetPagination());
+          this.$watch('filterPosition', () => this.resetPagination());
+          this.$watch('diagnosticsRange', async () => {
+            await this.fetchSlowData(true);
+          });
+
+          document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+              void this.fetchFastData();
+              void this.fetchSlowData(false);
+            }
+          });
+
+          await this.fetchFastData();
+          await this.fetchSlowData(true);
+          this.fastPollHandle = setInterval(() => {
+            if (!document.hidden) {
+              void this.fetchFastData();
+            }
+          }, 3000);
+          this.slowPollHandle = setInterval(() => {
+            if (!document.hidden) {
+              void this.fetchSlowData(false);
+            }
+          }, 12000);
+        },
+
+        async fetchFastData() {
+          try {
+            const [familyRes, statsRes, signalsRes, runtimeStatusRes] = await Promise.all([
+              fetch('/api/qmons/summary'),
+              fetch('/api/qmons/stats'),
+              fetch('/api/signals/structured'),
+              fetch('/api/runtime-status')
+            ]);
+
+            if (familyRes.ok) {
+              const data = await familyRes.json();
+              this.familyState = data;
+              this.rawQmons = this.flattenQmons(data);
+              this.connected = true;
+            } else {
+              this.connected = false;
+            }
+
+            if (statsRes.ok) {
+              this.stats = await statsRes.json();
+            }
+
+            if (signalsRes.ok) {
+              this.latestSignals = await signalsRes.json();
+            }
+
+            if (runtimeStatusRes.ok) {
+              this.runtimeStatus = await runtimeStatusRes.json();
+            }
+
+            this.calculateMarketPnls();
+            this.lastUpdate = new Date().toLocaleTimeString();
+          } catch (e) {
+            this.connected = false;
+          }
+        },
+
+        async fetchSlowData(shouldForceCurrentRange = false) {
+          try {
+            const shouldLoadCurrentRange =
+              shouldForceCurrentRange || this.diagnosticsByRange[this.diagnosticsRange] === null;
+            const diagnosticsPromises = [
+              fetch('/api/qmons/diagnostics/overview?range=24h'),
+              fetch('/api/qmons/diagnostics/overview?range=7d'),
+              fetch('/api/qmons/diagnostics/overview?range=30d'),
+            ];
+            const diagnosticsResponses = await Promise.all(diagnosticsPromises);
+
+            if (diagnosticsResponses[0]?.ok) {
+              this.diagnosticsByRange['24h'] = await diagnosticsResponses[0].json();
+            }
+
+            if (diagnosticsResponses[1]?.ok) {
+              this.diagnosticsByRange['7d'] = await diagnosticsResponses[1].json();
+            }
+
+            if (diagnosticsResponses[2]?.ok) {
+              this.diagnosticsByRange['30d'] = await diagnosticsResponses[2].json();
+            }
+
+            if (shouldLoadCurrentRange) {
+              await this.refreshCpnlLogItems();
+            }
+          } catch (error) {
+            console.error('Failed to refresh diagnostics payloads', error);
+          }
+        },
+
+        flattenQmons(familyState) {
+          const qmons = [];
+          for (const pop of familyState.populations || []) {
+            for (const qmon of pop.qmons || []) {
+              qmons.push(qmon);
+            }
+          }
+          return qmons;
+        },
+
+        resetPagination() {
+          this.currentPage = 0;
+        },
+
+        async refreshCpnlLogItems() {
+          let cpnlLogItems = [];
+
+          try {
+            const response = await fetch(`/api/qmons/cpnl-log?range=${encodeURIComponent(this.diagnosticsRange)}&limit=100`);
+
+            if (response.ok) {
+              cpnlLogItems = await response.json();
+            }
+          } catch (error) {
+            cpnlLogItems = [];
+          }
+
+          this.cpnlLogItems = (cpnlLogItems || []).map((cpnlLogItem) => ({
+            id: cpnlLogItem.id,
+            timestamp: cpnlLogItem.timestamp,
+            market: cpnlLogItem.market,
+            type: cpnlLogItem.flow === 'exit' ? 'exit' : 'trade',
+            message: cpnlLogItem.message,
+            cashflowText: this.formatPnl(cpnlLogItem.cashflow || 0),
+            cashflowClass: this.pnlClass(cpnlLogItem.cashflow || 0),
+          }));
+        },
+
+        getSeatWindowState(market) {
+          const [asset, window] = String(market || '').split('-');
+          return this.latestSignals?.[asset]?.windows?.[window] || null;
+        },
+
+        getSeatCurrentTokenPrice(population) {
+          const seatPosition = population?.seatPosition || null;
+          const seatWindowState = this.getSeatWindowState(population?.market);
+          let tokenPrice = null;
+
+          if (seatWindowState && seatPosition?.action === 'BUY_UP') {
+            tokenPrice = seatWindowState.prices?.upPrice ?? null;
+          } else if (seatWindowState && seatPosition?.action === 'BUY_DOWN') {
+            tokenPrice = seatWindowState.prices?.downPrice ?? null;
+          }
+
+          return tokenPrice;
+        },
+
+        getSeatOpenPnl(population) {
+          const seatPosition = population?.seatPosition || null;
+          const seatShareCount = seatPosition?.shareCount ?? null;
+          const seatTokenPrice = this.getSeatCurrentTokenPrice(population);
+          let seatOpenPnl = 0;
+
+          if (seatPosition?.action && seatShareCount !== null && seatTokenPrice !== null) {
+            seatOpenPnl = seatShareCount * seatTokenPrice;
+          }
+
+          return seatOpenPnl;
+        },
+
+        getSeatMarkedExitValue(population) {
+          const seatPosition = population?.seatPosition || null;
+          const seatShareCount = seatPosition?.shareCount ?? null;
+          const seatTokenPrice = this.getSeatCurrentTokenPrice(population);
+          let markedExitValue = null;
+
+          if (seatPosition?.action && seatShareCount !== null && seatTokenPrice !== null) {
+            markedExitValue = seatShareCount * seatTokenPrice;
+          }
+
+          return markedExitValue;
+        },
+
+        calculateMarketPnls() {
+          const populations = this.familyState?.populations || [];
+
+          this.marketPnls = populations.map((population) => {
+            const champion = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) || null;
+            const seatOpenPnl = this.getSeatOpenPnl(population);
+            const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
+            const seatSessionPnl = (population.marketConsolidatedPnl || 0) + seatOpenPnl;
+
+            return {
+              market: population.market,
+              route,
+              pnl: seatSessionPnl,
+              championId: champion?.id ?? null,
+              totalPnl: champion ? this.getDisplayPnl(champion) : 0,
+              routeLabel: this.getMarketRouteLabel(population.market),
+              routeClass: this.getMarketRouteClass(population.market),
+            };
+          }).sort((a, b) => {
+            if (b.pnl !== a.pnl) {
+              return b.pnl - a.pnl;
+            }
+
+            return b.totalPnl - a.totalPnl;
+          });
+        },
+
+        getMarketRouteLabel(market) {
+          const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === market) || null;
+          const executionState = route?.executionState || 'paper';
+          const labels = {
+            paper: 'PAPER',
+            'real-armed': 'REAL',
+            'real-pending-entry': 'ENTRY',
+            'real-open': 'OPEN',
+            'real-pending-exit': 'EXIT',
+            'real-error': 'ERROR',
+            'real-halted': 'HALTED',
+            'real-recovery-required': 'RECOVERY',
+          };
+          return labels[executionState] || 'PAPER';
+        },
+
+        getMarketRouteClass(market) {
+          const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === market) || null;
+          const executionState = route?.executionState || 'paper';
+
+          if (executionState === 'real-open' || executionState === 'real-armed') {
+            return 'real';
+          }
+
+          if (executionState === 'real-pending-entry' || executionState === 'real-pending-exit') {
+            return 'pending';
+          }
+
+          if (executionState === 'real-error') {
+            return 'error';
+          }
+
+          if (executionState === 'real-halted' || executionState === 'real-recovery-required') {
+            return 'halted';
+          }
+
+          return 'paper';
+        },
+
+        async openModal(qmon) {
+          this.selectedQmon = null;
+          this.selectedQmonId = qmon?.id || null;
+          this.selectedQmonLoading = true;
+          this.modalOpen = true;
+
+          try {
+            const response = await fetch(`/api/qmons/${encodeURIComponent(qmon.id)}`);
+
+            if (response.ok) {
+              this.selectedQmon = await response.json();
+            } else {
+              this.selectedQmon = qmon;
+            }
+          } catch (error) {
+            this.selectedQmon = qmon;
+          }
+
+          this.selectedQmonLoading = false;
+        },
+
+        exportSelectedQmon() {
+          if (!this.selectedQmon) {
+            return;
+          }
+
+          const marketPopulation = (this.familyState?.populations || []).find((population) => population.market === this.selectedQmon.market) || null;
+          const exportPayload = {
+            exportedAt: new Date().toISOString(),
+            diagnosticsRange: this.diagnosticsRange,
+            qmonId: this.selectedQmon.id,
+            market: this.selectedQmon.market,
+            qmon: this.selectedQmon,
+            marketPopulation,
+            currentMarketDiagnostics: this.currentDiagnosticsMarkets.find((marketRow) => marketRow.market === this.selectedQmon.market) || null,
+            currentDiagnosticsFlags: this.currentDiagnosticsFlags.filter((flag) => !flag.market || flag.market === this.selectedQmon.market),
+            currentStructuredSignals: this.getSeatWindowState(this.selectedQmon.market),
+            stats: this.stats,
+          };
+          const fileName = `${this.selectedQmon.id}-${this.selectedQmon.market}-audit-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+          const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+          const objectUrl = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+
+          link.href = objectUrl;
+          link.download = fileName;
+          document.body.append(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(objectUrl);
+        },
+
+        openModalForId(qmonId) {
+          const qmon = this.rawQmons.find(q => q.id === qmonId);
+          if (qmon) {
+            void this.openModal(qmon);
+          }
+        },
+
+        closeModal() {
+          this.modalOpen = false;
+          this.selectedQmon = null;
+          this.selectedQmonId = null;
+          this.selectedQmonLoading = false;
+        },
+
+        async openMarketActivity(market) {
+          const marketSummary = this.marketPnls.find((item) => item.market === market) || {
+            market,
+            championId: null,
+            pnl: 0,
+          };
+          this.selectedMarketActivity = marketSummary;
+          this.selectedMarketDiagnostics = null;
+          this.marketActivityItems = [];
+          this.marketActivityLoading = true;
+          this.marketActivityOpen = true;
+
+          try {
+            const [response, diagnosticsResponse] = await Promise.all([
+              fetch(`/api/qmons/diagnostics/events?market=${encodeURIComponent(market)}&category=position&range=${encodeURIComponent(this.diagnosticsRange)}&limit=200`),
+              fetch(`/api/qmons/diagnostics/market?market=${encodeURIComponent(market)}&range=${encodeURIComponent(this.diagnosticsRange)}`)
+            ]);
+
+            if (response.ok) {
+              const activityEvents = await response.json();
+              this.marketActivityItems = this.buildMarketActivityItems(activityEvents, market).slice(0, 100);
+            }
+
+            if (diagnosticsResponse.ok) {
+              this.selectedMarketDiagnostics = await diagnosticsResponse.json();
+            }
+          } catch (error) {
+            console.error('Failed to load market activity', error);
+          }
+
+          this.marketActivityLoading = false;
+        },
+
+        closeMarketActivity() {
+          this.marketActivityOpen = false;
+          this.marketActivityItems = [];
+          this.selectedMarketDiagnostics = null;
+        },
+
+        roleLabel(qmon) {
+          if (qmon.lifecycle === 'retired') {
+            return 'RETIRED';
+          }
+
+          if (qmon.role !== 'champion' && qmon.metrics?.isChampionEligible !== true) {
+            return 'NOT READY';
+          }
+
+          return qmon.role === 'champion' ? 'CHAMPION' : 'CANDIDATE';
+        },
+
+        roleLabelShort(role, lifecycle) {
+          if (lifecycle === 'retired') {
+            return 'RT';
+          }
+
+          return role === 'champion' ? 'CH 👑' : 'CA';
+        },
+
+        generationBadgeClass(generation) {
+          const normalizedGeneration = Math.max(0, Number(generation || 0));
+          return `gen-${Math.min(normalizedGeneration, 5)}`;
+        },
+
+        roleClass(qmon) {
+          if (qmon.lifecycle === 'retired') {
+            return 'retired';
+          }
+
+          if (qmon.role !== 'champion' && qmon.metrics?.isChampionEligible !== true) {
+            return 'not-ready';
+          }
+
+          return qmon.role === 'champion' ? 'champion' : 'candidate';
+        },
+
+        pnlClass(val) {
+          if ((val || 0) > 0) {
+            return 'green';
+          }
+
+          if ((val || 0) < 0) {
+            return 'red';
+          }
+
+          return 'neutral';
+        },
+
+        winRateClass(val, totalTrades = 0) {
+          if ((totalTrades || 0) <= 0) {
+            return '';
+          }
+
+          return val >= 0.5 ? 'green' : val >= 0.4 ? 'neutral' : 'red';
+        },
+
+        costClass(val) {
+          if (val === null || val === undefined) {
+            return '';
+          }
+
+          return val > 0 ? 'red' : val < 0 ? 'green' : 'neutral';
+        },
+
+        costRateClass(val) {
+          if (val === null || val === undefined) {
+            return '';
+          }
+
+          return val > 0.5 ? 'red' : val > 0.25 ? 'orange' : 'green';
+        },
+
+        scoreClass(val) {
+          if (val === null || val === undefined) {
+            return '';
+          }
+
+          return val > 0 ? 'green' : val < 0 ? 'red' : 'neutral';
+        },
+
+        countClass(val) {
+          if (val === null || val === undefined) {
+            return '';
+          }
+
+          return Number(val) === 0 ? 'neutral' : 'green';
+        },
+
+        booleanStateClass(val) {
+          if (val === null || val === undefined) {
+            return '';
+          }
+
+          return val ? 'green' : 'red';
+        },
+
+        optionalGeneClass(val) {
+          if (val === null || val === undefined || Number(val) === 0) {
+            return 'neutral';
+          }
+
+          return 'orange';
+        },
+
+        actionClass(action) {
+          return action === 'BUY_UP' ? 'buy-up' :
+                 action === 'BUY_DOWN' ? 'buy-down' : 'hold';
+        },
+
+        formatPct(val) {
+          return `${((Number(val) || 0) * 100).toFixed(1)}%`;
+        },
+
+        formatRatio(val) {
+          if (val === null || val === undefined) {
+            return '—';
+          }
+
+          return this.formatPct(val);
+        },
+
+        formatNullableBps(val) {
+          if (val === null || val === undefined) {
+            return '—';
+          }
+
+          return `${Number(val).toFixed(1)} bps`;
+        },
+
+        formatNullablePnl(val) {
+          if (val === null || val === undefined) {
+            return '—';
+          }
+
+          return this.formatPnl(val);
+        },
+
+        formatNullablePercent(val) {
+          if (val === null || val === undefined) {
+            return '—';
+          }
+
+          return this.formatPercent(val);
+        },
+
+        formatCount(val) {
+          return Number(val || 0).toLocaleString();
+        },
+
+        diagnosticsPrimaryIssue(marketRow) {
+          if ((marketRow.flags || []).length > 0) {
+            return marketRow.flags[0].message;
+          }
+
+          if ((marketRow.warningCount || 0) > 0) {
+            return 'Warnings accumulating';
+          }
+
+          if ((marketRow.orderFailureRate || 0) >= 0.5) {
+            return 'Orders are failing too often';
+          }
+
+          return 'Monitoring';
+        },
+
+        diagnosticsIssueMetric(marketRow) {
+          if ((marketRow.warningCount || 0) > 0) {
+            return `${marketRow.warningCount} warn`;
+          }
+
+          if ((marketRow.orderFailureRate || 0) > 0) {
+            return this.formatPct(marketRow.orderFailureRate);
+          }
+
+          return this.formatPct(marketRow.fillRate || 0);
+        },
+
+        diagnosticsPositiveSummary(marketRow) {
+          const seatPnlText = this.formatPnl(marketRow.seatRealizedPnl || 0);
+          const fillText = this.formatPct(marketRow.fillRate || 0);
+
+          return `${seatPnlText} seat PnL with ${fillText} fill rate`;
+        },
+
+        diagnosticsRowClass(marketRow) {
+          if ((marketRow.flags || []).length > 0 || (marketRow.warningCount || 0) > 0 || (marketRow.orderFailureRate || 0) >= 0.5) {
+            return 'attention';
+          }
+
+          if ((marketRow.fillRate || 0) >= 0.4 && (marketRow.warningCount || 0) === 0) {
+            return 'good';
+          }
+
+          return '';
+        },
+
+        diagnosticsRowSummary(marketRow) {
+          if ((marketRow.flags || []).length > 0) {
+            return marketRow.flags.map((flag) => flag.message).join(' · ');
+          }
+
+          if ((marketRow.warningCount || 0) > 0) {
+            return `${marketRow.warningCount} warnings, watch execution quality`;
+          }
+
+          if ((marketRow.seatTradeCount || 0) === 0) {
+            return 'No seat trades in range';
+          }
+
+          return `Stable flow, ${marketRow.seatTradeCount} seat trades`;
+        },
+
+        formatPositionAction(action) {
+          if (action === 'BUY_UP') {
+            return 'UP';
+          }
+
+          if (action === 'BUY_DOWN') {
+            return 'DOWN';
+          }
+
+          return action ?? 'NONE';
+        },
+
+        formatDominantSignalGroup(group) {
+          if (!group) {
+            return '—';
+          }
+
+          const labels = {
+            predictive: 'PREDICTIVE',
+            microstructure: 'MICRO',
+            mixed: 'MIXED',
+            none: 'NONE',
+          };
+
+          return labels[group] || String(group).toUpperCase();
+        },
+
+        formatCooldownProfile(profile) {
+          if (!profile) {
+            return '—';
+          }
+
+          const labels = {
+            tight: 'TIGHT',
+            balanced: 'BALANCED',
+            patient: 'PATIENT',
+          };
+
+          return labels[profile] || String(profile).toUpperCase();
+        },
+
+        formatThesisPolicy(policy) {
+          if (!policy) {
+            return '—';
+          }
+
+          const labels = {
+            'alpha-flip': 'ALPHA FLIP',
+            'microstructure-failure': 'MICRO FAIL',
+            hybrid: 'HYBRID',
+          };
+
+          return labels[policy] || String(policy).toUpperCase();
+        },
+
+        formatSignalGene(gene) {
+          if (!gene) {
+            return '—';
+          }
+
+          const orientationLabel = gene.orientation === 'inverse' ? 'INV' : 'ALN';
+          return `${orientationLabel} · T${gene.weightTier ?? '—'}`;
+        },
+
+        formatTradeabilityReason(reason) {
+          if (!reason) {
+            return '—';
+          }
+
+          const labels = {
+            'time-gate-blocked': 'time gate blocked',
+            'regime-gate-blocked': 'regime gate blocked',
+            'trigger-context-only': 'trigger only, no executable edge',
+            'insufficient-confirmations': 'insufficient confirmations',
+            'edge-below-threshold': 'edge below threshold',
+            'net-ev-below-threshold': 'EV below threshold',
+            'fill-quality-too-low': 'fill quality too low',
+            'slippage-too-high': 'slippage too high',
+            'spread-penalty-too-high': 'spread penalty too high',
+            'directional-conflict': 'signal conflict',
+            'position-size-invalid': 'invalid size',
+          };
+
+          return labels[reason] || String(reason).replaceAll('-', ' ');
+        },
+
+        tradeActionClass(action) {
+          // No color for actions - only PnL column gets colors
+          return '';
+        },
+
+        buildMarketActivityItems(activityEvents, market) {
+          const sortedActivityEvents = [...(activityEvents || [])].sort((left, right) => left.timestamp - right.timestamp);
+          const openSeatTradesByQmon = new Map();
+          const completedSeatTrades = [];
+          const population = this.getPopulationState(market);
+          const seatOpenPnl = this.getSeatOpenPnl(population);
+          const markedExitValue = this.getSeatMarkedExitValue(population);
+          const liveSeatAction = population?.seatPosition?.action ?? null;
+          const liveSeatShareCount = population?.seatPosition?.shareCount ?? null;
+
+          for (const activityEvent of sortedActivityEvents) {
+            if (activityEvent.eventType === 'position-opened') {
+              openSeatTradesByQmon.set(activityEvent.qmonId || '—', activityEvent);
+              continue;
+            }
+
+            if (activityEvent.eventType !== 'position-closed') {
+              continue;
+            }
+
+            const qmonId = activityEvent.qmonId || '—';
+            const openingEvent = openSeatTradesByQmon.get(qmonId) || null;
+            const entryCashflow = openingEvent?.cashflow || 0;
+            const exitCashflow = activityEvent.cashflow || 0;
+            const entryPnlContribution = typeof openingEvent?.pnlContribution === 'number' ? openingEvent.pnlContribution : entryCashflow;
+            const exitPnlContribution = typeof activityEvent.pnlContribution === 'number' ? activityEvent.pnlContribution : exitCashflow;
+            const netPnl = typeof activityEvent.netPnl === 'number'
+              ? activityEvent.netPnl
+              : entryPnlContribution + exitPnlContribution;
+            const shareCount = activityEvent.shareCount ?? openingEvent?.shareCount ?? null;
+            const entryPrice = openingEvent?.entryPrice ?? openingEvent?.executionPrice ?? null;
+            const exitPrice = activityEvent.exitPrice ?? activityEvent.executionPrice ?? null;
+            const enteredAtText = openingEvent?.timestamp ? ` · IN ${this.formatTime(openingEvent.timestamp)}` : '';
+            const entryText = openingEvent ? this.formatPnl(entryCashflow) : '—';
+            const detail = `${activityEvent.market || '—'} · TAKER · IN ${entryPrice !== null ? entryPrice.toFixed(4) : '—'} · OUT ${exitPrice !== null ? exitPrice.toFixed(4) : '—'}${enteredAtText} · ${activityEvent.reason || 'closed'}`;
+
+            completedSeatTrades.push({
+              id: `${qmonId}-${activityEvent.timestamp}-${activityEvent.reason || 'closed'}`,
+              type: 'exit',
+              timestamp: activityEvent.timestamp,
+              market: activityEvent.market || market || '—',
+              qmonId,
+              message: this.marketActivityAction(activityEvent),
+              entryText,
+              entryClass: this.pnlClass(entryCashflow),
+              exitText: this.formatPnl(exitCashflow),
+              exitClass: this.pnlClass(exitCashflow),
+              pnlText: this.formatPnl(netPnl),
+              pnlClass: this.pnlClass(netPnl),
+              sizeText: shareCount !== null ? shareCount.toFixed(2) : '—',
+              detail,
+            });
+
+            if (openingEvent) {
+              openSeatTradesByQmon.delete(qmonId);
+            }
+          }
+
+          if (liveSeatAction !== null) {
+            const latestOpenSeatEntry = [...openSeatTradesByQmon.entries()]
+              .sort((left, right) => (right[1]?.timestamp || 0) - (left[1]?.timestamp || 0))[0] ?? null;
+
+            if (latestOpenSeatEntry !== null) {
+              const [qmonId, openingEvent] = latestOpenSeatEntry;
+            const entryCashflow = openingEvent?.cashflow || 0;
+            const currentMarkedExitValue = markedExitValue ?? null;
+            const currentOpenNet = currentMarkedExitValue !== null ? currentMarkedExitValue + entryCashflow : seatOpenPnl;
+            const entryPrice = openingEvent?.entryPrice ?? openingEvent?.executionPrice ?? null;
+            const shareCount = liveSeatShareCount ?? openingEvent?.shareCount ?? null;
+            const detail = `${openingEvent.market || market || '—'} · TAKER · IN ${entryPrice !== null ? entryPrice.toFixed(4) : '—'} · LIVE`;
+
+            completedSeatTrades.push({
+              id: `${qmonId}-${openingEvent.timestamp}-live`,
+              type: 'trade',
+              timestamp: openingEvent.timestamp,
+              market: openingEvent.market || market || '—',
+              qmonId,
+              message: `OPEN ${this.formatPositionAction(liveSeatAction || openingEvent.action)}`,
+              entryText: this.formatPnl(entryCashflow),
+              entryClass: this.pnlClass(entryCashflow),
+              exitText: currentMarkedExitValue !== null ? this.formatPnl(currentMarkedExitValue) : '—',
+              exitClass: currentMarkedExitValue !== null ? this.pnlClass(currentMarkedExitValue) : 'neutral',
+              pnlText: this.formatPnl(currentOpenNet),
+              pnlClass: this.pnlClass(currentOpenNet),
+              sizeText: shareCount !== null ? shareCount.toFixed(2) : '—',
+              detail,
+            });
+          }
+          }
+
+          return completedSeatTrades.sort((left, right) => right.timestamp - left.timestamp).slice(0, 100);
+        },
+
+        marketActivityAction(activityEvent) {
+          if (activityEvent.eventType === 'position-opened') {
+            return activityEvent.action || 'OPEN';
+          }
+
+          if (activityEvent.reason === 'market-settled') {
+            const isWinningSettlement = (activityEvent.cashflow || 0) > 0;
+
+            if (activityEvent.action === 'BUY_UP') {
+              return isWinningSettlement ? 'SETTLE_UP_WIN' : 'SETTLE_UP_LOSS';
+            }
+
+            if (activityEvent.action === 'BUY_DOWN') {
+              return isWinningSettlement ? 'SETTLE_DOWN_WIN' : 'SETTLE_DOWN_LOSS';
+            }
+
+            return isWinningSettlement ? 'SETTLE_WIN' : 'SETTLE_LOSS';
+          }
+
+          return activityEvent.action === 'BUY_UP' ? 'SELL_UP' :
+                 activityEvent.action === 'BUY_DOWN' ? 'SELL_DOWN' : 'CLOSE';
+        },
+
+        topSignals(qmon) {
+          return (qmon.genome.signalGenes || [])
+            .filter(g => this.hasWeight(g.weights))
+            .sort((a, b) => this.maxWeight(b.weights) - this.maxWeight(a.weights))
+            .slice(0, 3);
+        },
+
+        getActiveTriggers(qmon) {
+          return (qmon.genome.triggerGenes || [])
+            .filter(t => t.isEnabled)
+            .map(t => t.triggerId);
+        },
+
+        hasWeight(weights) {
+          return Object.values(weights || {}).some(w => Math.abs(w) > 0.1);
+        },
+
+        maxWeight(weights) {
+          return Math.max(...Object.values(weights || {}).map(Math.abs), 0);
+        },
+
+        getWindowState(qmon) {
+          const [asset, window] = qmon.market.split('-');
+          return this.latestSignals?.[asset]?.windows?.[window] || null;
+        },
+
+        getPopulationState(market) {
+          return this.familyState?.populations?.find((population) => population.market === market) || null;
+        },
+
+        isMarketChampion(qmon) {
+          const population = this.getPopulationState(qmon.market);
+          return population?.activeChampionQmonId === qmon.id;
+        },
+
+        getCurrentTokenPrice(qmon) {
+          const windowState = this.getWindowState(qmon);
+          const action = qmon.position?.action;
+          let tokenPrice = null;
+
+          if (windowState && action === 'BUY_UP') {
+            tokenPrice = windowState.prices?.upPrice ?? null;
+          }
+          if (windowState && action === 'BUY_DOWN') {
+            tokenPrice = windowState.prices?.downPrice ?? null;
+          }
+
+          return tokenPrice;
+        },
+
+        getSettledTokenValue(qmon) {
+          const action = qmon.position?.action;
+          const priceToBeat = qmon.position?.priceToBeat ?? null;
+          const asset = qmon.market.split('-')[0];
+          const chainlinkPrice = asset ? this.latestSignals?.[asset]?.chainlinkPrice ?? null : null;
+          let settledValue = null;
+
+          if (action && priceToBeat !== null && chainlinkPrice !== null) {
+            const isUpWinner = chainlinkPrice >= priceToBeat;
+
+            if (action === 'BUY_UP') {
+              settledValue = isUpWinner ? 1 : 0;
+            }
+            if (action === 'BUY_DOWN') {
+              settledValue = isUpWinner ? 0 : 1;
+            }
+          }
+
+          return settledValue;
+        },
+
+        getOpenPnl(qmon) {
+          const action = qmon.position?.action;
+          const entryPrice = qmon.position?.entryPrice ?? null;
+          const shareCount = qmon.position?.shareCount ?? null;
+          const marketEndMs = qmon.position?.marketEndMs ?? null;
+          const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
+          const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
+          let openPnl = 0;
+
+          if (action && entryPrice !== null && shareCount !== null && exitPrice !== null) {
+            openPnl = shareCount * (exitPrice - entryPrice);
+          }
+
+          return openPnl;
+        },
+
+        getMarkedOpenValue(qmon) {
+          const action = qmon.position?.action;
+          const shareCount = qmon.position?.shareCount ?? null;
+          const marketEndMs = qmon.position?.marketEndMs ?? null;
+          const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
+          const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
+          let markedOpenValue = 0;
+
+          if (action && shareCount !== null && exitPrice !== null) {
+            markedOpenValue = shareCount * exitPrice;
+          }
+
+          return markedOpenValue;
+        },
+
+        getDisplayPnl(qmon) {
+          return (qmon.metrics.totalPnl || 0) + this.getMarkedOpenValue(qmon);
+        },
+
+        getCurrentWindowRealizedPnl(qmon) {
+          const currentWindowBaselinePnl = qmon.paperWindowBaselinePnl;
+          let currentWindowRealizedPnl = 0;
+
+          if (typeof currentWindowBaselinePnl === 'number') {
+            currentWindowRealizedPnl = (qmon.metrics?.totalPnl || 0) - currentWindowBaselinePnl;
+          }
+
+          return currentWindowRealizedPnl;
+        },
+
+        getCurrentWindowDisplayPnl(qmon) {
+          return this.getCurrentWindowRealizedPnl(qmon) + this.getMarkedOpenValue(qmon);
+        },
+
+        windowPnlClass(qmon) {
+          if (qmon.position?.action) {
+            return 'orange';
+          }
+
+          return this.pnlClass(this.getCurrentWindowDisplayPnl(qmon));
+        },
+
+        formatNullableScore(score) {
+          if (score === null || score === undefined) {
+            return '—';
+          }
+
+          return score.toFixed(3);
+        },
+
+        formatBps(value) {
+          return `${(value || 0).toFixed(0)} bps`;
+        },
+
+        negativeRateClass(rate, windowCount) {
+          if (!windowCount) {
+            return 'neutral';
+          }
+
+          return rate <= 0.30 ? 'pos' : 'neg';
+        },
+
+        formatChampionReadiness(qmon) {
+          if (qmon.metrics?.isChampionEligible) {
+            return 'ELIGIBLE';
+          }
+
+          return `${(qmon.paperWindowPnls?.length || 0)}/10`;
+        },
+
+        getChampionSelectionSummary(qmon) {
+          const isReady = qmon.metrics?.isChampionEligible === true;
+          let label = 'NOT READY';
+
+          if (qmon.role === 'champion') {
+            label = 'CHAMPION BASIS';
+          } else if (isReady) {
+            label = 'ELIGIBLE';
+          }
+
+          return { label, isReady };
+        },
+
+        formatChampionReasons(reasons) {
+          return (reasons || []).join(', ') || '—';
+        },
+
+        formatChampionReasonCodes(reasons) {
+          const codeMap = {
+            'insufficient-windows': 'INS',
+            'non-positive-sum': 'NPS',
+            'non-positive-median': 'NPM',
+            'low-win-rate': 'LWR',
+            'insufficient-trades': 'ITR',
+            'non-positive-total-pnl': 'LTP',
+            'non-positive-pnl': 'LTP',
+            'non-positive-long-window-sum': 'LWS',
+            'high-negative-window-rate': 'NWR',
+            'high-fee-ratio': 'FEE',
+            'high-drawdown': 'DD',
+            'weak-regime-coverage': 'REG',
+            'inactive': 'INA',
+            'inconsistent-state': 'INC',
+          };
+
+          return (reasons || []).map(reason => codeMap[reason] || reason).join(' · ') || '—';
+        },
+
+        getDecisionRows(qmon) {
+          const rows = [];
+          let openTrade = null;
+
+          for (const decision of qmon.decisionHistory || []) {
+            const isExit = decision.action === 'HOLD';
+            let displayAction = decision.action;
+            let cashflowLabel = 'Cash Out:';
+            let netPnl = null;
+            const decisionCashflow = typeof decision.cashflow === 'number' ? decision.cashflow : 0;
+
+            if (decision.action === 'BUY_UP' || decision.action === 'BUY_DOWN') {
+              openTrade = {
+                action: decision.action,
+                remainingShares: decision.shareCount ?? 0,
+                remainingCashflow: decisionCashflow,
+                remainingFee: decision.fee ?? 0,
+              };
+            }
+
+            if (isExit) {
+              cashflowLabel = 'Cash In:';
+
+              if (openTrade && openTrade.action === 'BUY_UP') {
+                displayAction = 'SELL_UP';
+              } else if (openTrade && openTrade.action === 'BUY_DOWN') {
+                displayAction = 'SELL_DOWN';
+              } else {
+                displayAction = 'CLOSE';
+              }
+
+              if (openTrade && decision.shareCount !== null && decision.shareCount !== undefined && openTrade.remainingShares > 0) {
+                const allocationRatio = Math.min(1, decision.shareCount / openTrade.remainingShares);
+                const allocatedEntryCashflow = openTrade.remainingCashflow * allocationRatio;
+                const allocatedEntryFee = openTrade.remainingFee * allocationRatio;
+
+                netPnl = decisionCashflow + allocatedEntryCashflow - allocatedEntryFee;
+                openTrade.remainingCashflow -= allocatedEntryCashflow;
+                openTrade.remainingFee -= allocatedEntryFee;
+                openTrade.remainingShares -= decision.shareCount;
+
+                if (openTrade.remainingShares <= 1e-9) {
+                  openTrade = null;
+                }
+              }
+            }
+
+            rows.push({
+              ...decision,
+              isExit,
+              displayAction,
+              cashflow: decisionCashflow,
+              cashflowLabel,
+              executionPrice: decision.executionPrice ?? (decision.action === 'HOLD' ? null : decision.entryPrice),
+              netPnl,
+              directionalAlpha: decision.directionalAlpha ?? null,
+              estimatedNetEvUsd: decision.estimatedNetEvUsd ?? null,
+              tradeabilityRejectReason: decision.tradeabilityRejectReason ?? null,
+            });
+          }
+
+          return rows;
+        },
+
+        formatPnl(val) {
+          return ((val || 0) >= 0 ? '+' : '') + (val || 0).toFixed(2);
+        },
+
+        formatPercent(val) {
+          return (val * 100).toFixed(1) + '%';
+        },
+
+        formatTime(ts) {
+          return new Date(ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        },
+
+        formatDate(ts) {
+          return new Date(ts).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+        },
+
+        formatDateTime(ts) {
+          return new Date(ts).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          });
+        },
+
+        timeInPosition(enteredAt) {
+          const secs = Math.floor((Date.now() - enteredAt) / 1000);
+          if (secs < 60) return secs + 's';
+          if (secs < 3600) return Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+          return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm';
+        },
+
+        formatPositionEnteredAt(enteredAt) {
+          const enteredDate = new Date(enteredAt);
+          return `${enteredDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })} · ${this.timeInPosition(enteredAt)}`;
+        },
+
+        sigLabel(id) {
+          const labels = {
+            'oracle-lag': 'ORA',
+            'velocity': 'VEL',
+            'momentum': 'MOM',
+            'meanReversion': 'REV',
+            'market-pressure': 'PRESS',
+            'book-pressure': 'BOOK',
+            'consensus-level': 'CONS',
+            'consensus-velocity': 'C-VEL',
+            'volatilityRegime': 'VOL',
+            'spread-widening': 'SPRD'
+          };
+          return labels[id] || id.slice(0, 6);
+        },
+
+        triggerLabel(id) {
+          const labels = {
+            'consensus-flip': 'FLIP',
+            'oracle-lag-extreme': 'ORA-X',
+            'velocity-surge': 'V-SURGE',
+            'book-pressure': 'BOOK',
+            'market-squeeze': 'SQUEEZE',
+            'spread-widening': 'SPREAD',
+            'price-breakout': 'BREAK',
+            'reversion-extreme': 'REV-X'
+          };
+          return labels[id] || id.toUpperCase().slice(0, 6);
+        },
+
+        isActiveGene(weights) {
+          if (!weights) return false;
+          return Object.values(weights).some(v => Math.abs(v) > 0.05);
+        },
+
+        isHorizonGene(gene) {
+          if (!gene.weights) return false;
+          const w = gene.weights;
+          const horizonKeys = ['30s', '2m', '5m'];
+          return horizonKeys.some(k => w[k] !== undefined && Math.abs(w[k]) > 0.01);
+        },
+
+        getScalarGenes(genes) {
+          return (genes || []).filter(g => !this.isHorizonGene(g) && this.isActiveGene(g.weights));
+        },
+
+        getHorizonGenes(genes) {
+          return (genes || []).filter(g => this.isHorizonGene(g));
+        },
+
+        getInactiveScalarCount(genes) {
+          return (genes || []).filter(g => !this.isHorizonGene(g) && !this.isActiveGene(g.weights)).length;
+        },
+
+        weightCellStyle(value) {
+          if (value === undefined || value === null || Math.abs(value) < 0.01) {
+            return 'background:transparent; color:var(--text-muted); opacity:0.4;';
+          }
+          if (value > 0) {
+            return 'background:rgba(0,200,100,0.15); color:var(--green-mid);';
+          }
+          return 'background:rgba(255,80,80,0.15); color:var(--red-mid);';
+        },
+
+        weightCellText(value) {
+          if (value === undefined || value === null) return '—';
+          if (Math.abs(value) < 0.01) return '·';
+          return value > 0 ? '+' + value.toFixed(1) : value.toFixed(1);
+        },
+
+        getTradeHistory(qmon) {
+          return [...this.getDecisionRows(qmon)].sort((a, b) => b.timestamp - a.timestamp).slice(0, 20);
+        }
+      };
+    }
+  </script>
+</body>
+</html>
