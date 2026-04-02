@@ -392,6 +392,30 @@ export class QmonLiveExecutionService {
     return hasActionMismatch || hasUnexpectedEntryIntent || hasUnexpectedExitIntent;
   }
 
+  private async reconcileRecoverableSeatDrift(
+    qmonEngine: QmonEngine,
+    market: MarketKey,
+    population: QmonPopulation,
+    executionRuntime: QmonExecutionRuntime,
+  ): Promise<QmonExecutionRuntime | null> {
+    const hasTrackedOrder = executionRuntime.orderId !== null || executionRuntime.pendingIntent !== null || executionRuntime.pendingVenueOrders.length > 0;
+    const localSeatAction = population.seatPosition.action;
+    const confirmedVenueSeat = executionRuntime.confirmedVenueSeat;
+    let reconciledExecutionRuntime: QmonExecutionRuntime | null = null;
+
+    if (!hasTrackedOrder && localSeatAction === null && confirmedVenueSeat !== null) {
+      reconciledExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
+        confirmedVenueSeat: null,
+        isHalted: false,
+        recoveryStartedAt: null,
+        lastError: null,
+        lastReconciledAt: Date.now(),
+      }, Date.now());
+    }
+
+    return reconciledExecutionRuntime;
+  }
+
   private async runSync(
     qmonEngine: QmonEngine,
     latestSignals: StructuredSignalResult,
@@ -442,14 +466,32 @@ export class QmonLiveExecutionService {
     executionRuntime = await this.reconcileTrackedOrder(qmonEngine, population.market, executionRuntime, marketPendingVenueOrders, liveMarket);
     currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
 
+    const reconciledSeatDriftRuntime = await this.reconcileRecoverableSeatDrift(
+      qmonEngine,
+      population.market,
+      currentPopulation,
+      executionRuntime,
+    );
+
+    if (reconciledSeatDriftRuntime !== null) {
+      executionRuntime = reconciledSeatDriftRuntime;
+      currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
+    }
+
     if (this.hasLiveSeatDivergence(currentPopulation, executionRuntime)) {
+      const shouldLogDivergence = executionRuntime.lastError !== "live seat divergence detected between venue state and local seat ledger" || !executionRuntime.isHalted;
+
       qmonEngine.clearRealSeatPendingOrder(population.market, Date.now());
       executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
         isHalted: true,
         recoveryStartedAt: null,
         lastError: "live seat divergence detected between venue state and local seat ledger",
       }, Date.now());
-      this.logLiveWarning(population.market, "live-routing-halted", executionRuntime.lastError ?? "live seat divergence");
+
+      if (shouldLogDivergence) {
+        this.logLiveWarning(population.market, "live-routing-halted", executionRuntime.lastError ?? "live seat divergence");
+      }
+
       return;
     }
 
