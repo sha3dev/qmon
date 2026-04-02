@@ -86,7 +86,7 @@ export class QmonPersistenceService {
       await mkdir(this.dataDir, { recursive: true });
       const targetPath = this.getFamilyStatePath();
       const tempPath = this.getTempFilePath(targetPath);
-      const json = JSON.stringify(state, null, 2);
+      const json = JSON.stringify(this.sanitizeFamilyStateForPersistence(state), null, 2);
       await writeFile(tempPath, json, "utf-8");
       await rename(tempPath, targetPath);
     } catch (error: unknown) {
@@ -281,6 +281,33 @@ export class QmonPersistenceService {
     return normalizedPopulation;
   }
 
+  private sanitizeQmonForPersistence(qmon: Qmon): Qmon {
+    const sanitizedQmon: Qmon = {
+      ...qmon,
+      decisionHistory: [],
+    };
+
+    return sanitizedQmon;
+  }
+
+  private sanitizePopulationForPersistence(population: QmonPopulation): QmonPopulation {
+    const sanitizedPopulation: QmonPopulation = {
+      ...population,
+      qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
+    };
+
+    return sanitizedPopulation;
+  }
+
+  private sanitizeFamilyStateForPersistence(state: QmonFamilyState): QmonFamilyState {
+    const sanitizedState: QmonFamilyState = {
+      ...state,
+      populations: state.populations.map((population) => this.sanitizePopulationForPersistence(population)),
+    };
+
+    return sanitizedState;
+  }
+
   private resetQmonRuntimeState(qmon: Qmon): Qmon {
     const resetQmon: Qmon = {
       ...qmon,
@@ -413,7 +440,7 @@ export class QmonPersistenceService {
 
     try {
       await mkdir(this.getFamilyStateBackupDirPath(), { recursive: true });
-      await writeFile(backupPath, JSON.stringify(state, null, 2), "utf-8");
+      await writeFile(backupPath, JSON.stringify(this.sanitizeFamilyStateForPersistence(state), null, 2), "utf-8");
       createdBackupPath = backupPath;
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -432,7 +459,7 @@ export class QmonPersistenceService {
       ...state,
       populations: state.populations.map((population) =>
         this.normalizePopulation(
-          population,
+          this.sanitizePopulationForPersistence(population),
           executionMode === "real" ? "real" : population.executionRuntime?.route ?? "paper",
           legacyLiveExecutionState,
         ),

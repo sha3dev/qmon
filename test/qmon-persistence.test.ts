@@ -172,8 +172,7 @@ test("QmonPersistenceService round-trips the family state through a single atomi
     assert.equal(loadedState.populations[0]?.activeChampionQmonId, "QMON01");
     assert.equal(loadedState.populations[0]?.marketConsolidatedPnl, 2.5);
     assert.equal(loadedState.populations[0]?.qmons[0]?.pendingOrder?.action, "BUY_UP");
-    assert.equal(loadedState.populations[0]?.qmons[0]?.decisionHistory[0]?.modelScore, 0.82);
-    assert.equal(loadedState.populations[0]?.qmons[0]?.decisionHistory[0]?.cashflow, -2.1);
+    assert.equal(loadedState.populations[0]?.qmons[0]?.decisionHistory.length, 0);
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.totalFeesPaid, 0.33);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
@@ -221,6 +220,7 @@ test("QmonPersistenceService writes a timestamped backup snapshot before runtime
     assert.deepEqual(backupDirEntries, ["family-state.123456.json"]);
     assert.equal(serializedBackup.includes('"globalGeneration": 5'), true);
     assert.equal(serializedBackup.includes('"decisionHistory"'), true);
+    assert.equal(serializedBackup.includes('"decisionHistory": []'), true);
   } finally {
     process.chdir(originalCwd);
     await rm(tempDir, { recursive: true, force: true });

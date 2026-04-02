@@ -493,14 +493,31 @@
     <div class="market-pnl-bar" x-show="marketPnls.length > 0">
       <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
         <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL</span>
-        <span class="market-route-badge" :class="runtimeStatus?.mode === 'real' ? 'real' : 'paper'" x-text="runtimeStatus?.mode === 'real' ? 'REAL' : 'PAPER'"></span>
-        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalActiveMarketPnl)" x-text="formatPnl(totalActiveMarketPnl)"></span>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+            <span class="market-route-badge paper">PAPER</span>
+            <span class="market-pnl-val" style="font-size:13px; font-weight:700;" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
+          </div>
+          <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+            <span class="market-route-badge real">REAL</span>
+            <span class="market-pnl-val" style="font-size:13px; font-weight:700;" :class="pnlClass(totalRealMarketPnl)" x-text="formatPnl(totalRealMarketPnl)"></span>
+          </div>
+        </div>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
         <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">
           <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
           <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
-          <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(mp.pnl)" x-text="formatPnl(mp.pnl)"></span>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+              <span class="market-route-badge paper">PAPER</span>
+              <span class="market-pnl-val" style="font-size:12px; font-weight:700;" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+              <span class="market-route-badge real">REAL</span>
+              <span class="market-pnl-val" style="font-size:12px; font-weight:700;" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
+            </div>
+          </div>
           <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
         </div>
       </template>
@@ -694,7 +711,7 @@
     <!-- QMON cards grid -->
     <div class="qmon-grid">
       <template x-for="qmon in paginatedQmons" :key="qmon.id">
-        <div class="qmon-card" :class="{ 'has-position': hasDisplayedPosition(qmon) }" @click="openModal(qmon)">
+        <div class="qmon-card" :class="{ 'has-position': hasAnyPosition(qmon) }" @click="openModal(qmon)">
           <!-- Header -->
           <div class="qmon-head">
             <div class="qmon-head-id">
@@ -711,12 +728,17 @@
           <div class="qmon-body">
             <!-- PnL -->
             <div class="pnl-section">
-              <div class="pnl-label">PNL</div>
-              <div class="pnl-val" :class="pnlClass(getDisplayPnl(qmon))" x-text="formatPnl(getDisplayPnl(qmon))"></div>
-              <div class="selection-summary">
-                <span>
-                  <span class="window-pnl-label">WINDOW</span>
-                  <span :class="windowPnlClass(qmon)" x-text="formatPnl(getCurrentWindowDisplayPnl(qmon))"></span>
+              <div class="pnl-label">PAPER / REAL</div>
+              <div class="selection-summary" style="display:flex; justify-content:space-between; gap:8px;">
+                <span style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">
+                  <span class="window-pnl-label">PAPER</span>
+                  <span class="pnl-val" :class="pnlClass(getPaperDisplayPnl(qmon))" x-text="formatPnl(getPaperDisplayPnl(qmon))"></span>
+                  <span :class="windowPnlClass(qmon)" x-text="'W ' + formatPnl(getPaperWindowDisplayPnl(qmon))"></span>
+                </span>
+                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
+                  <span class="window-pnl-label">REAL</span>
+                  <span class="pnl-val" :class="pnlClass(getRealDisplayPnl(qmon) || 0)" x-text="formatNullablePnl(getRealDisplayPnl(qmon))"></span>
+                  <span :class="getRealStateClass(qmon)" x-text="getRealStateLabel(qmon)"></span>
                 </span>
               </div>
             </div>
@@ -735,8 +757,8 @@
                 <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="costRateClass(qmon.metrics.feeRatio)" x-text="formatRatio(qmon.metrics.feeRatio)"></div>
               </div>
               <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
-                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Entry Model</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(getDisplayedPosition(qmon).directionalAlpha ?? getDisplayedPosition(qmon).entryScore)" x-text="formatNullableScore(getDisplayedPosition(qmon).directionalAlpha ?? getDisplayedPosition(qmon).entryScore)"></div>
+                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Paper Entry</div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)" x-text="formatNullableScore(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)"></div>
               </div>
             </div>
 
@@ -789,10 +811,10 @@
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
-          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">PERFORMANCE</div>
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">PAPER PERFORMANCE</div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">PnL</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getDisplayPnl(selectedQmon))" x-text="formatPnl(getDisplayPnl(selectedQmon))"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getPaperDisplayPnl(selectedQmon))" x-text="formatPnl(getPaperDisplayPnl(selectedQmon))"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Realized PnL</span>
@@ -802,9 +824,9 @@
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Window Realized PnL</span>
             <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getCurrentWindowRealizedPnl(selectedQmon))" x-text="formatPnl(getCurrentWindowRealizedPnl(selectedQmon))"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasPaperPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">uPnL</span>
-            <span class="modal-val" style="font-size:11px; font-weight:600; margin-left:auto; display:block; width:100%; text-align:right;" :class="pnlClass(getOpenPnl(selectedQmon))" x-text="formatPnl(getOpenPnl(selectedQmon))"></span>
+            <span class="modal-val" style="font-size:11px; font-weight:600; margin-left:auto; display:block; width:100%; text-align:right;" :class="pnlClass(getPaperOpenPnl(selectedQmon))" x-text="formatPnl(getPaperOpenPnl(selectedQmon))"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Win Rate</span>
@@ -821,6 +843,26 @@
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Net PnL / Trade</span>
             <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.netPnlPerTrade || 0)" x-text="formatNullableScore(selectedQmon.metrics.netPnlPerTrade)"></span>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="runtimeStatus?.mode === 'real'">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">REAL PERFORMANCE</div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Seat PnL</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getRealDisplayPnl(selectedQmon) || 0)" x-text="formatNullablePnl(getRealDisplayPnl(selectedQmon))"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Route State</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="getRealStateClass(selectedQmon)" x-text="getRealStateLabel(selectedQmon)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Champion Route</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="isMarketChampion(selectedQmon) ? 'ACTIVE' : 'INACTIVE'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Last Error</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600; margin-left:auto; display:block; width:100%; max-width:60%; text-align:right;" x-text="getMarketRouteState(selectedQmon.market)?.lastError || '—'"></span>
           </div>
         </div>
 
@@ -897,54 +939,82 @@
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
-          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">CURRENT POSITION</div>
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">PAPER POSITION</div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Action</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(getDisplayedPosition(selectedQmon).action)" x-text="formatPositionAction(getDisplayedPosition(selectedQmon).action)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(getPaperPosition(selectedQmon).action)" x-text="formatPositionAction(getPaperPosition(selectedQmon).action)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Score</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getDisplayedPosition(selectedQmon).entryScore)" x-text="getDisplayedPosition(selectedQmon).entryScore?.toFixed(2) ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getPaperPosition(selectedQmon).entryScore)" x-text="getPaperPosition(selectedQmon).entryScore?.toFixed(2) ?? '—'"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasPaperPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Price</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getDisplayedPosition(selectedQmon).entryPrice)" x-text="getDisplayedPosition(selectedQmon).entryPrice?.toFixed(3) ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getPaperPosition(selectedQmon).entryPrice)" x-text="getPaperPosition(selectedQmon).entryPrice?.toFixed(3) ?? '—'"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasPaperPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Shares</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getDisplayedPosition(selectedQmon).shareCount)" x-text="getDisplayedPosition(selectedQmon).shareCount ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getPaperPosition(selectedQmon).shareCount)" x-text="getPaperPosition(selectedQmon).shareCount ?? '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entered At</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getDisplayedPosition(selectedQmon).enteredAt ? formatDateTime(getDisplayedPosition(selectedQmon).enteredAt) : '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getPaperPosition(selectedQmon).enteredAt ? formatDateTime(getPaperPosition(selectedQmon).enteredAt) : '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Directional Alpha</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getDisplayedPosition(selectedQmon).directionalAlpha ?? getDisplayedPosition(selectedQmon).entryScore)" x-text="formatNullableScore(getDisplayedPosition(selectedQmon).directionalAlpha ?? getDisplayedPosition(selectedQmon).entryScore)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getPaperPosition(selectedQmon).directionalAlpha ?? getPaperPosition(selectedQmon).entryScore)" x-text="formatNullableScore(getPaperPosition(selectedQmon).directionalAlpha ?? getPaperPosition(selectedQmon).entryScore)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Edge</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getDisplayedPosition(selectedQmon).estimatedEdgeBps)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getPaperPosition(selectedQmon).estimatedEdgeBps)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Net EV</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getDisplayedPosition(selectedQmon).estimatedNetEvUsd || 0)" x-text="formatNullablePnl(getDisplayedPosition(selectedQmon).estimatedNetEvUsd)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getPaperPosition(selectedQmon).estimatedNetEvUsd || 0)" x-text="formatNullablePnl(getPaperPosition(selectedQmon).estimatedNetEvUsd)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Predicted Slippage</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getDisplayedPosition(selectedQmon).predictedSlippageBps)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getPaperPosition(selectedQmon).predictedSlippageBps)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fill Quality</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(getDisplayedPosition(selectedQmon).predictedFillQuality)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(getPaperPosition(selectedQmon).predictedFillQuality)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Signal Agreement</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getDisplayedPosition(selectedQmon).signalAgreementCount ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getPaperPosition(selectedQmon).signalAgreementCount ?? '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Dominant Block</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatDominantSignalGroup(getDisplayedPosition(selectedQmon).dominantSignalGroup)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatDominantSignalGroup(getPaperPosition(selectedQmon).dominantSignalGroup)"></span>
+          </div>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="runtimeStatus?.mode === 'real'">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">REAL POSITION</div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Action</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(getRealPosition(selectedQmon).action)" x-text="formatPositionAction(getRealPosition(selectedQmon).action)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Score</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getRealPosition(selectedQmon).entryScore)" x-text="getRealPosition(selectedQmon).entryScore?.toFixed(2) ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasRealPosition(selectedQmon)">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Price</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getRealPosition(selectedQmon).entryPrice)" x-text="getRealPosition(selectedQmon).entryPrice?.toFixed(3) ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasRealPosition(selectedQmon)">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Shares</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getRealPosition(selectedQmon).shareCount)" x-text="getRealPosition(selectedQmon).shareCount ?? '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entered At</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getRealPosition(selectedQmon).enteredAt ? formatDateTime(getRealPosition(selectedQmon).enteredAt) : '—'"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Directional Alpha</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getRealPosition(selectedQmon).directionalAlpha ?? getRealPosition(selectedQmon).entryScore)" x-text="formatNullableScore(getRealPosition(selectedQmon).directionalAlpha ?? getRealPosition(selectedQmon).entryScore)"></span>
           </div>
         </div>
 
@@ -1405,10 +1475,10 @@
           }
 
           if (this.filterPosition) {
-            qmons = qmons.filter(qm => this.hasDisplayedPosition(qm));
+            qmons = qmons.filter(qm => this.hasAnyPosition(qm));
           }
 
-          return qmons.sort((a, b) => this.getDisplayPnl(b) - this.getDisplayPnl(a));
+          return qmons.sort((a, b) => this.getPaperDisplayPnl(b) - this.getPaperDisplayPnl(a));
         },
 
         get paginatedQmons() {
@@ -1460,6 +1530,20 @@
         get totalActiveMarketPnl() {
           return this.marketPnls.reduce((runningPnl, marketPnl) => {
             const nextPnl = marketPnl.pnl || 0;
+            return runningPnl + nextPnl;
+          }, 0);
+        },
+
+        get totalPaperMarketPnl() {
+          return this.marketPnls.reduce((runningPnl, marketPnl) => {
+            const nextPnl = marketPnl.paperPnl || 0;
+            return runningPnl + nextPnl;
+          }, 0);
+        },
+
+        get totalRealMarketPnl() {
+          return this.marketPnls.reduce((runningPnl, marketPnl) => {
+            const nextPnl = marketPnl.realPnl || 0;
             return runningPnl + nextPnl;
           }, 0);
         },
@@ -1654,19 +1738,22 @@
             const seatOpenPnl = this.getSeatOpenPnl(population);
             const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
             const seatSessionPnl = (population.marketConsolidatedPnl || 0) + seatOpenPnl;
+            const paperPnl = champion ? this.getPaperDisplayPnl(champion) : 0;
 
             return {
               market: population.market,
               route,
               pnl: seatSessionPnl,
+              paperPnl,
+              realPnl: seatSessionPnl,
               championId: champion?.id ?? null,
-              totalPnl: champion ? this.getDisplayPnl(champion) : 0,
+              totalPnl: paperPnl,
               routeLabel: this.getMarketRouteLabel(population.market),
               routeClass: this.getMarketRouteClass(population.market),
             };
           }).sort((a, b) => {
-            if (b.pnl !== a.pnl) {
-              return b.pnl - a.pnl;
+            if (b.realPnl !== a.realPnl) {
+              return b.realPnl - a.realPnl;
             }
 
             return b.totalPnl - a.totalPnl;
@@ -2322,30 +2409,42 @@
           return this.familyState?.populations?.find((population) => population.market === market) || null;
         },
 
+        getMarketRouteState(market) {
+          return this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === market) || null;
+        },
+
         isMarketChampion(qmon) {
           const population = this.getPopulationState(qmon.market);
           return population?.activeChampionQmonId === qmon.id;
         },
 
-        getDisplayedPosition(qmon) {
-          const shouldUseSeatPosition = this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon);
-          let displayedPosition = qmon.position || {};
+        getPaperPosition(qmon) {
+          return qmon.position || {};
+        },
 
-          if (shouldUseSeatPosition) {
-            displayedPosition = this.getPopulationState(qmon.market)?.seatPosition || displayedPosition;
+        getRealPosition(qmon) {
+          if (this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon)) {
+            return this.getPopulationState(qmon.market)?.seatPosition || {};
           }
 
-          return displayedPosition;
+          return {};
         },
 
-        hasDisplayedPosition(qmon) {
-          return this.getDisplayedPosition(qmon)?.action !== null;
+        hasPaperPosition(qmon) {
+          return this.getPaperPosition(qmon)?.action !== null;
         },
 
-        getCurrentTokenPrice(qmon) {
+        hasRealPosition(qmon) {
+          return this.getRealPosition(qmon)?.action !== null;
+        },
+
+        hasAnyPosition(qmon) {
+          return this.hasPaperPosition(qmon) || this.hasRealPosition(qmon);
+        },
+
+        getCurrentTokenPriceForPosition(qmon, position) {
           const windowState = this.getWindowState(qmon);
-          const displayedPosition = this.getDisplayedPosition(qmon);
-          const action = displayedPosition?.action;
+          const action = position?.action;
           let tokenPrice = null;
 
           if (windowState && action === 'BUY_UP') {
@@ -2358,10 +2457,9 @@
           return tokenPrice;
         },
 
-        getSettledTokenValue(qmon) {
-          const displayedPosition = this.getDisplayedPosition(qmon);
-          const action = displayedPosition?.action;
-          const priceToBeat = displayedPosition?.priceToBeat ?? null;
+        getSettledTokenValueForPosition(qmon, position) {
+          const action = position?.action;
+          const priceToBeat = position?.priceToBeat ?? null;
           const asset = qmon.market.split('-')[0];
           const chainlinkPrice = asset ? this.latestSignals?.[asset]?.chainlinkPrice ?? null : null;
           let settledValue = null;
@@ -2380,14 +2478,13 @@
           return settledValue;
         },
 
-        getOpenPnl(qmon) {
-          const displayedPosition = this.getDisplayedPosition(qmon);
-          const action = displayedPosition?.action;
-          const entryPrice = displayedPosition?.entryPrice ?? null;
-          const shareCount = displayedPosition?.shareCount ?? null;
-          const marketEndMs = displayedPosition?.marketEndMs ?? null;
+        getOpenPnlForPosition(qmon, position) {
+          const action = position?.action;
+          const entryPrice = position?.entryPrice ?? null;
+          const shareCount = position?.shareCount ?? null;
+          const marketEndMs = position?.marketEndMs ?? null;
           const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
-          const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
+          const exitPrice = isSettled ? this.getSettledTokenValueForPosition(qmon, position) : this.getCurrentTokenPriceForPosition(qmon, position);
           let openPnl = 0;
 
           if (action && entryPrice !== null && shareCount !== null && exitPrice !== null) {
@@ -2397,13 +2494,12 @@
           return openPnl;
         },
 
-        getMarkedOpenValue(qmon) {
-          const displayedPosition = this.getDisplayedPosition(qmon);
-          const action = displayedPosition?.action;
-          const shareCount = displayedPosition?.shareCount ?? null;
-          const marketEndMs = displayedPosition?.marketEndMs ?? null;
+        getMarkedOpenValueForPosition(qmon, position) {
+          const action = position?.action;
+          const shareCount = position?.shareCount ?? null;
+          const marketEndMs = position?.marketEndMs ?? null;
           const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
-          const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
+          const exitPrice = isSettled ? this.getSettledTokenValueForPosition(qmon, position) : this.getCurrentTokenPriceForPosition(qmon, position);
           let markedOpenValue = 0;
 
           if (action && shareCount !== null && exitPrice !== null) {
@@ -2413,8 +2509,29 @@
           return markedOpenValue;
         },
 
-        getDisplayPnl(qmon) {
-          return (qmon.metrics.totalPnl || 0) + this.getMarkedOpenValue(qmon);
+        getPaperOpenPnl(qmon) {
+          return this.getOpenPnlForPosition(qmon, this.getPaperPosition(qmon));
+        },
+
+        getPaperMarkedOpenValue(qmon) {
+          return this.getMarkedOpenValueForPosition(qmon, this.getPaperPosition(qmon));
+        },
+
+        getPaperDisplayPnl(qmon) {
+          return (qmon.metrics.totalPnl || 0) + this.getPaperMarkedOpenValue(qmon);
+        },
+
+        getRealOpenPnl(qmon) {
+          return this.getOpenPnlForPosition(qmon, this.getRealPosition(qmon));
+        },
+
+        getRealDisplayPnl(qmon) {
+          if (!(this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon))) {
+            return null;
+          }
+
+          const population = this.getPopulationState(qmon.market);
+          return (population?.marketConsolidatedPnl || 0) + this.getRealOpenPnl(qmon);
         },
 
         getCurrentWindowRealizedPnl(qmon) {
@@ -2428,16 +2545,43 @@
           return currentWindowRealizedPnl;
         },
 
-        getCurrentWindowDisplayPnl(qmon) {
-          return this.getCurrentWindowRealizedPnl(qmon) + this.getMarkedOpenValue(qmon);
+        getPaperWindowDisplayPnl(qmon) {
+          return this.getCurrentWindowRealizedPnl(qmon) + this.getPaperMarkedOpenValue(qmon);
         },
 
         windowPnlClass(qmon) {
-          if (this.hasDisplayedPosition(qmon)) {
+          if (this.hasPaperPosition(qmon)) {
             return 'orange';
           }
 
-          return this.pnlClass(this.getCurrentWindowDisplayPnl(qmon));
+          return this.pnlClass(this.getPaperWindowDisplayPnl(qmon));
+        },
+
+        getRealStateLabel(qmon) {
+          if (!(this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon))) {
+            return 'INACTIVE';
+          }
+
+          const executionState = this.getMarketRouteState(qmon.market)?.executionState || 'real-armed';
+          const labels = {
+            'real-armed': 'ARMED',
+            'real-pending-entry': 'ENTRY',
+            'real-open': 'OPEN',
+            'real-pending-exit': 'EXIT',
+            'real-error': 'ERROR',
+            'real-halted': 'HALTED',
+            'real-recovery-required': 'RECOVERY',
+          };
+
+          return labels[executionState] || executionState.toUpperCase();
+        },
+
+        getRealStateClass(qmon) {
+          if (!(this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon))) {
+            return 'neutral';
+          }
+
+          return this.getMarketRouteClass(qmon.market) || 'pos';
         },
 
         formatNullableScore(score) {

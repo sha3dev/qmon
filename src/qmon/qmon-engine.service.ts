@@ -56,7 +56,7 @@ const _DEFAULT_POPULATION_SIZE = 100;
 /**
  * Maximum decision history to keep per QMON.
  */
-const MAX_DECISION_HISTORY = 500;
+const MAX_DECISION_HISTORY = 20;
 
 /**
  * Minimum shares allowed by Polymarket for a buy order.

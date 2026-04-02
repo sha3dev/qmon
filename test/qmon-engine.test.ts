@@ -383,11 +383,95 @@ test("QmonEngine marks state mutation when a confirmed real seat fill updates ma
   qmonEngine.applyRealSeatPendingOrderFill(MARKET_KEY, 0.2, 5, 500);
 
   const updatedPopulation = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+  const updatedChampion = mustValue(qmonEngine.getQmon("QMON01"));
 
   assert.equal(qmonEngine.getStateSnapshotVersion() > initialSnapshotVersion, true);
   assert.equal(updatedPopulation.marketConsolidatedPnl < 0, true);
   assert.equal(updatedPopulation.seatPosition.action, "BUY_UP");
   assert.equal(updatedPopulation.seatPendingOrder, null);
+  assert.equal(updatedChampion.position.action, null);
+  assert.equal(updatedChampion.pendingOrder, null);
+  assert.equal(updatedChampion.metrics.totalPnl, 0);
+  assert.equal(updatedChampion.decisionHistory.length, 0);
+});
+
+test("QmonEngine keeps champion paper evaluation running while live routing is halted", () => {
+  const championQmon = createQmon("champion");
+  const familyState = createFamilyState({
+    ...createPopulation([championQmon], championQmon.id),
+    executionRuntime: {
+      route: "real",
+      executionState: "real-halted",
+      pendingIntent: null,
+      orderId: null,
+      submittedAt: 100,
+      confirmedVenueSeat: null,
+      pendingVenueOrders: [],
+      recoveryStartedAt: null,
+      lastReconciledAt: 100,
+      lastError: "venue rejected order",
+      isHalted: true,
+    },
+  });
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], familyState, undefined, undefined, undefined, false, false);
+  const signals = createSignals(0.9, 0.1, 0.9, 100, 10_000);
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, signals, createRegimes(), ["consensus-flip"], snapshots, { executionMode: "real" });
+  });
+  withMockNow(1_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, signals, createRegimes(), ["consensus-flip"], snapshots, { executionMode: "real" });
+  });
+
+  const updatedChampion = mustValue(qmonEngine.getQmon("QMON01"));
+  const updatedPopulation = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+
+  assert.equal(updatedChampion.position.action, "BUY_UP");
+  assert.equal(updatedChampion.metrics.totalPnl < 0, true);
+  assert.equal(updatedChampion.decisionHistory.length, 1);
+  assert.equal(updatedPopulation.executionRuntime?.isHalted, true);
+  assert.equal(updatedPopulation.executionRuntime?.lastError, "venue rejected order");
+});
+
+test("QmonEngine caps in-memory decision history to the most recent 20 decisions", () => {
+  const baseQmon = createQmon();
+  const decisionHistory: Qmon["decisionHistory"] = Array.from({ length: 25 }, (_, index) => ({
+    timestamp: index + 1,
+    market: MARKET_KEY,
+    action: index % 2 === 0 ? "BUY_UP" : "HOLD",
+    cashflow: index,
+    modelScore: 0.5,
+    triggeredBy: ["consensus-flip"],
+    fee: 0,
+    executionPrice: 0.2,
+    entryPrice: 0.2,
+    shareCount: 1,
+    priceImpactBps: 0,
+    isHydratedReplay: false,
+  }));
+  const qmonWithHistory: Qmon = {
+    ...baseQmon,
+    decisionHistory,
+  };
+  const familyState = createFamilyState(createPopulation([qmonWithHistory]));
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], familyState, undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+  withMockNow(1_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const updatedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(updatedQmon.decisionHistory.length, 20);
+  assert.equal(updatedQmon.decisionHistory[0]?.timestamp, 7);
+  assert.equal(updatedQmon.decisionHistory[19]?.timestamp, 1000);
 });
 
 test("QmonEngine keeps the seat flat when the active champion loses readiness", () => {
