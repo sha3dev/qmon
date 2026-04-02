@@ -53,6 +53,7 @@ const REAL_ACTIVITY_EVENT_TYPES = new Set([
   "live-reconcile-pending",
   "live-reconcile-confirmed",
   "live-reconcile-failed",
+  "live-window-reset",
 ]);
 const REAL_ACTIVITY_WARNING_CODES = new Set([
   "live-order-expired",
@@ -378,6 +379,74 @@ export class QmonLiveExecutionService {
     return confirmedVenueSeat;
   }
 
+  private getCurrentWindowStartMs(marketKey: MarketKey, latestSignals: StructuredSignalResult): number | null {
+    const [asset, window] = marketKey.split("-");
+    const assetSignals = asset ? latestSignals[asset] : null;
+    const windowSignals = assetSignals?.windows?.[window ?? ""] ?? null;
+    const currentWindowStartMs = windowSignals?.prices?.marketStartMs ?? null;
+
+    return currentWindowStartMs;
+  }
+
+  private getRuntimeWindowStartMs(population: QmonPopulation, executionRuntime: QmonExecutionRuntime): number | null {
+    const runtimeWindowStartMs =
+      executionRuntime.pendingIntent?.marketStartMs ??
+      population.seatPendingOrder?.marketStartMs ??
+      population.seatPosition.marketStartMs ??
+      population.seatLastWindowStartMs;
+
+    return runtimeWindowStartMs;
+  }
+
+  private hasActiveLiveRisk(population: QmonPopulation, executionRuntime: QmonExecutionRuntime): boolean {
+    const hasActiveRisk =
+      executionRuntime.orderId !== null ||
+      executionRuntime.pendingVenueOrders.length > 0 ||
+      executionRuntime.confirmedVenueSeat !== null ||
+      executionRuntime.pendingIntent !== null ||
+      population.seatPendingOrder !== null ||
+      population.seatPosition.action !== null;
+
+    return hasActiveRisk;
+  }
+
+  private shouldResetWindowScopedRuntime(
+    population: QmonPopulation,
+    executionRuntime: QmonExecutionRuntime,
+    currentWindowStartMs: number | null,
+  ): boolean {
+    const runtimeWindowStartMs = this.getRuntimeWindowStartMs(population, executionRuntime);
+    const hasWindowScopedBlock = executionRuntime.isHalted || executionRuntime.lastError !== null;
+    let shouldResetWindowScopedRuntime = false;
+
+    if (currentWindowStartMs !== null && runtimeWindowStartMs !== null && hasWindowScopedBlock) {
+      shouldResetWindowScopedRuntime = runtimeWindowStartMs < currentWindowStartMs && !this.hasActiveLiveRisk(population, executionRuntime);
+    }
+
+    return shouldResetWindowScopedRuntime;
+  }
+
+  private shouldBlockFreshEntryForCurrentWindow(
+    executionRuntime: QmonExecutionRuntime,
+    pendingOrder: QmonPendingOrder | null,
+    currentWindowStartMs: number | null,
+  ): boolean {
+    const isEntryOrder = pendingOrder?.kind === "entry";
+    const hasWindowScopedError =
+      executionRuntime.lastError !== null &&
+      executionRuntime.submittedAt !== null &&
+      executionRuntime.orderId === null &&
+      executionRuntime.confirmedVenueSeat === null &&
+      !executionRuntime.isHalted;
+    let shouldBlockFreshEntry = false;
+
+    if (isEntryOrder && hasWindowScopedError && currentWindowStartMs !== null) {
+      shouldBlockFreshEntry = executionRuntime.submittedAt >= currentWindowStartMs;
+    }
+
+    return shouldBlockFreshEntry;
+  }
+
   private buildPendingIntentKey(pendingOrder: QmonPendingOrder): string {
     return [
       pendingOrder.market,
@@ -453,6 +522,7 @@ export class QmonLiveExecutionService {
     pendingVenueOrders: readonly PendingConfirmationOrder[],
   ): Promise<void> {
     const now = Date.now();
+    const currentWindowStartMs = this.getCurrentWindowStartMs(population.market, latestSignals);
     let currentPopulation = qmonEngine.getPopulation(population.market) ?? population;
     let executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {}, now);
     let liveMarket: PolymarketMarket | null = null;
@@ -486,6 +556,20 @@ export class QmonLiveExecutionService {
       currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
     }
 
+    if (this.shouldResetWindowScopedRuntime(currentPopulation, executionRuntime, currentWindowStartMs)) {
+      executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
+        pendingIntent: null,
+        orderId: null,
+        submittedAt: null,
+        pendingVenueOrders: [],
+        isHalted: false,
+        recoveryStartedAt: null,
+        lastError: null,
+      }, now);
+      this.logLiveExecutionEvent("live-window-reset", population.market, `cleared window-scoped execution block for new window start=${currentWindowStartMs}`);
+      currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
+    }
+
     if (this.hasLiveSeatDivergence(currentPopulation, executionRuntime)) {
       const shouldLogDivergence = executionRuntime.lastError !== "live seat divergence detected between venue state and local seat ledger" || !executionRuntime.isHalted;
 
@@ -513,6 +597,11 @@ export class QmonLiveExecutionService {
         }, Date.now());
       }
 
+      return;
+    }
+
+    if (this.shouldBlockFreshEntryForCurrentWindow(executionRuntime, currentPopulation.seatPendingOrder, currentWindowStartMs)) {
+      qmonEngine.clearRealSeatPendingOrder(population.market, now);
       return;
     }
 
@@ -895,17 +984,18 @@ export class QmonLiveExecutionService {
       return;
     }
 
+    qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
     await this.updateExecutionRuntime(qmonEngine, marketKey, {
-      pendingIntent: pendingOrder,
+      pendingIntent: null,
       orderId: null,
-      submittedAt: null,
+      submittedAt: Date.now(),
       pendingVenueOrders: [],
       lastError: errorMessage,
-      isHalted: true,
+      isHalted: false,
       recoveryStartedAt: null,
       lastReconciledAt: Date.now(),
     }, Date.now());
-    this.logLiveWarning(marketKey, "live-routing-halted", errorMessage);
+    this.logLiveWarning(marketKey, "live-order-failed", errorMessage);
   }
 
   private async postAndConfirmOrder(

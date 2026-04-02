@@ -109,7 +109,10 @@ function createRealExecutionRuntime(
   return executionRuntime;
 }
 
-function createSignals(): {
+function createSignals(
+  marketStartMs = 100,
+  marketEndMs = 200,
+): {
   eth: {
     chainlinkPrice: number;
     signals: Record<string, never>;
@@ -138,8 +141,8 @@ function createSignals(): {
             priceToBeat: 2_000,
             upPrice: 0.38,
             downPrice: 0.62,
-            marketStartMs: 100,
-            marketEndMs: 200,
+            marketStartMs,
+            marketEndMs,
           },
         },
       },
@@ -1197,7 +1200,7 @@ test("QmonLiveExecutionService clears residual exit dust after a confirmed sell 
   assert.equal(status.marketRoutes[0]?.isHalted, false);
 });
 
-test("QmonLiveExecutionService halts post failures without order ids instead of retrying every tick", async () => {
+test("QmonLiveExecutionService keeps post failures without order ids scoped to the current window", async () => {
   let postCount = 0;
   const orderService = {
     init: async () => undefined,
@@ -1236,10 +1239,111 @@ test("QmonLiveExecutionService halts post failures without order ids instead of 
   const status = liveExecutionService.getStatus(engine.getPopulations());
 
   assert.equal(postCount, 1);
-  assert.equal(status.marketRoutes[0]?.isHalted, true);
-  assert.equal(status.marketRoutes[0]?.executionState, "real-halted");
-  assert.equal(status.marketRoutes[0]?.pendingIntent?.kind, "entry");
-  assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder?.kind, "entry");
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-error");
+  assert.equal(status.marketRoutes[0]?.pendingIntent, null);
+  assert.match(status.marketRoutes[0]?.lastError ?? "", /venue rejected order/);
+  assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder, null);
+});
+
+test("QmonLiveExecutionService clears window-scoped live blocks on the next market window", async () => {
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m", 1)],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      null,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-error",
+        submittedAt: 150,
+        lastError: "venue rejected order",
+        isHalted: false,
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals(300, 400) as never);
+  await liveExecutionService.flush();
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-armed");
+  assert.equal(status.marketRoutes[0]?.lastError, null);
+  assert.equal(status.marketRoutes[0]?.submittedAt, null);
+});
+
+test("QmonLiveExecutionService clears hard halts when the next window starts and no live risk remains", async () => {
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m", 1)],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      null,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-halted",
+        submittedAt: 150,
+        lastError: "window halt",
+        isHalted: true,
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals(300, 400) as never);
+  await liveExecutionService.flush();
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-armed");
+  assert.equal(status.marketRoutes[0]?.lastError, null);
+  assert.equal(status.marketRoutes[0]?.submittedAt, null);
 });
 
 test("QmonLiveExecutionService clears stale confirmed venue seats when the local seat is already flat", async () => {
