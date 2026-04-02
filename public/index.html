@@ -88,36 +88,64 @@
 
     /* Market PnL bar */
     .market-pnl-bar {
-      display: flex; gap: 10px; padding: 10px 16px;
-      background: var(--bg-secondary); border: 1px solid var(--border);
-      border-radius: 6px; overflow-x: auto;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;
+      padding: 12px 14px; background: linear-gradient(180deg, rgba(26,29,39,0.96), rgba(20,23,32,0.98));
+      border: 1px solid var(--border); border-radius: 10px;
     }
     .market-pnl-item {
-      display: flex; flex-direction: column; min-width: 100px; padding: 8px 12px;
-      background: var(--bg-card); border-radius: 5px; border: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px;
+      background: linear-gradient(180deg, rgba(34,38,54,0.98), rgba(24,27,38,0.98));
+      border-radius: 8px; border: 1px solid var(--border);
+      transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+    }
+    .market-pnl-item:hover {
+      border-color: rgba(124,77,255,0.32);
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
     }
     .market-pnl-item.real-routed {
       border-color: rgba(0,230,118,0.45);
       box-shadow: inset 0 0 0 1px rgba(0,230,118,0.12);
     }
     .market-pnl-item.total {
-      background: linear-gradient(180deg, rgba(124,77,255,0.18), rgba(34,38,54,0.95));
+      grid-column: span 2;
+      background: linear-gradient(180deg, rgba(124,77,255,0.16), rgba(34,38,54,0.96));
       border-color: rgba(124,77,255,0.45);
-      box-shadow: inset 0 0 0 1px rgba(124,77,255,0.12);
+      box-shadow: inset 0 0 0 1px rgba(124,77,255,0.12), 0 10px 24px rgba(124,77,255,0.12);
     }
     .market-pnl-item.total .market-pnl-name {
       color: var(--accent);
     }
-    .market-pnl-name { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 2px; }
-    .market-pnl-val { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .market-pnl-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+    }
+    .market-pnl-meta {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .market-pnl-name { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.7px; }
+    .market-pnl-champion { font-size: 10px; color: var(--accent); font-weight: 700; letter-spacing: 0.4px; }
+    .market-pnl-val { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .market-pnl-val.green { color: var(--green-mid); }
     .market-pnl-val.red { color: var(--red-mid); }
     .market-pnl-val.orange { color: var(--orange); }
-    .market-pnl-champion { font-size: 9px; color: var(--accent); font-weight: 700; letter-spacing: 0.4px; }
     .market-pnl-subval { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+    .market-pnl-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+    }
+    .market-pnl-metric {
+      padding: 8px 10px; border-radius: 6px; background: rgba(15,17,23,0.34);
+      border: 1px solid rgba(94,97,117,0.2);
+      min-width: 0;
+    }
+    .market-pnl-metric-label {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .market-pnl-metric-value {
+      margin-top: 4px; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
     .market-route-badge {
       display: inline-flex; align-items: center; justify-content: center;
-      padding: 2px 6px; border-radius: 999px; font-size: 8px; font-weight: 700; letter-spacing: 0.4px;
+      padding: 3px 7px; border-radius: 999px; font-size: 8px; font-weight: 700; letter-spacing: 0.4px;
       border: 1px solid var(--border);
     }
     .market-route-badge.real {
@@ -145,14 +173,6 @@
       background: rgba(255,138,101,0.14);
       border-color: rgba(255,138,101,0.28);
     }
-    .market-route-legend {
-      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-      margin-bottom: -6px;
-    }
-    .market-route-legend-label {
-      font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
-    }
-
     .diagnostics-panel {
       display: flex; flex-direction: column; gap: 10px;
       padding: 10px 14px; background: linear-gradient(180deg, rgba(124,77,255,0.08), rgba(26,29,39,0.96));
@@ -370,22 +390,22 @@
 
     /* QMON cards grid */
     .qmon-grid {
-      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 14px;
     }
 
     /* QMON card */
     .qmon-card {
       background: var(--bg-secondary); border: 1px solid var(--border);
-      border-radius: 8px; overflow: hidden; transition: all 0.2s ease;
+      border-radius: 10px; overflow: hidden; transition: all 0.2s ease;
       cursor: pointer;
     }
-    .qmon-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(124,77,255,0.15); }
-    .qmon-card.has-position { border-color: var(--accent); background: rgba(124,77,255,0.03); }
+    .qmon-card:hover { border-color: rgba(124,77,255,0.55); box-shadow: 0 10px 24px rgba(124,77,255,0.12); transform: translateY(-2px); }
+    .qmon-card.has-position { border-color: rgba(124,77,255,0.48); background: linear-gradient(180deg, rgba(124,77,255,0.05), rgba(26,29,39,0.98)); }
 
     /* Card header */
     .qmon-head {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 10px 12px; background: var(--bg-card);
+      padding: 12px 14px; background: rgba(34,38,54,0.96);
       border-bottom: 1px solid var(--border);
     }
     .qmon-id { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
@@ -401,22 +421,53 @@
     .mode-retired { background: rgba(69,90,100,0.2); color: var(--text-muted); }
 
     /* Card body */
-    .qmon-body { padding: 10px 12px; }
+    .qmon-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
 
     /* PnL display */
     .pnl-section {
-      text-align: center; padding: 10px; margin-bottom: 10px;
-      background: var(--bg-card); border-radius: 5px;
+      padding: 12px; background: linear-gradient(180deg, rgba(34,38,54,0.96), rgba(27,30,42,0.98));
+      border-radius: 8px;
       border: 1px solid var(--border);
     }
-    .pnl-label { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
+    .pnl-label { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.7px; }
     .pnl-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
     .pnl-val.green { color: var(--green-mid); }
     .pnl-val.red { color: var(--red-mid); }
     .pnl-val.orange { color: var(--orange); }
     .pnl-position { font-size: 9px; color: var(--text-muted); margin-top: 4px; }
     .pnl-position span { font-weight: 600; }
-    .selection-summary { font-size: 9px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6; display:flex; flex-wrap:wrap; gap:6px; justify-content:center; align-items:center; }
+    .selection-summary { font-size: 9px; color: var(--text-secondary); margin-top: 8px; line-height: 1.5; display:flex; flex-wrap:wrap; gap:8px; align-items:stretch; }
+    .performance-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+    }
+    .performance-metric {
+      display: flex; flex-direction: column; gap: 4px; min-width: 0;
+      padding: 9px 10px; border-radius: 6px; border: 1px solid rgba(94,97,117,0.2);
+      background: rgba(15,17,23,0.24);
+    }
+    .performance-metric-label {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .performance-metric-value {
+      font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums;
+      line-height: 1.1;
+    }
+    .performance-metric-note {
+      font-size: 9px; color: var(--text-secondary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .metric-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:8px;
+    }
+    .metric-card {
+      padding:9px 10px; border-radius:8px; background:rgba(34,38,54,0.72); border:1px solid var(--border);
+    }
+    .metric-card-label {
+      font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.55px;
+    }
+    .metric-card-value {
+      margin-top:5px; font-size:12px; font-weight:700; font-variant-numeric: tabular-nums;
+    }
     .state-badge {
       font-size: 8px; padding: 3px 8px; border-radius: 3px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid var(--border);
@@ -440,6 +491,23 @@
     .gen-badge.gen-3 { background: rgba(255,215,64,0.14); color: var(--yellow); border-color: rgba(255,215,64,0.28); }
     .gen-badge.gen-4 { background: rgba(255,152,0,0.14); color: var(--orange); border-color: rgba(255,152,0,0.28); }
     .gen-badge.gen-5 { background: rgba(255,23,68,0.14); color: var(--red-mid); border-color: rgba(239,83,80,0.28); }
+
+    @media (max-width: 980px) {
+      .market-pnl-item.total {
+        grid-column: span 1;
+      }
+    }
+    @media (max-width: 720px) {
+      .market-pnl-bar {
+        grid-template-columns: 1fr;
+      }
+      .market-pnl-grid, .performance-grid, .metric-grid {
+        grid-template-columns: 1fr;
+      }
+      .qmon-grid {
+        grid-template-columns: 1fr;
+      }
+    }
 
     /* Pagination */
     .pagination { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
@@ -491,34 +559,43 @@
   <div class="dashboard">
     <!-- Seat / consolidated PnL bar -->
     <div class="market-pnl-bar" x-show="marketPnls.length > 0">
-      <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
-        <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL</span>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-            <span class="market-route-badge paper">PAPER</span>
-            <span class="market-pnl-val" style="font-size:13px; font-weight:700;" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
+      <div class="market-pnl-item total">
+        <div class="market-pnl-head">
+          <div class="market-pnl-meta">
+            <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL SESSION</span>
+            <span class="market-pnl-subval">Paper model vs live seat</span>
           </div>
-          <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-            <span class="market-route-badge real">REAL</span>
-            <span class="market-pnl-val" style="font-size:13px; font-weight:700;" :class="pnlClass(totalRealMarketPnl)" x-text="formatPnl(totalRealMarketPnl)"></span>
+        </div>
+        <div class="market-pnl-grid">
+          <div class="market-pnl-metric">
+            <span class="market-pnl-metric-label">Paper</span>
+            <span class="market-pnl-metric-value" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
+          </div>
+          <div class="market-pnl-metric">
+            <span class="market-pnl-metric-label">Real</span>
+            <span class="market-pnl-metric-value" :class="pnlClass(totalRealMarketPnl)" x-text="formatPnl(totalRealMarketPnl)"></span>
           </div>
         </div>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
-        <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">
-          <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
-          <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
-          <div style="display:flex; gap:8px; align-items:center;">
-            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-              <span class="market-route-badge paper">PAPER</span>
-              <span class="market-pnl-val" style="font-size:12px; font-weight:700;" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
+        <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="cursor:pointer;" @click="openMarketActivity(mp.market)">
+          <div class="market-pnl-head">
+            <div class="market-pnl-meta">
+              <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
+              <span class="market-pnl-champion" x-show="mp.championId" x-text="'CH ' + mp.championId"></span>
             </div>
-            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
-              <span class="market-route-badge real">REAL</span>
-              <span class="market-pnl-val" style="font-size:12px; font-weight:700;" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
+            <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
+          </div>
+          <div class="market-pnl-grid">
+            <div class="market-pnl-metric">
+              <span class="market-pnl-metric-label">Paper</span>
+              <span class="market-pnl-metric-value" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
+            </div>
+            <div class="market-pnl-metric">
+              <span class="market-pnl-metric-label">Real</span>
+              <span class="market-pnl-metric-value" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
             </div>
           </div>
-          <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
         </div>
       </template>
     </div>
@@ -729,36 +806,36 @@
             <!-- PnL -->
             <div class="pnl-section">
               <div class="pnl-label">PAPER / REAL</div>
-              <div class="selection-summary" style="display:flex; justify-content:space-between; gap:8px;">
-                <span style="display:flex; flex-direction:column; align-items:flex-start; gap:2px;">
-                  <span class="window-pnl-label">PAPER</span>
-                  <span class="pnl-val" :class="pnlClass(getPaperDisplayPnl(qmon))" x-text="formatPnl(getPaperDisplayPnl(qmon))"></span>
-                  <span :class="windowPnlClass(qmon)" x-text="'W ' + formatPnl(getPaperWindowDisplayPnl(qmon))"></span>
+              <div class="selection-summary performance-grid">
+                <span class="performance-metric">
+                  <span class="performance-metric-label">Paper</span>
+                  <span class="performance-metric-value" :class="pnlClass(getPaperDisplayPnl(qmon))" x-text="formatPnl(getPaperDisplayPnl(qmon))"></span>
+                  <span class="performance-metric-note" :class="windowPnlClass(qmon)" x-text="'Window ' + formatPnl(getPaperWindowDisplayPnl(qmon))"></span>
                 </span>
-                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:2px;">
-                  <span class="window-pnl-label">REAL</span>
-                  <span class="pnl-val" :class="pnlClass(getRealDisplayPnl(qmon) || 0)" x-text="formatNullablePnl(getRealDisplayPnl(qmon))"></span>
-                  <span :class="getRealStateClass(qmon)" x-text="getRealStateLabel(qmon)"></span>
+                <span class="performance-metric" style="align-items:flex-end; text-align:right;">
+                  <span class="performance-metric-label">Real</span>
+                  <span class="performance-metric-value" :class="pnlClass(getRealDisplayPnl(qmon) || 0)" x-text="formatNullablePnl(getRealDisplayPnl(qmon))"></span>
+                  <span class="performance-metric-note" :class="getRealStateClass(qmon)" x-text="getRealStateLabel(qmon)"></span>
                 </span>
               </div>
             </div>
 
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
-              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
-                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Fitness</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="pnlClass(qmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(qmon.metrics.fitnessScore)"></div>
+            <div class="metric-grid">
+              <div class="metric-card">
+                <div class="metric-card-label">Fitness</div>
+                <div class="metric-card-value" :class="pnlClass(qmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(qmon.metrics.fitnessScore)"></div>
               </div>
-              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
-                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Est. EV</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="pnlClass(qmon.metrics.totalEstimatedNetEvUsd || 0)" x-text="formatPnl(qmon.metrics.totalEstimatedNetEvUsd || 0)"></div>
+              <div class="metric-card">
+                <div class="metric-card-label">Est. EV</div>
+                <div class="metric-card-value" :class="pnlClass(qmon.metrics.totalEstimatedNetEvUsd || 0)" x-text="formatPnl(qmon.metrics.totalEstimatedNetEvUsd || 0)"></div>
               </div>
-              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
-                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Fee Ratio</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="costRateClass(qmon.metrics.feeRatio)" x-text="formatRatio(qmon.metrics.feeRatio)"></div>
+              <div class="metric-card">
+                <div class="metric-card-label">Fee Ratio</div>
+                <div class="metric-card-value" :class="costRateClass(qmon.metrics.feeRatio)" x-text="formatRatio(qmon.metrics.feeRatio)"></div>
               </div>
-              <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
-                <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Paper Entry</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)" x-text="formatNullableScore(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)"></div>
+              <div class="metric-card">
+                <div class="metric-card-label">Paper Entry</div>
+                <div class="metric-card-value" :class="scoreClass(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)" x-text="formatNullableScore(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)"></div>
               </div>
             </div>
 
@@ -1320,7 +1397,7 @@
       </div>
 
       <div class="diagnostics-flags" x-show="selectedMarketDiagnostics && selectedMarketDiagnostics.flags?.length > 0 && !marketActivityLoading" style="margin-bottom:10px;">
-        <template x-for="flag in selectedMarketDiagnostics.flags" :key="flag.key">
+        <template x-for="flag in (selectedMarketDiagnostics?.flags || [])" :key="flag.key">
           <div class="diagnostics-flag" x-text="flag.message"></div>
         </template>
       </div>
