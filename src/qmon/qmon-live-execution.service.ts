@@ -393,6 +393,7 @@ export class QmonLiveExecutionService {
       executionRuntime.pendingIntent?.marketStartMs ??
       population.seatPendingOrder?.marketStartMs ??
       population.seatPosition.marketStartMs ??
+      executionRuntime.submittedAt ??
       population.seatLastWindowStartMs;
 
     return runtimeWindowStartMs;
@@ -574,6 +575,7 @@ export class QmonLiveExecutionService {
       const shouldLogDivergence = executionRuntime.lastError !== "live seat divergence detected between venue state and local seat ledger" || !executionRuntime.isHalted;
 
       executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
+        submittedAt: executionRuntime.submittedAt ?? now,
         isHalted: true,
         recoveryStartedAt: null,
         lastError: "live seat divergence detected between venue state and local seat ledger",
@@ -668,6 +670,7 @@ export class QmonLiveExecutionService {
                 pendingIntent: null,
                 orderId: null,
                 pendingVenueOrders: [],
+                submittedAt: executionRuntime.submittedAt ?? now,
                 isHalted: true,
                 recoveryStartedAt: null,
                 lastError: "stale live order cancelled after market expiry",
@@ -683,6 +686,7 @@ export class QmonLiveExecutionService {
 
       return this.updateExecutionRuntime(qmonEngine, market, {
         pendingVenueOrders: marketPendingVenueOrders,
+        submittedAt: executionRuntime.submittedAt ?? now,
         isHalted: true,
         recoveryStartedAt: executionRuntime.recoveryStartedAt ?? now,
         lastError: executionRuntime.lastError ?? "waiting for venue confirmation",
@@ -706,7 +710,7 @@ export class QmonLiveExecutionService {
       return this.updateExecutionRuntime(qmonEngine, market, {
         pendingIntent: null,
         orderId: null,
-        submittedAt: null,
+        submittedAt: executionRuntime.submittedAt ?? now,
         pendingVenueOrders: [],
         isHalted: true,
         recoveryStartedAt: null,
@@ -803,6 +807,7 @@ export class QmonLiveExecutionService {
           `reconciliation still pending for orderId=${executionRuntime.orderId}`,
         );
         resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
+          submittedAt: executionRuntime.submittedAt ?? Date.now(),
           isHalted: true,
           recoveryStartedAt: executionRuntime.recoveryStartedAt ?? Date.now(),
           lastError: executionRuntime.lastError ?? "waiting for venue confirmation",
@@ -865,6 +870,7 @@ export class QmonLiveExecutionService {
     if (belowMinimumOrderSizeError !== null) {
       await this.updateExecutionRuntime(qmonEngine, marketKey, {
         pendingIntent: pendingOrder,
+        submittedAt: Date.now(),
         isHalted: true,
         recoveryStartedAt: null,
         lastError: belowMinimumOrderSizeError,
@@ -885,6 +891,7 @@ export class QmonLiveExecutionService {
         qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
         await this.updateExecutionRuntime(qmonEngine, marketKey, {
           pendingIntent: pendingOrder,
+          submittedAt: Date.now(),
           isHalted: true,
           recoveryStartedAt: null,
           lastError: "confirmed live order missing traceable orderId",
@@ -928,6 +935,7 @@ export class QmonLiveExecutionService {
 
       if (updatedPopulation !== null && this.hasLiveSeatDivergence(updatedPopulation, this.getExecutionRuntime(updatedPopulation, "real"))) {
         await this.updateExecutionRuntime(qmonEngine, marketKey, {
+          submittedAt: Date.now(),
           isHalted: true,
           recoveryStartedAt: null,
           lastError: "confirmed live order did not reconcile cleanly with local seat state",
@@ -944,6 +952,7 @@ export class QmonLiveExecutionService {
       await this.updateExecutionRuntime(qmonEngine, marketKey, {
         pendingIntent: pendingOrder,
         orderId: attemptResult.orderId,
+        submittedAt: Date.now(),
         isHalted: true,
         recoveryStartedAt: Date.now(),
         lastError: errorMessage,
@@ -976,6 +985,7 @@ export class QmonLiveExecutionService {
     if (errorMessage.includes("traceable orderId") || errorMessage.includes("without id")) {
       await this.updateExecutionRuntime(qmonEngine, marketKey, {
         pendingIntent: pendingOrder,
+        submittedAt: Date.now(),
         isHalted: true,
         recoveryStartedAt: null,
         lastError: errorMessage,

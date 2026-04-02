@@ -1265,17 +1265,20 @@ test("QmonLiveExecutionService clears window-scoped live blocks on the next mark
     null,
   );
   const engine = createMockEngine([
-    createPopulation(
-      "eth-5m",
-      null,
-      null,
-      createRealExecutionRuntime({
-        executionState: "real-error",
-        submittedAt: 150,
-        lastError: "venue rejected order",
-        isHalted: false,
-      }),
-    ),
+    {
+      ...createPopulation(
+        "eth-5m",
+        null,
+        null,
+        createRealExecutionRuntime({
+          executionState: "real-error",
+          submittedAt: 150,
+          lastError: "venue rejected order",
+          isHalted: false,
+        }),
+      ),
+      seatLastWindowStartMs: 300,
+    },
   ]);
 
   await liveExecutionService.initialize({
@@ -1315,17 +1318,20 @@ test("QmonLiveExecutionService clears hard halts when the next window starts and
     null,
   );
   const engine = createMockEngine([
-    createPopulation(
-      "eth-5m",
-      null,
-      null,
-      createRealExecutionRuntime({
-        executionState: "real-halted",
-        submittedAt: 150,
-        lastError: "window halt",
-        isHalted: true,
-      }),
-    ),
+    {
+      ...createPopulation(
+        "eth-5m",
+        null,
+        null,
+        createRealExecutionRuntime({
+          executionState: "real-halted",
+          submittedAt: 150,
+          lastError: "window halt",
+          isHalted: true,
+        }),
+      ),
+      seatLastWindowStartMs: 300,
+    },
   ]);
 
   await liveExecutionService.initialize({
