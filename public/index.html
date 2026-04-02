@@ -1570,7 +1570,7 @@
             if (!document.hidden) {
               void this.fetchSlowData();
             }
-          }, 12000);
+          }, 30000);
         },
 
         async fetchFastData() {
@@ -1640,10 +1640,10 @@
         },
 
         async refreshRealLogItems() {
-          const populationMarkets = [...new Set((this.familyState?.populations || []).map((population) => population.market).filter(Boolean))];
+          const realLogMarkets = this.getRealLogMarkets();
           const realLogEvents = [];
 
-          for (const market of populationMarkets) {
+          for (const market of realLogMarkets) {
             try {
               const response = await fetch(`/api/qmons/market-activity?market=${encodeURIComponent(market)}&range=24h&limit=200`);
 
@@ -1659,6 +1659,20 @@
           }
 
           this.realLogItems = this.buildRealLogItems(realLogEvents).slice(0, 100);
+        },
+
+        getRealLogMarkets() {
+          const seatActiveMarkets = (this.familyState?.populations || [])
+            .filter((population) => population?.seatPosition?.action)
+            .map((population) => population.market)
+            .filter(Boolean);
+          const seatHistoryMarkets = (this.diagnosticsOverview?.markets || [])
+            .filter((marketRow) => (marketRow?.seatTradeCount || 0) > 0)
+            .map((marketRow) => marketRow.market)
+            .filter(Boolean);
+          const realLogMarkets = [...new Set([...seatActiveMarkets, ...seatHistoryMarkets])];
+
+          return realLogMarkets;
         },
 
         getSeatWindowState(market) {
