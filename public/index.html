@@ -1781,10 +1781,10 @@
           this.marketPnls = populations.map((population) => {
             const champion = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) || null;
             const seatOpenPnl = this.getSeatOpenPnl(population);
-            const paperOpenPnl = champion ? this.getPaperOpenPnl(champion) : 0;
+            const paperOpenValue = champion ? this.getPaperMarkedOpenValue(champion) : 0;
             const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
             const seatSessionPnl = hasRealExecutionMode ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
-            const paperPnl = (population.marketPaperSessionPnl || 0) + paperOpenPnl;
+            const paperPnl = (population.marketPaperSessionPnl || 0) + paperOpenValue;
 
             return {
               market: population.market,
