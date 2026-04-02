@@ -502,7 +502,8 @@
     <div class="market-pnl-bar" x-show="marketPnls.length > 0">
       <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
         <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL</span>
-        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalActiveMarketPnl)" x-text="executionModeLabel + ' ' + formatPnl(totalActiveMarketPnl)"></span>
+        <span class="market-route-badge" :class="runtimeStatus?.mode === 'real' ? 'real' : 'paper'" x-text="runtimeStatus?.mode === 'real' ? 'REAL' : 'PAPER'"></span>
+        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalActiveMarketPnl)" x-text="formatPnl(totalActiveMarketPnl)"></span>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
         <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">

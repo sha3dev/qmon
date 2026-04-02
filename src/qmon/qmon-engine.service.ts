@@ -74,7 +74,7 @@ const MIN_POSITION_NOTIONAL_USD = 1;
  */
 const ENTRY_COOLDOWN_MS = 30_000;
 const STOP_LOSS_MIN_HOLD_MS = 60_000;
-const MAX_EV_POSITION_MULTIPLIER = 2;
+const MAX_EV_POSITION_MULTIPLIER = 1.5;
 const TRIGGER_EV_DISCOUNT_USD = 0.02;
 const NO_TRIGGER_EV_PREMIUM_USD = 0.03;
 const THESIS_INVALIDATION_ALPHA_FLIP = 0.08;
@@ -356,16 +356,13 @@ export class QmonEngine {
   /**
    * Keep each population aligned with the canonical execution runtime model.
    */
-  private normalizePopulationExecutionRuntime(
-    population: QmonPopulation,
-    routeOverride?: QmonExecutionRoute,
-  ): QmonPopulation {
+  private normalizePopulationExecutionRuntime(population: QmonPopulation, routeOverride?: QmonExecutionRoute): QmonPopulation {
     const route = routeOverride ?? population.executionRuntime?.route ?? "paper";
     const currentExecutionRuntime = population.executionRuntime ?? this.createDefaultExecutionRuntime(route);
     const normalizedExecutionRuntime: QmonExecutionRuntime = {
       route,
       executionState: currentExecutionRuntime.executionState,
-      pendingIntent: route === "real" ? population.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      pendingIntent: route === "real" ? (population.seatPendingOrder ?? currentExecutionRuntime.pendingIntent) : null,
       orderId: route === "real" ? currentExecutionRuntime.orderId : null,
       submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
       confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
@@ -2825,8 +2822,7 @@ export class QmonEngine {
 
     if (isNewWindow) {
       const shouldPreserveSeatState =
-        resolvedEvaluationOptions.executionMode === "real" &&
-        (updatedPopulation.seatPosition.action !== null || updatedPopulation.seatPendingOrder !== null);
+        resolvedEvaluationOptions.executionMode === "real" && (updatedPopulation.seatPosition.action !== null || updatedPopulation.seatPendingOrder !== null);
 
       updatedPopulation = this.championService.finalizePopulation(
         updatedPopulation,
@@ -2883,9 +2879,7 @@ export class QmonEngine {
   public applyRealSeatPendingOrderFill(market: MarketKey, averagePrice: number, filledShares: number, timestamp: number): void {
     const population = this.getPopulation(market);
     const championQmon =
-      population?.activeChampionQmonId !== null
-        ? (population?.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null)
-        : null;
+      population?.activeChampionQmonId !== null ? (population?.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
 
     if (population === null || championQmon === null || population.seatPendingOrder === null) {
       return;
