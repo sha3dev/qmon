@@ -607,7 +607,7 @@
           <div class="market-pnl-head">
             <div class="market-pnl-meta">
               <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
-              <span class="market-pnl-champion" x-show="mp.championId" x-text="'CH ' + mp.championId"></span>
+              <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
             </div>
             <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
           </div>
@@ -629,12 +629,19 @@
       <div class="health-panel">
         <div class="health-copy">
           <div class="health-title">EXECUTION HEALTH</div>
-          <div class="health-note">Current-session live execution quality. Only the aggregate fill rate is shown here.</div>
+          <div class="health-note">Current-session execution quality, split between model paper fills and confirmed live venue fills.</div>
         </div>
-        <div class="health-metric">
-          <div class="health-metric-label">Fill Rate</div>
-          <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
-          <div class="health-metric-note" x-text="'Seat trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
+        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+          <div class="health-metric">
+            <div class="health-metric-label">Paper Fill Rate</div>
+            <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.paperFillRate || 0)"></div>
+            <div class="health-metric-note">Model pending orders filled</div>
+          </div>
+          <div class="health-metric">
+            <div class="health-metric-label">Real Fill Rate</div>
+            <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.realFillRate || 0)"></div>
+            <div class="health-metric-note" x-text="'Seat trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1633,16 +1640,22 @@
         },
 
         async refreshRealLogItems() {
-          let realLogEvents = [];
+          const populationMarkets = [...new Set((this.familyState?.populations || []).map((population) => population.market).filter(Boolean))];
+          const realLogEvents = [];
 
-          try {
-            const response = await fetch('/api/qmons/diagnostics/events?range=24h&limit=1000');
+          for (const market of populationMarkets) {
+            try {
+              const response = await fetch(`/api/qmons/market-activity?market=${encodeURIComponent(market)}&range=24h&limit=200`);
 
-            if (response.ok) {
-              realLogEvents = await response.json();
+              if (response.ok) {
+                const marketEvents = await response.json();
+
+                if (Array.isArray(marketEvents)) {
+                  realLogEvents.push(...marketEvents);
+                }
+              }
+            } catch (error) {
             }
-          } catch (error) {
-            realLogEvents = [];
           }
 
           this.realLogItems = this.buildRealLogItems(realLogEvents).slice(0, 100);
@@ -2193,7 +2206,7 @@
           const realLogItems = [];
 
           for (const realLogEvent of sortedEvents) {
-            const tradeKey = `${realLogEvent.market || '—'}:${realLogEvent.qmonId || '—'}`;
+            const tradeKey = `${realLogEvent.market || '—'}`;
 
             if (realLogEvent.eventType === 'position-opened') {
               openTradesByKey.set(tradeKey, realLogEvent);
@@ -2214,6 +2227,8 @@
             const shareCount = realLogEvent.shareCount ?? openingEvent?.shareCount ?? null;
             const entryPrice = openingEvent?.entryPrice ?? openingEvent?.executionPrice ?? null;
             const exitPrice = realLogEvent.exitPrice ?? realLogEvent.executionPrice ?? null;
+            const fallbackEntryPrice = openingEvent?.entryPrice ?? openingEvent?.executionPrice ?? null;
+            const effectiveEntryPrice = entryPrice !== null ? entryPrice : fallbackEntryPrice;
 
             realLogItems.push({
               id: `${tradeKey}:${realLogEvent.timestamp}:closed`,
@@ -2223,7 +2238,7 @@
               sideText: this.formatPositionAction(sideAction),
               sideClass: 'neutral',
               sharesText: shareCount !== null ? Number(shareCount).toFixed(2) : '—',
-              entryPriceText: entryPrice !== null ? Number(entryPrice).toFixed(4) : '—',
+              entryPriceText: effectiveEntryPrice !== null ? Number(effectiveEntryPrice).toFixed(4) : '—',
               currentPriceText: '—',
               exitPriceText: exitPrice !== null ? Number(exitPrice).toFixed(4) : '—',
               resultText: this.formatPnl(netPnl),
@@ -2239,7 +2254,7 @@
             const seatPosition = population?.seatPosition || null;
             const sideAction = seatPosition?.action || openingEvent.action || null;
             const shareCount = seatPosition?.shareCount ?? openingEvent.shareCount ?? null;
-            const entryPrice = openingEvent.entryPrice ?? openingEvent.executionPrice ?? null;
+            const entryPrice = seatPosition?.entryPrice ?? openingEvent.entryPrice ?? openingEvent.executionPrice ?? null;
             const currentPrice = this.getLiveTokenPrice(market, sideAction);
             const currentMarkedExitValue =
               shareCount !== null && currentPrice !== null ? shareCount * currentPrice : null;

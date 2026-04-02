@@ -53,6 +53,8 @@ type DiagnosticsAggregate = {
   orderFilledCount: number;
   orderPartialFillCount: number;
   orderExpiredCount: number;
+  liveOrderPostedCount: number;
+  liveOrderConfirmedCount: number;
   priceImpactBpsSum: number;
   priceImpactBpsSamples: number;
   slippageRejectedCount: number;
@@ -98,6 +100,8 @@ export type DiagnosticsMarketSummary = {
   readonly totalRealizedPnl: number;
   readonly seatTradeCount: number;
   readonly fillRate: number;
+  readonly paperFillRate: number;
+  readonly realFillRate: number;
   readonly orderFailureRate: number;
   readonly avgPriceImpactBps: number | null;
   readonly slippageRejectedCount: number;
@@ -116,6 +120,8 @@ export type DiagnosticsOverview = {
     readonly seatRealizedPnl: number;
     readonly totalRealizedPnl: number;
     readonly fillRate: number;
+    readonly paperFillRate: number;
+    readonly realFillRate: number;
     readonly orderFailureRate: number;
     readonly avgPriceImpactBps: number | null;
     readonly seatTradeCount: number;
@@ -217,6 +223,8 @@ export class QmonValidationLogService {
       orderFilledCount: 0,
       orderPartialFillCount: 0,
       orderExpiredCount: 0,
+      liveOrderPostedCount: 0,
+      liveOrderConfirmedCount: 0,
       priceImpactBpsSum: 0,
       priceImpactBpsSamples: 0,
       slippageRejectedCount: 0,
@@ -416,6 +424,14 @@ export class QmonValidationLogService {
       this.incrementCounter(nextAggregate.qmonExpireCounts, eventQmonId);
     }
 
+    if (event.eventType === "live-order-posted") {
+      nextAggregate.liveOrderPostedCount += 1;
+    }
+
+    if (event.eventType === "live-order-confirmed") {
+      nextAggregate.liveOrderConfirmedCount += 1;
+    }
+
     if (priceImpactBps !== null) {
       nextAggregate.priceImpactBpsSum += priceImpactBps;
       nextAggregate.priceImpactBpsSamples += 1;
@@ -509,6 +525,8 @@ export class QmonValidationLogService {
     mergedAggregate.orderFilledCount += right.orderFilledCount;
     mergedAggregate.orderPartialFillCount += right.orderPartialFillCount;
     mergedAggregate.orderExpiredCount += right.orderExpiredCount;
+    mergedAggregate.liveOrderPostedCount += right.liveOrderPostedCount;
+    mergedAggregate.liveOrderConfirmedCount += right.liveOrderConfirmedCount;
     mergedAggregate.priceImpactBpsSum += right.priceImpactBpsSum;
     mergedAggregate.priceImpactBpsSamples += right.priceImpactBpsSamples;
     mergedAggregate.slippageRejectedCount += right.slippageRejectedCount;
@@ -934,6 +952,13 @@ export class QmonValidationLogService {
     return orderFailureRate;
   }
 
+  private calculateRealFillRate(aggregate: DiagnosticsAggregate): number {
+    const denominator = aggregate.liveOrderPostedCount;
+    const realFillRate = denominator > 0 ? aggregate.liveOrderConfirmedCount / denominator : 0;
+
+    return realFillRate;
+  }
+
   private calculateAvgPriceImpactBps(aggregate: DiagnosticsAggregate): number | null {
     const avgPriceImpactBps = aggregate.priceImpactBpsSamples > 0 ? aggregate.priceImpactBpsSum / aggregate.priceImpactBpsSamples : null;
 
@@ -1032,6 +1057,8 @@ export class QmonValidationLogService {
       totalRealizedPnl: aggregate.totalRealizedPnl,
       seatTradeCount: aggregate.seatPositionClosedCount,
       fillRate: this.calculateFillRate(aggregate),
+      paperFillRate: this.calculateFillRate(aggregate),
+      realFillRate: this.calculateRealFillRate(aggregate),
       orderFailureRate: this.calculateOrderFailureRate(aggregate),
       avgPriceImpactBps: this.calculateAvgPriceImpactBps(aggregate),
       slippageRejectedCount: aggregate.slippageRejectedCount,
@@ -1256,6 +1283,8 @@ export class QmonValidationLogService {
       seatRealizedPnl: globalAggregate.seatRealizedPnl,
       totalRealizedPnl: globalAggregate.totalRealizedPnl,
       fillRate: this.calculateFillRate(globalAggregate),
+      paperFillRate: this.calculateFillRate(globalAggregate),
+      realFillRate: this.calculateRealFillRate(globalAggregate),
       orderFailureRate: this.calculateOrderFailureRate(globalAggregate),
       avgPriceImpactBps: this.calculateAvgPriceImpactBps(globalAggregate),
       seatTradeCount: globalAggregate.seatPositionClosedCount,

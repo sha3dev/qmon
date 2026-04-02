@@ -110,6 +110,8 @@ const INITIAL_VOLATILITY_PATTERNS: readonly VolatilityRegimeGenes[] = [
   [false, true, false],
 ] as const;
 
+type QmonGenomeFamily = "momentum-following" | "mispricing-reversion" | "order-book-confirmation" | "late-window-dislocation";
+
 /**
  * @section class
  */
@@ -316,7 +318,7 @@ export class QmonGenomeService {
     return exitPolicy;
   }
 
-  private createGenomeFamily(family: "momentum-following" | "mispricing-reversion" | "order-book-confirmation" | "late-window-dislocation"): QmonGenome {
+  private createGenomeFamily(family: QmonGenomeFamily): QmonGenome {
     let predictiveSignalGenes: readonly PredictiveSignalGene[] = [];
     let microstructureSignalGenes: readonly MicrostructureSignalGene[] = [];
     let triggerGenes: readonly TriggerGene[] = [];
@@ -446,7 +448,136 @@ export class QmonGenomeService {
     };
   }
 
-  private createInitialPopulationVariant(baseGenome: QmonGenome, baseIndex: number, variantIndex: number): QmonGenome {
+  private clampNumber(value: number, minimumValue: number, maximumValue: number): number {
+    const clampedValue = Math.min(maximumValue, Math.max(minimumValue, value));
+
+    return clampedValue;
+  }
+
+  private createInitialPopulationEntryPolicy(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): EntryPolicy {
+    const variantOffset = (variantIndex % 5) - 2;
+    let minEdgeBps = Math.round(this.clampNumber(baseGenome.entryPolicy.minEdgeBps + variantOffset * 5, 15, 60));
+    let minNetEvUsd = Number(this.clampNumber(baseGenome.entryPolicy.minNetEvUsd + variantOffset * 0.01, 0.03, 0.12).toFixed(2));
+    const minConfirmations = family === "order-book-confirmation" ? 3 : baseGenome.entryPolicy.minConfirmations;
+    const maxSpreadPenaltyBps = Math.round(
+      this.clampNumber(baseGenome.entryPolicy.maxSpreadPenaltyBps + variantOffset * 5, 20, 80),
+    );
+    let maxSlippageBps = Math.round(
+      this.clampNumber(baseGenome.entryPolicy.maxSlippageBps + variantOffset * 10, 25, config.MAX_MAX_SLIPPAGE_BPS),
+    );
+    let minFillQuality = Number(this.clampNumber(baseGenome.entryPolicy.minFillQuality + variantOffset * 0.05, 0.35, 0.7).toFixed(2));
+
+    if (family === "order-book-confirmation") {
+      minFillQuality = Number(Math.max(minFillQuality, 0.5).toFixed(2));
+    }
+
+    if (family === "late-window-dislocation") {
+      minEdgeBps = Math.round(Math.max(minEdgeBps, 40));
+      minNetEvUsd = Number(Math.max(minNetEvUsd, 0.08).toFixed(2));
+      maxSlippageBps = Math.round(Math.min(maxSlippageBps, 75));
+    } else if (family === "mispricing-reversion") {
+      minNetEvUsd = Number(this.clampNumber(minNetEvUsd, 0.05, 0.12).toFixed(2));
+      maxSlippageBps = Math.round(Math.min(maxSlippageBps, 75));
+    } else if (family === "momentum-following") {
+      minNetEvUsd = Number(this.clampNumber(minNetEvUsd, 0.03, 0.1).toFixed(2));
+      maxSlippageBps = Math.round(Math.max(maxSlippageBps, 50));
+    }
+
+    const entryPolicy: EntryPolicy = {
+      minEdgeBps,
+      minNetEvUsd,
+      minConfirmations,
+      maxSpreadPenaltyBps,
+      maxSlippageBps,
+      minFillQuality,
+    };
+
+    return entryPolicy;
+  }
+
+  private createInitialPopulationExecutionPolicy(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): ExecutionPolicy {
+    const sizeTier = SIZE_TIERS[(SIZE_TIERS.indexOf(baseGenome.executionPolicy.sizeTier) + variantIndex) % SIZE_TIERS.length] ?? baseGenome.executionPolicy.sizeTier;
+    let maxTradesPerWindow = baseGenome.executionPolicy.maxTradesPerWindow;
+    let cooldownProfile = baseGenome.executionPolicy.cooldownProfile;
+
+    if (family === "momentum-following") {
+      maxTradesPerWindow = 2 + (variantIndex % 2);
+      cooldownProfile = variantIndex % 3 === 0 ? "balanced" : "tight";
+    } else if (family === "order-book-confirmation") {
+      maxTradesPerWindow = 1 + (variantIndex % 2);
+      cooldownProfile = "balanced";
+    } else {
+      maxTradesPerWindow = 1;
+      cooldownProfile = "patient";
+    }
+
+    const executionPolicy: ExecutionPolicy = {
+      sizeTier,
+      maxTradesPerWindow,
+      cooldownProfile,
+    };
+
+    return executionPolicy;
+  }
+
+  private createInitialPopulationExitPolicy(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): ExitPolicy {
+    const stopLossOffset = STOP_LOSS_OPTIONS[variantIndex % STOP_LOSS_OPTIONS.length] ?? baseGenome.exitPolicy.extremeStopLossPct;
+    let thesisInvalidationPolicy = baseGenome.exitPolicy.thesisInvalidationPolicy;
+
+    if (family === "momentum-following") {
+      thesisInvalidationPolicy = "alpha-flip";
+    } else if (family === "order-book-confirmation") {
+      thesisInvalidationPolicy = "microstructure-failure";
+    } else {
+      thesisInvalidationPolicy = "hybrid";
+    }
+
+    const exitPolicy: ExitPolicy = {
+      extremeStopLossPct: stopLossOffset,
+      extremeTakeProfitPct: baseGenome.exitPolicy.extremeTakeProfitPct,
+      thesisInvalidationPolicy,
+    };
+
+    return exitPolicy;
+  }
+
+  private createInitialPopulationScoreThresholds(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): {
+    minScoreBuy: number;
+    minScoreSell: number;
+  } {
+    const thresholdShift = ((variantIndex % 3) - 1) * 0.05;
+    const minimumScoreFloor = family === "late-window-dislocation" ? 0.45 : 0.3;
+    const scoreThresholds = {
+      minScoreBuy: Number(this.clampNumber(baseGenome.minScoreBuy + thresholdShift, minimumScoreFloor, 0.65).toFixed(2)),
+      minScoreSell: Number(this.clampNumber(baseGenome.minScoreSell + thresholdShift, minimumScoreFloor, 0.65).toFixed(2)),
+    };
+
+    return scoreThresholds;
+  }
+
+  private createInitialPopulationTimeWindowGenes(baseGenome: QmonGenome, family: QmonGenomeFamily, baseIndex: number, variantIndex: number): TimeWindowGenes {
+    const basePattern = INITIAL_TIME_WINDOW_PATTERNS[(baseIndex + variantIndex) % INITIAL_TIME_WINDOW_PATTERNS.length] ?? baseGenome.timeWindowGenes;
+    let timeWindowGenes: TimeWindowGenes = [...basePattern] as TimeWindowGenes;
+
+    if (family === "late-window-dislocation") {
+      timeWindowGenes = [false, true, true];
+    }
+
+    return timeWindowGenes;
+  }
+
+  private createInitialPopulationDirectionRegimeGenes(baseGenome: QmonGenome, family: QmonGenomeFamily, baseIndex: number, variantIndex: number): DirectionRegimeGenes {
+    const basePattern = INITIAL_DIRECTION_PATTERNS[(baseIndex + variantIndex) % INITIAL_DIRECTION_PATTERNS.length] ?? baseGenome.directionRegimeGenes;
+    let directionRegimeGenes: DirectionRegimeGenes = [...basePattern] as DirectionRegimeGenes;
+
+    if (family === "momentum-following") {
+      directionRegimeGenes = [basePattern[0] ?? true, false, false];
+    }
+
+    return directionRegimeGenes;
+  }
+
+  private createInitialPopulationVariant(baseGenome: QmonGenome, family: QmonGenomeFamily, baseIndex: number, variantIndex: number): QmonGenome {
     const variantGenome = this.cloneGenome(baseGenome);
     const predictiveSignalGenes = variantGenome.predictiveSignalGenes.map((signalGene) => ({
       ...signalGene,
@@ -472,17 +603,17 @@ export class QmonGenomeService {
       (variantGenome.exchangeWeights[2] ?? 0.25) + (variantIndex % 3) * 0.01,
       Math.max(0.05, (variantGenome.exchangeWeights[3] ?? 0.25) - variantIndex * 0.005),
     ];
-    const entryPolicy = this.buildEntryPolicy(baseIndex, variantIndex, this.countEnabledTriggers(triggerGenes) > 0);
-    const executionPolicy = this.buildExecutionPolicy(baseIndex, variantIndex);
-    const exitPolicy = this.buildExitPolicy(baseIndex, variantIndex);
-    const scoreThresholds = this.buildScoreThresholds(baseIndex, variantIndex);
+    const entryPolicy = this.createInitialPopulationEntryPolicy(baseGenome, family, variantIndex);
+    const executionPolicy = this.createInitialPopulationExecutionPolicy(baseGenome, family, variantIndex);
+    const exitPolicy = this.createInitialPopulationExitPolicy(baseGenome, family, variantIndex);
+    const scoreThresholds = this.createInitialPopulationScoreThresholds(baseGenome, family, variantIndex);
     const variant: QmonGenome = {
       predictiveSignalGenes,
       microstructureSignalGenes,
       signalGenes: this.buildLegacySignalGenes(predictiveSignalGenes, microstructureSignalGenes),
       triggerGenes,
-      timeWindowGenes: INITIAL_TIME_WINDOW_PATTERNS[(baseIndex + variantIndex) % INITIAL_TIME_WINDOW_PATTERNS.length] ?? variantGenome.timeWindowGenes,
-      directionRegimeGenes: INITIAL_DIRECTION_PATTERNS[(baseIndex + variantIndex) % INITIAL_DIRECTION_PATTERNS.length] ?? variantGenome.directionRegimeGenes,
+      timeWindowGenes: this.createInitialPopulationTimeWindowGenes(baseGenome, family, baseIndex, variantIndex),
+      directionRegimeGenes: this.createInitialPopulationDirectionRegimeGenes(baseGenome, family, baseIndex, variantIndex),
       volatilityRegimeGenes:
         INITIAL_VOLATILITY_PATTERNS[(baseIndex + variantIndex) % INITIAL_VOLATILITY_PATTERNS.length] ?? variantGenome.volatilityRegimeGenes,
       exchangeWeights: this.normalizeExchangeWeights(rawExchangeWeights),
@@ -842,24 +973,24 @@ export class QmonGenomeService {
   }
 
   public generateInitialPopulation(populationSize = INITIAL_POPULATION_SIZE): readonly QmonGenome[] {
-    const baseFamilies: readonly QmonGenome[] = [
-      this.createGenomeFamily("momentum-following"),
-      this.createGenomeFamily("mispricing-reversion"),
-      this.createGenomeFamily("order-book-confirmation"),
-      this.createGenomeFamily("late-window-dislocation"),
+    const baseFamilies: readonly { family: QmonGenomeFamily; genome: QmonGenome }[] = [
+      { family: "momentum-following", genome: this.createGenomeFamily("momentum-following") },
+      { family: "mispricing-reversion", genome: this.createGenomeFamily("mispricing-reversion") },
+      { family: "order-book-confirmation", genome: this.createGenomeFamily("order-book-confirmation") },
+      { family: "late-window-dislocation", genome: this.createGenomeFamily("late-window-dislocation") },
     ];
     const initialPopulation: QmonGenome[] = [];
 
     for (let index = 0; index < populationSize; index += 1) {
       const baseIndex = index % baseFamilies.length;
       const variantIndex = Math.floor(index / baseFamilies.length);
-      const baseGenome = baseFamilies[baseIndex];
+      const baseFamily = baseFamilies[baseIndex];
 
-      if (baseGenome === undefined) {
+      if (baseFamily === undefined) {
         throw new Error("initial genome families are empty");
       }
 
-      initialPopulation.push(this.createInitialPopulationVariant(baseGenome, baseIndex, variantIndex));
+      initialPopulation.push(this.createInitialPopulationVariant(baseFamily.genome, baseFamily.family, baseIndex, variantIndex));
     }
 
     return initialPopulation;

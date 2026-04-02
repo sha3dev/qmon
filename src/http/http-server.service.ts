@@ -486,6 +486,8 @@ export class HttpServerService {
               seatRealizedPnl: 0,
               totalRealizedPnl: 0,
               fillRate: 0,
+              paperFillRate: 0,
+              realFillRate: 0,
               orderFailureRate: 0,
               avgPriceImpactBps: null,
               seatTradeCount: 0,
