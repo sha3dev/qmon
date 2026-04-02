@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -205,6 +205,28 @@ test("QmonPersistenceService serializes concurrent family-state writes", async (
   }
 });
 
+test("QmonPersistenceService writes a timestamped backup snapshot before runtime reset", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "qmon-persistence-"));
+  const originalCwd = process.cwd();
+  const persistenceService = new QmonPersistenceService(tempDir);
+  const familyState = createFamilyState();
+
+  try {
+    process.chdir(tempDir);
+    const backupPath = await persistenceService.backupFamilyState(familyState, 123_456);
+    const backupDirEntries = await readdir(join(tempDir, "tmp", "family-state-backups"));
+    const serializedBackup = await readFile(join(tempDir, "tmp", "family-state-backups", "family-state.123456.json"), "utf-8");
+
+    assert.equal(backupPath, join("./tmp", "family-state-backups", "family-state.123456.json"));
+    assert.deepEqual(backupDirEntries, ["family-state.123456.json"]);
+    assert.equal(serializedBackup.includes('"globalGeneration": 5'), true);
+    assert.equal(serializedBackup.includes('"decisionHistory"'), true);
+  } finally {
+    process.chdir(originalCwd);
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("QmonPersistenceService derives markets from configured assets and windows", () => {
   const persistenceService = new QmonPersistenceService("/tmp/qmon-persistence");
   const allMarkets = persistenceService.getAllMarkets();
@@ -272,9 +294,19 @@ test("QmonPersistenceService resets market CPnL state without losing QMON popula
   assert.equal(resetState.populations[0]?.qmons.length, 1);
   assert.equal(resetState.populations[0]?.qmons[0]?.id, "QMON01");
   assert.equal(resetState.populations[0]?.qmons[0]?.metrics.totalPnl, 4.2);
+  assert.equal(resetState.populations[0]?.qmons[0]?.position.action, null);
+  assert.equal(resetState.populations[0]?.qmons[0]?.pendingOrder, null);
+  assert.equal(resetState.populations[0]?.qmons[0]?.decisionHistory.length, 0);
+  assert.equal(resetState.populations[0]?.qmons[0]?.windowTradeCount, 0);
+  assert.equal(resetState.populations[0]?.qmons[0]?.paperWindowPnls.length, 2);
+  assert.equal(resetState.populations[0]?.qmons[0]?.paperWindowSlippageBps.length, 2);
+  assert.equal(resetState.populations[0]?.qmons[0]?.paperWindowBaselinePnl, null);
+  assert.equal(resetState.populations[0]?.qmons[0]?.currentWindowStart, null);
+  assert.equal(resetState.populations[0]?.qmons[0]?.currentWindowSlippageTotalBps, 0);
+  assert.equal(resetState.populations[0]?.qmons[0]?.currentWindowSlippageFillCount, 0);
 });
 
-test("QmonPersistenceService preserves real market seat state during CPnL reset", () => {
+test("QmonPersistenceService clears operational runtime state even in real mode", () => {
   const persistenceService = new QmonPersistenceService("/tmp/qmon-persistence");
   const baseFamilyState = createFamilyState();
   const familyState: QmonFamilyState = {
@@ -318,7 +350,51 @@ test("QmonPersistenceService preserves real market seat state during CPnL reset"
           priceToBeat: 100_000,
         },
         seatLastCloseTimestamp: 130,
+        seatLastWindowStartMs: 140,
+        seatLastSettledWindowStartMs: 145,
         marketConsolidatedPnl: 7.25,
+        executionRuntime: {
+          route: "real",
+          executionState: "real-pending-exit",
+          pendingIntent: {
+            kind: "exit",
+            action: "SELL_UP",
+            score: 0.3,
+            triggeredBy: ["take-profit-hit"],
+            requestedShares: 5,
+            remainingShares: 5,
+            limitPrice: 0.7,
+            createdAt: 120,
+            market: "btc-5m",
+            marketStartMs: 100,
+            marketEndMs: 200,
+            priceToBeat: 100_000,
+          },
+          orderId: "order-123",
+          submittedAt: 121,
+          confirmedVenueSeat: {
+            action: "BUY_UP",
+            shareCount: 5,
+            entryPrice: 0.42,
+            enteredAt: 100,
+          },
+          pendingVenueOrders: [
+            {
+              orderId: "order-123",
+              marketSlug: "btc-updown-5m-1",
+              side: "sell",
+              outcome: "up",
+              size: 5,
+              price: 0.7,
+              status: "live",
+              createdAt: 121,
+            },
+          ],
+          recoveryStartedAt: 122,
+          lastReconciledAt: 123,
+          lastError: "live seat divergence",
+          isHalted: true,
+        },
       },
     ],
   };
@@ -326,9 +402,21 @@ test("QmonPersistenceService preserves real market seat state during CPnL reset"
   const resetState = persistenceService.resetCpnlState(familyState, "real");
 
   assert.equal(resetState.populations[0]?.marketConsolidatedPnl, 0);
-  assert.equal(resetState.populations[0]?.seatPosition.action, "BUY_UP");
-  assert.equal(resetState.populations[0]?.seatPendingOrder?.action, "SELL_UP");
-  assert.equal(resetState.populations[0]?.seatLastCloseTimestamp, 130);
+  assert.equal(resetState.populations[0]?.seatPosition.action, null);
+  assert.equal(resetState.populations[0]?.seatPendingOrder, null);
+  assert.equal(resetState.populations[0]?.seatLastCloseTimestamp, null);
+  assert.equal(resetState.populations[0]?.seatLastWindowStartMs, null);
+  assert.equal(resetState.populations[0]?.seatLastSettledWindowStartMs, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.route, "real");
+  assert.equal(resetState.populations[0]?.executionRuntime?.executionState, "real-armed");
+  assert.equal(resetState.populations[0]?.executionRuntime?.pendingIntent, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.orderId, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.confirmedVenueSeat, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.pendingVenueOrders.length, 0);
+  assert.equal(resetState.populations[0]?.executionRuntime?.recoveryStartedAt, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.lastReconciledAt, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.lastError, null);
+  assert.equal(resetState.populations[0]?.executionRuntime?.isHalted, false);
 });
 
 test("QmonPersistenceService migrates legacy live execution state into the canonical population runtime", () => {

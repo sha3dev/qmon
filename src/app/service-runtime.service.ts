@@ -84,7 +84,9 @@ export class ServiceRuntime {
     const qmonPersistence = QmonPersistenceService.createDefault("./data");
     const qmonLiveStatePersistenceService = QmonLiveStatePersistenceService.createDefault("./data");
     const qmonValidationLogService = QmonValidationLogService.createDefault("./data/qmon-diagnostics");
+    await qmonValidationLogService.clearPersistedState();
     const existingState = await qmonPersistence.load();
+    const familyStateBackupPath = existingState !== null ? await qmonPersistence.backupFamilyState(existingState) : null;
     const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
     const normalizedExistingState =
       existingState !== null
@@ -101,6 +103,10 @@ export class ServiceRuntime {
       logger.info("QMON populations initialized");
     } else {
       logger.info("QMON state loaded from persistence with CPnL reset");
+
+      if (familyStateBackupPath !== null) {
+        logger.info(`QMON family state backup created at ${familyStateBackupPath}`);
+      }
     }
 
     qmonEngine.applyExecutionRoutes(config.QMON_EXECUTION_MODE, Date.now());

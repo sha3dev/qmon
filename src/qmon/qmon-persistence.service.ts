@@ -28,6 +28,7 @@ import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMark
  */
 
 const FAMILY_STATE_FILENAME = "family-state.json";
+const FAMILY_STATE_BACKUP_DIRNAME = "family-state-backups";
 
 /**
  * @section class
@@ -68,6 +69,14 @@ export class QmonPersistenceService {
 
   private getTempFilePath(targetPath: string): string {
     return `${targetPath}.tmp`;
+  }
+
+  private getFamilyStateBackupDirPath(): string {
+    return join("./tmp", FAMILY_STATE_BACKUP_DIRNAME);
+  }
+
+  private getFamilyStateBackupPath(timestamp: number): string {
+    return join(this.getFamilyStateBackupDirPath(), `family-state.${timestamp}.json`);
   }
 
   private async persistState(state: QmonFamilyState): Promise<boolean> {
@@ -272,6 +281,40 @@ export class QmonPersistenceService {
     return normalizedPopulation;
   }
 
+  private resetQmonRuntimeState(qmon: Qmon): Qmon {
+    const resetQmon: Qmon = {
+      ...qmon,
+      position: this.createEmptySeatPosition(),
+      pendingOrder: null,
+      decisionHistory: [],
+      windowTradeCount: 0,
+      paperWindowBaselinePnl: null,
+      currentWindowStart: null,
+      currentWindowSlippageTotalBps: 0,
+      currentWindowSlippageFillCount: 0,
+      lastCloseTimestamp: null,
+    };
+
+    return resetQmon;
+  }
+
+  private resetPopulationRuntimeState(population: QmonPopulation, route: QmonExecutionRoute, now: number): QmonPopulation {
+    const resetPopulation: QmonPopulation = {
+      ...population,
+      qmons: population.qmons.map((qmon) => this.resetQmonRuntimeState(qmon)),
+      marketConsolidatedPnl: 0,
+      seatPosition: this.createEmptySeatPosition(),
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: null,
+      seatLastWindowStartMs: null,
+      seatLastSettledWindowStartMs: null,
+      executionRuntime: this.createDefaultExecutionRuntime(route),
+      lastUpdated: now,
+    };
+
+    return resetPopulation;
+  }
+
   /**
    * @section public:methods
    */
@@ -364,6 +407,22 @@ export class QmonPersistenceService {
     return isSaved;
   }
 
+  public async backupFamilyState(state: QmonFamilyState, timestamp = Date.now()): Promise<string | null> {
+    const backupPath = this.getFamilyStateBackupPath(timestamp);
+    let createdBackupPath: string | null = null;
+
+    try {
+      await mkdir(this.getFamilyStateBackupDirPath(), { recursive: true });
+      await writeFile(backupPath, JSON.stringify(state, null, 2), "utf-8");
+      createdBackupPath = backupPath;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to backup family state: ${message}`);
+    }
+
+    return createdBackupPath;
+  }
+
   public normalizeFamilyState(
     state: QmonFamilyState,
     executionMode: QmonExecutionRoute = "paper",
@@ -387,25 +446,7 @@ export class QmonPersistenceService {
     const now = Date.now();
     const resetState: QmonFamilyState = {
       ...state,
-      populations: state.populations.map((population) => ({
-        ...population,
-        marketConsolidatedPnl: 0,
-        seatPosition: executionMode === "real" ? population.seatPosition : this.createEmptySeatPosition(),
-        seatPendingOrder: executionMode === "real" ? population.seatPendingOrder : null,
-        seatLastCloseTimestamp: executionMode === "real" ? population.seatLastCloseTimestamp : null,
-        seatLastWindowStartMs: executionMode === "real" ? population.seatLastWindowStartMs : null,
-        seatLastSettledWindowStartMs: executionMode === "real" ? population.seatLastSettledWindowStartMs : null,
-        executionRuntime: this.normalizeExecutionRuntime(
-          {
-            ...population,
-            seatPosition: executionMode === "real" ? population.seatPosition : this.createEmptySeatPosition(),
-            seatPendingOrder: executionMode === "real" ? population.seatPendingOrder : null,
-          },
-          executionMode,
-          null,
-        ),
-        lastUpdated: now,
-      })),
+      populations: state.populations.map((population) => this.resetPopulationRuntimeState(population, executionMode, now)),
       lastUpdated: now,
     };
 
