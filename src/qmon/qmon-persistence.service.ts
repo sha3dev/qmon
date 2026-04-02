@@ -19,6 +19,7 @@ import type {
   QmonExecutionRuntime,
   QmonFamilyState,
   QmonId,
+  QmonMetrics,
   QmonPopulation,
 } from "./qmon.types.ts";
 import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMarketLiveState } from "./qmon-live-state-persistence.service.ts";
@@ -285,10 +286,29 @@ export class QmonPersistenceService {
   private sanitizeQmonForPersistence(qmon: Qmon): Qmon {
     const sanitizedQmon: Qmon = {
       ...qmon,
+      metrics: this.normalizeQmonMetrics(qmon.metrics),
       decisionHistory: [],
     };
 
     return sanitizedQmon;
+  }
+
+  private normalizeQmonMetrics(metrics: QmonMetrics): QmonMetrics {
+    const normalizedMetrics: QmonMetrics = {
+      ...metrics,
+      peakTotalPnl: metrics.peakTotalPnl ?? Math.max(metrics.totalPnl + metrics.maxDrawdown, metrics.totalPnl, 0),
+      fitnessScore: metrics.fitnessScore ?? null,
+      grossAlphaCapture: metrics.grossAlphaCapture ?? 0,
+      netPnlPerTrade: metrics.netPnlPerTrade ?? 0,
+      feeRatio: metrics.feeRatio ?? 0,
+      slippageRatio: metrics.slippageRatio ?? 0,
+      noTradeDisciplineScore: metrics.noTradeDisciplineScore ?? 0,
+      regimeBreakdown: metrics.regimeBreakdown ?? [],
+      triggerBreakdown: metrics.triggerBreakdown ?? [],
+      totalEstimatedNetEvUsd: metrics.totalEstimatedNetEvUsd ?? 0,
+    };
+
+    return normalizedMetrics;
   }
 
   private sanitizePopulationForPersistence(population: QmonPopulation): Record<string, unknown> {

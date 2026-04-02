@@ -209,6 +209,7 @@ export class QmonEvolutionService {
     return {
       totalTrades: 0,
       totalPnl: 0,
+      peakTotalPnl: 0,
       championScore: null,
       fitnessScore: null,
       paperWindowMedianPnl: null,

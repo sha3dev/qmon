@@ -17,6 +17,18 @@ const CHAMPION_MAX_FEE_RATIO = 0.65;
 const CHAMPION_MAX_DRAWDOWN = 5;
 const CHAMPION_MIN_WINDOW_MEDIAN_PNL = 0.5;
 const CHAMPION_MIN_REGIME_COVERAGE = 2;
+const CHAMPION_RECENT_MEDIAN_WEIGHT = 260;
+const CHAMPION_RECENT_SUM_WEIGHT = 120;
+const CHAMPION_LONG_SUM_WEIGHT = 24;
+const CHAMPION_NET_PNL_PER_TRADE_WEIGHT = 180;
+const CHAMPION_REGIME_COVERAGE_WEIGHT = 40;
+const CHAMPION_DISCIPLINE_WEIGHT = 20;
+const CHAMPION_FEE_RATIO_PENALTY = 320;
+const CHAMPION_SLIPPAGE_RATIO_PENALTY = 180;
+const CHAMPION_AVG_SLIPPAGE_PENALTY = 8;
+const CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY = 220;
+const CHAMPION_WORST_WINDOW_PENALTY = 80;
+const CHAMPION_DRAWDOWN_PENALTY = 55;
 
 type ChampionInputs = {
   readonly championScore: number | null;
@@ -37,12 +49,6 @@ type ChampionInputs = {
   readonly maxDrawdown: number;
   readonly isChampionEligible: boolean;
   readonly championEligibilityReasons: readonly string[];
-};
-
-type CompletedTradeSummary = {
-  readonly entryDecision: Qmon["decisionHistory"][number];
-  readonly totalPnl: number;
-  readonly estimatedNetEvUsd: number;
 };
 
 /**
@@ -209,12 +215,6 @@ export class QmonChampionService {
     return netPnlPerTrade;
   }
 
-  private calculateRealizedTradePnl(qmon: Qmon): number {
-    const realizedTradePnl = this.buildCompletedTrades(qmon).reduce((totalPnl, completedTrade) => totalPnl + completedTrade.totalPnl, 0);
-
-    return realizedTradePnl;
-  }
-
   private calculateFeeRatio(qmon: Qmon): number {
     const lifetimeNetPnl = qmon.metrics.totalPnl;
     const grossPnlMagnitude = Math.max(Math.abs(lifetimeNetPnl) + qmon.metrics.totalFeesPaid, Number.EPSILON);
@@ -231,102 +231,27 @@ export class QmonChampionService {
   }
 
   private calculateGrossAlphaCapture(qmon: Qmon): number {
-    const grossAlphaCapture = qmon.decisionHistory.reduce((totalCapture, decision) => totalCapture + Math.max(decision.estimatedNetEvUsd ?? 0, 0), 0);
+    const grossAlphaCapture = qmon.metrics.grossAlphaCapture ?? 0;
 
     return grossAlphaCapture;
   }
 
   private calculateMaxDrawdown(qmon: Qmon): number {
-    let runningPnl = 0;
-    let peakPnl = 0;
-    let maxDrawdown = 0;
-
-    for (const completedTrade of this.buildCompletedTrades(qmon)) {
-      runningPnl += completedTrade.totalPnl;
-      peakPnl = Math.max(peakPnl, runningPnl);
-      maxDrawdown = Math.max(maxDrawdown, peakPnl - runningPnl);
-    }
+    const maxDrawdown = qmon.metrics.maxDrawdown;
 
     return maxDrawdown;
   }
 
-  private buildCompletedTrades(qmon: Qmon): readonly CompletedTradeSummary[] {
-    const completedTrades: CompletedTradeSummary[] = [];
-    let currentEntryDecision: Qmon["decisionHistory"][number] | null = null;
-    let currentTradePnl = 0;
-
-    for (const decision of qmon.decisionHistory) {
-      if (decision.action === "BUY_UP" || decision.action === "BUY_DOWN") {
-        if (currentEntryDecision !== null) {
-          completedTrades.push({
-            entryDecision: currentEntryDecision,
-            totalPnl: currentTradePnl,
-            estimatedNetEvUsd: currentEntryDecision.estimatedNetEvUsd ?? 0,
-          });
-        }
-
-        currentEntryDecision = decision;
-        currentTradePnl = decision.cashflow;
-      } else if (decision.action === "HOLD" && currentEntryDecision !== null) {
-        currentTradePnl += decision.cashflow;
-        completedTrades.push({
-          entryDecision: currentEntryDecision,
-          totalPnl: currentTradePnl,
-          estimatedNetEvUsd: currentEntryDecision.estimatedNetEvUsd ?? 0,
-        });
-        currentEntryDecision = null;
-        currentTradePnl = 0;
-      }
-    }
-
-    return completedTrades;
-  }
-
   private buildRegimeBreakdown(qmon: Qmon): readonly RegimePerformanceSlice[] {
-    const regimeAccumulator = new Map<string, { tradeCount: number; totalPnl: number; estimatedNetEvUsd: number }>();
+    const regimeBreakdown = qmon.metrics.regimeBreakdown ?? [];
 
-    for (const completedTrade of this.buildCompletedTrades(qmon)) {
-      const directionRegime = completedTrade.entryDecision.entryDirectionRegime ?? "unknown-direction";
-      const volatilityRegime = completedTrade.entryDecision.entryVolatilityRegime ?? "unknown-volatility";
-      const regimeKey = `regime:${directionRegime}|${volatilityRegime}`;
-      const regimeState = regimeAccumulator.get(regimeKey) ?? { tradeCount: 0, totalPnl: 0, estimatedNetEvUsd: 0 };
-      regimeAccumulator.set(regimeKey, {
-        tradeCount: regimeState.tradeCount + 1,
-        totalPnl: regimeState.totalPnl + completedTrade.totalPnl,
-        estimatedNetEvUsd: regimeState.estimatedNetEvUsd + completedTrade.estimatedNetEvUsd,
-      });
-    }
-
-    return [...regimeAccumulator.entries()].map(([regime, regimeState]) => ({
-      regime,
-      tradeCount: regimeState.tradeCount,
-      totalPnl: regimeState.totalPnl,
-      estimatedNetEvUsd: regimeState.estimatedNetEvUsd,
-    }));
+    return regimeBreakdown;
   }
 
   private buildTriggerBreakdown(qmon: Qmon): readonly TriggerPerformanceSlice[] {
-    const triggerAccumulator = new Map<string, { tradeCount: number; totalPnl: number; estimatedNetEvUsd: number }>();
+    const triggerBreakdown = qmon.metrics.triggerBreakdown ?? [];
 
-    for (const completedTrade of this.buildCompletedTrades(qmon)) {
-      for (const triggerId of completedTrade.entryDecision.triggeredBy) {
-        if (!triggerId.startsWith("regime:")) {
-          const triggerState = triggerAccumulator.get(triggerId) ?? { tradeCount: 0, totalPnl: 0, estimatedNetEvUsd: 0 };
-          triggerAccumulator.set(triggerId, {
-            tradeCount: triggerState.tradeCount + 1,
-            totalPnl: triggerState.totalPnl + completedTrade.totalPnl,
-            estimatedNetEvUsd: triggerState.estimatedNetEvUsd + completedTrade.estimatedNetEvUsd,
-          });
-        }
-      }
-    }
-
-    return [...triggerAccumulator.entries()].map(([triggerId, triggerState]) => ({
-      triggerId,
-      tradeCount: triggerState.tradeCount,
-      totalPnl: triggerState.totalPnl,
-      estimatedNetEvUsd: triggerState.estimatedNetEvUsd,
-    }));
+    return triggerBreakdown;
   }
 
   private calculateNoTradeDisciplineScore(qmon: Qmon): number {
@@ -376,6 +301,7 @@ export class QmonChampionService {
       metrics: {
         ...qmon.metrics,
         grossAlphaCapture,
+        recentAvgSlippageBps,
       },
     });
     const regimeBreakdown = this.buildRegimeBreakdown(qmon);
@@ -383,10 +309,17 @@ export class QmonChampionService {
     const maxDrawdown = this.calculateMaxDrawdown(qmon);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
-    const robustnessBonus = positiveRegimeCount * 35 + noTradeDisciplineScore * 40;
-    const frictionPenalty = feeRatio * 250 + slippageRatio * 120 + recentAvgSlippageBps / 10;
-    const instabilityPenalty = negativeWindowRateLast10 * 180 + Math.max(0, -(worstWindowPnlLast10 ?? 0)) * 60 + maxDrawdown * 40;
-    const consistencyBonus = Math.max(0, (paperWindowMedianPnl ?? 0) * 200) + Math.max(0, netPnlPerTrade * 120);
+    const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
+    const frictionPenalty =
+      feeRatio * CHAMPION_FEE_RATIO_PENALTY + slippageRatio * CHAMPION_SLIPPAGE_RATIO_PENALTY + recentAvgSlippageBps / CHAMPION_AVG_SLIPPAGE_PENALTY;
+    const instabilityPenalty =
+      negativeWindowRateLast10 * CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY +
+      Math.max(0, -(worstWindowPnlLast10 ?? 0)) * CHAMPION_WORST_WINDOW_PENALTY +
+      maxDrawdown * CHAMPION_DRAWDOWN_PENALTY;
+    const consistencyBonus =
+      Math.max(0, (paperWindowMedianPnl ?? 0) * CHAMPION_RECENT_MEDIAN_WEIGHT) +
+      Math.max(0, paperWindowPnlSum * CHAMPION_RECENT_SUM_WEIGHT) +
+      Math.max(0, netPnlPerTrade * CHAMPION_NET_PNL_PER_TRADE_WEIGHT);
     const fitnessScore =
       qmon.metrics.totalPnl + (qmon.metrics.totalEstimatedNetEvUsd ?? 0) + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
     const championEligibilityReasons: string[] = [];
@@ -435,7 +368,12 @@ export class QmonChampionService {
     }
 
     const isChampionEligible = championEligibilityReasons.length === 0;
-    const championScore = isChampionEligible ? fitnessScore + paperLongWindowPnlSum * 20 : null;
+    const championScore =
+      isChampionEligible
+        ? fitnessScore +
+          Math.max(0, paperLongWindowPnlSum * CHAMPION_LONG_SUM_WEIGHT) +
+          Math.max(0, (paperWindowMedianPnl ?? 0) * CHAMPION_RECENT_MEDIAN_WEIGHT)
+        : null;
 
     return {
       championScore,

@@ -64,7 +64,9 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
     metrics: {
       totalTrades: 16,
       totalPnl: 12,
+      peakTotalPnl: 12,
       championScore: null,
+      fitnessScore: null,
       paperWindowMedianPnl: null,
       paperWindowPnlSum: 0,
       paperLongWindowPnlSum: 0,
@@ -78,6 +80,34 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
       winCount: Math.round(16 * winRate),
       avgScore: 0.5,
       maxDrawdown: 0,
+      grossAlphaCapture: 4,
+      netPnlPerTrade: 0,
+      feeRatio: 0,
+      slippageRatio: 0,
+      noTradeDisciplineScore: 0,
+      regimeBreakdown: [
+        {
+          regime: "regime:flat|normal",
+          tradeCount: 8,
+          totalPnl: 6,
+          estimatedNetEvUsd: 2,
+        },
+        {
+          regime: "regime:trending-up|normal",
+          tradeCount: 8,
+          totalPnl: 6,
+          estimatedNetEvUsd: 2,
+        },
+      ],
+      triggerBreakdown: [
+        {
+          triggerId: "book-pressure",
+          tradeCount: 16,
+          totalPnl: 12,
+          estimatedNetEvUsd: 4,
+        },
+      ],
+      totalEstimatedNetEvUsd: 4,
       lastUpdate: 1,
     },
     decisionHistory: [],
@@ -103,177 +133,44 @@ test("QmonChampionService penalizes costly low-conviction champions", () => {
   assert.equal((efficientCandidate.metrics.championScore ?? 0) > (costlyCandidate.metrics.championScore ?? 0), true);
 });
 
-test("QmonChampionService attributes trigger breakdown only to entry triggers", () => {
+test("QmonChampionService preserves persisted trigger breakdown when decision history is empty", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("TRIGGERED", 0.7, 0.2);
-  const refreshedQmon = championService.refreshMetrics({
-    ...qmon,
-    decisionHistory: [
-      {
-        timestamp: 1,
-        market: MARKET_KEY,
-        action: "BUY_UP",
-        cashflow: -10,
-        modelScore: 0.8,
-        triggeredBy: ["book-pressure"],
-        fee: 0.1,
-        executionPrice: 0.4,
-        entryPrice: 0.4,
-        shareCount: 25,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        entryDirectionRegime: "flat",
-        entryVolatilityRegime: "normal",
-        estimatedNetEvUsd: 0.6,
-      },
-      {
-        timestamp: 2,
-        market: MARKET_KEY,
-        action: "HOLD",
-        cashflow: 12,
-        modelScore: 0.8,
-        triggeredBy: ["thesis-invalidated"],
-        fee: 0.1,
-        executionPrice: 0.48,
-        entryPrice: 0.4,
-        shareCount: 25,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        estimatedNetEvUsd: 0.6,
-      },
-    ],
-  });
+  const refreshedQmon = championService.refreshMetrics(qmon);
   const triggerBreakdown = refreshedQmon.metrics.triggerBreakdown ?? [];
 
   assert.equal(triggerBreakdown.length, 1);
   assert.equal(triggerBreakdown[0]?.triggerId, "book-pressure");
-  assert.equal(triggerBreakdown[0]?.tradeCount, 1);
-  assert.equal(triggerBreakdown[0]?.totalPnl, 2);
+  assert.equal(triggerBreakdown[0]?.tradeCount, 16);
+  assert.equal(triggerBreakdown[0]?.totalPnl, 12);
 });
 
-test("QmonChampionService attributes regime breakdown to the entry regime of completed trades", () => {
+test("QmonChampionService preserves persisted regime breakdown when decision history is empty", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("REGIME", 0.7, 0.2);
-  const refreshedQmon = championService.refreshMetrics({
-    ...qmon,
-    decisionHistory: [
-      {
-        timestamp: 1,
-        market: MARKET_KEY,
-        action: "BUY_UP",
-        cashflow: -8,
-        modelScore: 0.75,
-        triggeredBy: ["liquidity-shift"],
-        fee: 0.1,
-        executionPrice: 0.4,
-        entryPrice: 0.4,
-        shareCount: 20,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        entryDirectionRegime: "flat",
-        entryVolatilityRegime: "high",
-        estimatedNetEvUsd: 0.4,
-      },
-      {
-        timestamp: 2,
-        market: MARKET_KEY,
-        action: "HOLD",
-        cashflow: 9.5,
-        modelScore: 0.75,
-        triggeredBy: ["market-settled"],
-        fee: 0.1,
-        executionPrice: 0.475,
-        entryPrice: 0.4,
-        shareCount: 20,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        estimatedNetEvUsd: 0.4,
-      },
-    ],
-  });
+  const refreshedQmon = championService.refreshMetrics(qmon);
   const regimeBreakdown = refreshedQmon.metrics.regimeBreakdown ?? [];
 
-  assert.equal(regimeBreakdown.length, 1);
-  assert.equal(regimeBreakdown[0]?.regime, "regime:flat|high");
-  assert.equal(regimeBreakdown[0]?.tradeCount, 1);
-  assert.equal(regimeBreakdown[0]?.totalPnl, 1.5);
+  assert.equal(regimeBreakdown.length, 2);
+  assert.equal(regimeBreakdown[0]?.regime, "regime:flat|normal");
+  assert.equal(regimeBreakdown[0]?.tradeCount, 8);
+  assert.equal(regimeBreakdown[0]?.totalPnl, 6);
 });
 
-test("QmonChampionService measures drawdown on completed trades instead of raw entry cashflow", () => {
+test("QmonChampionService uses persisted drawdown and remains evaluable after decision history reset", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("DRAWDOWN", 0.7, 0.2);
   const refreshedQmon = championService.refreshMetrics({
     ...qmon,
     paperWindowPnls: [1, 1, 1, 1, 1, 1],
-    decisionHistory: [
-      {
-        timestamp: 1,
-        market: MARKET_KEY,
-        action: "BUY_UP",
-        cashflow: -5,
-        modelScore: 0.8,
-        triggeredBy: ["book-pressure"],
-        fee: 0.1,
-        executionPrice: 0.5,
-        entryPrice: 0.5,
-        shareCount: 10,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        entryDirectionRegime: "flat",
-        entryVolatilityRegime: "normal",
-        estimatedNetEvUsd: 0.5,
-      },
-      {
-        timestamp: 2,
-        market: MARKET_KEY,
-        action: "HOLD",
-        cashflow: 5.4,
-        modelScore: 0.8,
-        triggeredBy: ["thesis-invalidated"],
-        fee: 0.1,
-        executionPrice: 0.54,
-        entryPrice: 0.5,
-        shareCount: 10,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        estimatedNetEvUsd: 0.5,
-      },
-      {
-        timestamp: 3,
-        market: MARKET_KEY,
-        action: "BUY_UP",
-        cashflow: -5.2,
-        modelScore: 0.75,
-        triggeredBy: ["book-pressure"],
-        fee: 0.1,
-        executionPrice: 0.52,
-        entryPrice: 0.52,
-        shareCount: 10,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        entryDirectionRegime: "flat",
-        entryVolatilityRegime: "high",
-        estimatedNetEvUsd: 0.45,
-      },
-      {
-        timestamp: 4,
-        market: MARKET_KEY,
-        action: "HOLD",
-        cashflow: 5.7,
-        modelScore: 0.75,
-        triggeredBy: ["market-settled"],
-        fee: 0.1,
-        executionPrice: 0.57,
-        entryPrice: 0.52,
-        shareCount: 10,
-        priceImpactBps: 0,
-        isHydratedReplay: false,
-        estimatedNetEvUsd: 0.45,
-      },
-    ],
+    decisionHistory: [],
+    metrics: {
+      ...qmon.metrics,
+      maxDrawdown: 1.7,
+    },
   });
 
-  assert.equal(refreshedQmon.metrics.maxDrawdown, 0);
+  assert.equal(refreshedQmon.metrics.maxDrawdown, 1.7);
   assert.equal(refreshedQmon.metrics.isChampionEligible, true);
 });
 
@@ -464,4 +361,106 @@ test("QmonChampionService computes fee ratio from lifetime pnl and fees", () => 
   });
 
   assert.equal(Number((refreshedQmon.metrics.feeRatio ?? 0).toFixed(3)), 0.413);
+});
+
+test("QmonChampionService rejects candidates with strong lifetime pnl but recent deterioration", () => {
+  const championService = new QmonChampionService();
+  const deterioratingQmon = championService.refreshMetrics({
+    ...createChampionCandidate("RECENTDOWN", 0.8, 0.2),
+    paperWindowPnls: [2, 2, 2, -1, -1, -1],
+  });
+
+  assert.equal(deterioratingQmon.metrics.isChampionEligible, false);
+  assert.equal(deterioratingQmon.metrics.championEligibilityReasons.includes("non-positive-median"), true);
+});
+
+test("QmonChampionService rejects high-pnl candidates with too few trades", () => {
+  const championService = new QmonChampionService();
+  const lowSampleQmon = championService.refreshMetrics({
+    ...createChampionCandidate("FEWSAMPLE", 1, 0.1),
+    metrics: {
+      ...createChampionCandidate("FEWSAMPLE", 1, 0.1).metrics,
+      totalTrades: 4,
+      winCount: 4,
+      totalPnl: 18,
+      peakTotalPnl: 18,
+    },
+  });
+
+  assert.equal(lowSampleQmon.metrics.isChampionEligible, false);
+  assert.equal(lowSampleQmon.metrics.championEligibilityReasons.includes("insufficient-trades"), true);
+});
+
+test("QmonChampionService rejects candidates with excessive fees or drawdown", () => {
+  const championService = new QmonChampionService();
+  const expensiveQmon = championService.refreshMetrics({
+    ...createChampionCandidate("EXPENSIVE", 0.8, 25),
+    metrics: {
+      ...createChampionCandidate("EXPENSIVE", 0.8, 25).metrics,
+      maxDrawdown: 6,
+      totalFeesPaid: 25,
+    },
+  });
+
+  assert.equal(expensiveQmon.metrics.isChampionEligible, false);
+  assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-fee-ratio"), true);
+  assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-drawdown"), true);
+});
+
+test("QmonChampionService selects the best eligible champion by the new score priority", () => {
+  const championService = new QmonChampionService();
+  const steadyQmon = championService.refreshMetrics({
+    ...createChampionCandidate("STEADY01", 0.78, 0.25),
+    paperWindowPnls: [0.8, 0.9, 0.85, 0.95, 0.9, 0.92],
+  });
+  const noisyQmon = championService.refreshMetrics({
+    ...createChampionCandidate("NOISY01", 0.78, 0.25),
+    metrics: {
+      ...createChampionCandidate("NOISY01", 0.78, 0.25).metrics,
+      totalPnl: 13,
+      peakTotalPnl: 13,
+      maxDrawdown: 4.5,
+    },
+    paperWindowPnls: [1.7, 0.1, 1.6, 0.1, 1.7, 0.1],
+  });
+  const finalizedPopulation = championService.finalizePopulation(
+    {
+      market: MARKET_KEY,
+      qmons: [steadyQmon, noisyQmon],
+      createdAt: 1,
+      lastUpdated: 1,
+      activeChampionQmonId: null,
+      marketPaperSessionPnl: 0,
+      marketConsolidatedPnl: 0,
+      seatPosition: {
+        action: null,
+        enteredAt: null,
+        entryScore: null,
+        entryPrice: null,
+        peakReturnPct: null,
+        shareCount: null,
+        priceToBeat: null,
+        marketStartMs: null,
+        marketEndMs: null,
+      },
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: null,
+      seatLastWindowStartMs: 1,
+      seatLastSettledWindowStartMs: null,
+    },
+    [steadyQmon, noisyQmon],
+    {
+      action: null,
+      enteredAt: null,
+      entryScore: null,
+      entryPrice: null,
+      peakReturnPct: null,
+      shareCount: null,
+      priceToBeat: null,
+      marketStartMs: null,
+      marketEndMs: null,
+    },
+  );
+
+  assert.equal(finalizedPopulation.activeChampionQmonId, "STEADY01");
 });

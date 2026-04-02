@@ -106,7 +106,9 @@ function createFamilyState(): QmonFamilyState {
             metrics: {
               totalTrades: 3,
               totalPnl: 4.2,
+              peakTotalPnl: 5.4,
               championScore: 8.5,
+              fitnessScore: 180,
               paperWindowMedianPnl: 1.1,
               paperWindowPnlSum: 2.1,
               paperLongWindowPnlSum: 4.2,
@@ -120,6 +122,28 @@ function createFamilyState(): QmonFamilyState {
               winCount: 2,
               avgScore: 0.55,
               maxDrawdown: 0.2,
+              grossAlphaCapture: 1.25,
+              netPnlPerTrade: 1.4,
+              feeRatio: 0.07,
+              slippageRatio: 0.01,
+              noTradeDisciplineScore: 1.5,
+              regimeBreakdown: [
+                {
+                  regime: "regime:flat|normal",
+                  tradeCount: 3,
+                  totalPnl: 4.2,
+                  estimatedNetEvUsd: 1.1,
+                },
+              ],
+              triggerBreakdown: [
+                {
+                  triggerId: "consensus-flip",
+                  tradeCount: 3,
+                  totalPnl: 4.2,
+                  estimatedNetEvUsd: 1.1,
+                },
+              ],
+              totalEstimatedNetEvUsd: 1.1,
               lastUpdate: 21,
             },
             decisionHistory: [
@@ -177,6 +201,11 @@ test("QmonPersistenceService round-trips the family state through a single atomi
     assert.equal(loadedState.populations[0]?.qmons[0]?.pendingOrder?.action, "BUY_UP");
     assert.equal(loadedState.populations[0]?.qmons[0]?.decisionHistory.length, 0);
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.totalFeesPaid, 0.33);
+    assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.maxDrawdown, 0.2);
+    assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.peakTotalPnl, 5.4);
+    assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.grossAlphaCapture, 1.25);
+    assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.regimeBreakdown?.[0]?.regime, "regime:flat|normal");
+    assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.triggerBreakdown?.[0]?.triggerId, "consensus-flip");
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

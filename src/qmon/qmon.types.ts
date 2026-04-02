@@ -237,6 +237,7 @@ export type TriggerPerformanceSlice = {
 export type QmonMetrics = {
   readonly totalTrades: number;
   readonly totalPnl: number;
+  readonly peakTotalPnl?: number;
   readonly championScore: number | null;
   readonly fitnessScore?: number | null;
   readonly paperWindowMedianPnl: number | null;

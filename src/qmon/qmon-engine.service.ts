@@ -38,8 +38,10 @@ import type {
   QmonPopulation,
   QmonPosition,
   QmonSignalId,
+  RegimePerformanceSlice,
   TimeSegment,
   TradeabilityAssessment,
+  TriggerPerformanceSlice,
   TradingAction,
   VolatilityRegimeValue,
 } from "./qmon.types.ts";
@@ -586,6 +588,7 @@ export class QmonEngine {
     return {
       totalTrades: 0,
       totalPnl: 0,
+      peakTotalPnl: 0,
       championScore: null,
       fitnessScore: null,
       paperWindowMedianPnl: null,
@@ -1257,6 +1260,90 @@ export class QmonEngine {
   }
 
   /**
+   * Update one regime aggregate with a closed trade outcome.
+   */
+  private updateRegimeBreakdown(
+    regimeBreakdown: readonly RegimePerformanceSlice[],
+    position: QmonPosition,
+    totalTradePnl: number,
+  ): readonly RegimePerformanceSlice[] {
+    const directionRegime = position.entryDirectionRegime ?? "unknown-direction";
+    const volatilityRegime = position.entryVolatilityRegime ?? "unknown-volatility";
+    const regime = `regime:${directionRegime}|${volatilityRegime}`;
+    const nextRegimeBreakdown = [...regimeBreakdown];
+    const regimeIndex = nextRegimeBreakdown.findIndex((regimeSlice) => regimeSlice.regime === regime);
+    const currentRegimeSlice = regimeIndex >= 0 ? nextRegimeBreakdown[regimeIndex] : undefined;
+    const nextRegimeSlice: RegimePerformanceSlice = {
+      regime,
+      tradeCount: (currentRegimeSlice?.tradeCount ?? 0) + 1,
+      totalPnl: (currentRegimeSlice?.totalPnl ?? 0) + totalTradePnl,
+      estimatedNetEvUsd: (currentRegimeSlice?.estimatedNetEvUsd ?? 0) + (position.estimatedNetEvUsd ?? 0),
+    };
+
+    if (regimeIndex >= 0) {
+      nextRegimeBreakdown[regimeIndex] = nextRegimeSlice;
+    } else {
+      nextRegimeBreakdown.push(nextRegimeSlice);
+    }
+
+    return nextRegimeBreakdown;
+  }
+
+  /**
+   * Update trigger aggregates from the entry triggers attached to the closed position.
+   */
+  private updateTriggerBreakdown(
+    triggerBreakdown: readonly TriggerPerformanceSlice[],
+    position: QmonPosition,
+    totalTradePnl: number,
+  ): readonly TriggerPerformanceSlice[] {
+    const nextTriggerBreakdown = [...triggerBreakdown];
+    const entryTriggers = position.entryTriggers ?? [];
+
+    for (const triggerId of entryTriggers) {
+      if (!triggerId.startsWith("regime:")) {
+        const triggerIndex = nextTriggerBreakdown.findIndex((triggerSlice) => triggerSlice.triggerId === triggerId);
+        const currentTriggerSlice = triggerIndex >= 0 ? nextTriggerBreakdown[triggerIndex] : undefined;
+        const nextTriggerSlice: TriggerPerformanceSlice = {
+          triggerId,
+          tradeCount: (currentTriggerSlice?.tradeCount ?? 0) + 1,
+          totalPnl: (currentTriggerSlice?.totalPnl ?? 0) + totalTradePnl,
+          estimatedNetEvUsd: (currentTriggerSlice?.estimatedNetEvUsd ?? 0) + (position.estimatedNetEvUsd ?? 0),
+        };
+
+        if (triggerIndex >= 0) {
+          nextTriggerBreakdown[triggerIndex] = nextTriggerSlice;
+        } else {
+          nextTriggerBreakdown.push(nextTriggerSlice);
+        }
+      }
+    }
+
+    return nextTriggerBreakdown;
+  }
+
+  /**
+   * Update persistent quality/risk accumulators from one closed trade.
+   */
+  private updateClosedTradeMetrics(currentMetrics: QmonMetrics, position: QmonPosition, totalTradePnl: number, nextTotalPnl: number): QmonMetrics {
+    const previousPeakTotalPnl =
+      currentMetrics.peakTotalPnl ?? Math.max(currentMetrics.totalPnl + currentMetrics.maxDrawdown, currentMetrics.totalPnl, 0);
+    const nextPeakTotalPnl = Math.max(previousPeakTotalPnl, nextTotalPnl);
+    const nextDrawdown = Math.max(currentMetrics.maxDrawdown, nextPeakTotalPnl - nextTotalPnl);
+    const nextRegimeBreakdown = this.updateRegimeBreakdown(currentMetrics.regimeBreakdown ?? [], position, totalTradePnl);
+    const nextTriggerBreakdown = this.updateTriggerBreakdown(currentMetrics.triggerBreakdown ?? [], position, totalTradePnl);
+    const nextMetrics: QmonMetrics = {
+      ...currentMetrics,
+      peakTotalPnl: nextPeakTotalPnl,
+      maxDrawdown: nextDrawdown,
+      regimeBreakdown: nextRegimeBreakdown,
+      triggerBreakdown: nextTriggerBreakdown,
+    };
+
+    return nextMetrics;
+  }
+
+  /**
    * Detect whether the cash outflow of the current open position was already booked.
    */
   private hasBookedCurrentEntryCashflow(qmon: Qmon): boolean {
@@ -1821,6 +1908,20 @@ export class QmonEngine {
     const newTotalFees = currentMetrics.totalFeesPaid + exitFee;
     const newWinCount = currentMetrics.winCount + (totalTradePnl > 0 ? 1 : 0);
     const newWinRate = newTotalTrades > 0 ? newWinCount / newTotalTrades : 0;
+    const nextMetrics = this.updateClosedTradeMetrics(
+      {
+        ...currentMetrics,
+        totalTrades: newTotalTrades,
+        totalPnl: newTotalPnl,
+        totalFeesPaid: newTotalFees,
+        winRate: newWinRate,
+        winCount: newWinCount,
+        lastUpdate: now,
+      },
+      qmon.position,
+      totalTradePnl,
+      newTotalPnl,
+    );
     const nextPosition =
       remainingPositionShares > 0
         ? {
@@ -1835,15 +1936,7 @@ export class QmonEngine {
       ...qmon,
       pendingOrder: null,
       position: nextPosition,
-      metrics: {
-        ...currentMetrics,
-        totalTrades: newTotalTrades,
-        totalPnl: newTotalPnl,
-        totalFeesPaid: newTotalFees,
-        winRate: newWinRate,
-        winCount: newWinCount,
-        lastUpdate: now,
-      },
+      metrics: nextMetrics,
       decisionHistory: this.addDecision(qmon, exitDecision),
       currentWindowSlippageTotalBps: qmon.currentWindowSlippageTotalBps + (exitDecision.priceImpactBps ?? 0),
       currentWindowSlippageFillCount: qmon.currentWindowSlippageFillCount + 1,
@@ -3181,33 +3274,20 @@ export class QmonEngine {
     const newWinCount = currentMetrics.winCount + (totalTradePnl > 0 ? 1 : 0);
     const newWinRate = newTotalTrades > 0 ? newWinCount / newTotalTrades : 0;
 
-    const newMetrics: QmonMetrics = {
-      totalTrades: newTotalTrades,
-      totalPnl: newTotalPnl,
-      championScore: currentMetrics.championScore,
-      paperWindowMedianPnl: currentMetrics.paperWindowMedianPnl,
-      paperWindowPnlSum: currentMetrics.paperWindowPnlSum,
-      paperLongWindowPnlSum: currentMetrics.paperLongWindowPnlSum,
-      negativeWindowRateLast10: currentMetrics.negativeWindowRateLast10,
-      worstWindowPnlLast10: currentMetrics.worstWindowPnlLast10,
-      recentAvgSlippageBps: currentMetrics.recentAvgSlippageBps,
-      isChampionEligible: currentMetrics.isChampionEligible,
-      championEligibilityReasons: currentMetrics.championEligibilityReasons,
-      totalFeesPaid: newTotalFees,
-      winRate: newWinRate,
-      winCount: newWinCount,
-      avgScore: currentMetrics.avgScore,
-      maxDrawdown: currentMetrics.maxDrawdown,
-      grossAlphaCapture: currentMetrics.grossAlphaCapture ?? 0,
-      netPnlPerTrade: currentMetrics.netPnlPerTrade ?? 0,
-      feeRatio: currentMetrics.feeRatio ?? 0,
-      slippageRatio: currentMetrics.slippageRatio ?? 0,
-      noTradeDisciplineScore: currentMetrics.noTradeDisciplineScore ?? 0,
-      regimeBreakdown: currentMetrics.regimeBreakdown ?? [],
-      triggerBreakdown: currentMetrics.triggerBreakdown ?? [],
-      totalEstimatedNetEvUsd: currentMetrics.totalEstimatedNetEvUsd ?? 0,
-      lastUpdate: Date.now(),
-    };
+    const newMetrics = this.updateClosedTradeMetrics(
+      {
+        ...currentMetrics,
+        totalTrades: newTotalTrades,
+        totalPnl: newTotalPnl,
+        totalFeesPaid: newTotalFees,
+        winRate: newWinRate,
+        winCount: newWinCount,
+        lastUpdate: Date.now(),
+      },
+      qmon.position,
+      totalTradePnl,
+      newTotalPnl,
+    );
 
     return this.refreshQmonMetrics({
       ...qmon,
