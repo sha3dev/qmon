@@ -289,7 +289,7 @@ test("QmonChampionService treats zero-trade windows as neutral in champion media
   assert.equal(refreshedQmon.metrics.isChampionEligible, true);
 });
 
-test("QmonChampionService computes fee ratio from realized closed-trade pnl", () => {
+test("QmonChampionService computes fee ratio from lifetime pnl and fees", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("FEES", 0.75, 0.5182386360100615);
   const refreshedQmon = championService.refreshMetrics({
@@ -462,5 +462,5 @@ test("QmonChampionService computes fee ratio from realized closed-trade pnl", ()
     ],
   });
 
-  assert.equal(Number((refreshedQmon.metrics.feeRatio ?? 0).toFixed(3)), 0.072);
+  assert.equal(Number((refreshedQmon.metrics.feeRatio ?? 0).toFixed(3)), 0.413);
 });

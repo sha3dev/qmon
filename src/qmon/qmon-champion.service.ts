@@ -214,9 +214,8 @@ export class QmonChampionService {
   }
 
   private calculateFeeRatio(qmon: Qmon): number {
-    const completedTrades = this.buildCompletedTrades(qmon);
-    const realizedTradePnl = completedTrades.length > 0 ? this.calculateRealizedTradePnl(qmon) : qmon.metrics.totalPnl;
-    const grossPnlMagnitude = Math.max(Math.abs(realizedTradePnl) + qmon.metrics.totalFeesPaid, Number.EPSILON);
+    const lifetimeNetPnl = qmon.metrics.totalPnl;
+    const grossPnlMagnitude = Math.max(Math.abs(lifetimeNetPnl) + qmon.metrics.totalFeesPaid, Number.EPSILON);
     const feeRatio = qmon.metrics.totalFeesPaid / grossPnlMagnitude;
 
     return feeRatio;
