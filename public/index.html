@@ -103,10 +103,6 @@
       transform: translateY(-1px);
       box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
     }
-    .market-pnl-item.real-routed {
-      border-color: rgba(0,230,118,0.45);
-      box-shadow: inset 0 0 0 1px rgba(0,230,118,0.12);
-    }
     .market-pnl-item.total {
       grid-column: span 2;
       background: linear-gradient(180deg, rgba(124,77,255,0.16), rgba(34,38,54,0.96));
@@ -177,6 +173,31 @@
       display: flex; flex-direction: column; gap: 10px;
       padding: 10px 14px; background: linear-gradient(180deg, rgba(124,77,255,0.08), rgba(26,29,39,0.96));
       border: 1px solid rgba(124,77,255,0.18); border-radius: 6px;
+    }
+    .health-panel {
+      display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
+    }
+    .health-copy {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .health-title {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.6px;
+    }
+    .health-note {
+      font-size: 9px; color: var(--text-secondary);
+    }
+    .health-metric {
+      min-width: 180px; padding: 10px 12px; border-radius: 8px;
+      background: rgba(15,17,23,0.28); border: 1px solid rgba(124,77,255,0.18);
+    }
+    .health-metric-label {
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .health-metric-value {
+      margin-top: 4px; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    .health-metric-note {
+      margin-top: 3px; font-size: 9px; color: var(--text-secondary);
     }
     .diagnostics-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .diagnostics-title { font-size: 11px; font-weight: 700; letter-spacing: 0.5px; }
@@ -578,7 +599,7 @@
         </div>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
-        <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="cursor:pointer;" @click="openMarketActivity(mp.market)">
+        <div class="market-pnl-item" style="cursor:pointer;" @click="openMarketActivity(mp.market)">
           <div class="market-pnl-head">
             <div class="market-pnl-meta">
               <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
@@ -600,133 +621,17 @@
       </template>
     </div>
 
-    <div class="diagnostics-panel">
-      <div class="diagnostics-head">
-        <div>
-          <div class="diagnostics-title">EXECUTION HEALTH</div>
-          <div class="diagnostics-subtitle" x-text="diagnosticsHeadline"></div>
+    <div class="diagnostics-panel" x-show="currentDiagnosticsOverview">
+      <div class="health-panel">
+        <div class="health-copy">
+          <div class="health-title">EXECUTION HEALTH</div>
+          <div class="health-note">Current-session live execution quality. Only the aggregate fill rate is shown here.</div>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-          <div class="diagnostics-range-tabs">
-            <button class="filter-chip" :class="{ active: diagnosticsRange === '24h' }" @click="diagnosticsRange = '24h'">24H</button>
-            <button class="filter-chip" :class="{ active: diagnosticsRange === '7d' }" @click="diagnosticsRange = '7d'">7D</button>
-            <button class="filter-chip" :class="{ active: diagnosticsRange === '30d' }" @click="diagnosticsRange = '30d'">30D</button>
-          </div>
-          <button class="diagnostics-toggle" @click="diagnosticsExpanded = !diagnosticsExpanded" x-text="diagnosticsExpanded ? 'Hide Detail' : 'Show Detail'"></button>
+        <div class="health-metric">
+          <div class="health-metric-label">Fill Rate</div>
+          <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
+          <div class="health-metric-note" x-text="'Seat trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
         </div>
-      </div>
-
-      <div class="diagnostics-summary-strip" x-show="currentDiagnosticsOverview">
-        <div class="diagnostics-summary-card">
-          <div class="diagnostics-summary-label">Seat PnL</div>
-          <div class="diagnostics-summary-value" :class="pnlClass(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)" x-text="formatPnl(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)"></div>
-          <div class="diagnostics-summary-note" x-text="'Trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
-        </div>
-        <div class="diagnostics-summary-card">
-          <div class="diagnostics-summary-label">Fill Rate</div>
-          <div class="diagnostics-summary-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
-          <div class="diagnostics-summary-note" x-text="'Fail ' + formatPct(currentDiagnosticsOverview?.totals?.orderFailureRate || 0)"></div>
-        </div>
-        <div class="diagnostics-summary-card">
-          <div class="diagnostics-summary-label">Warnings</div>
-          <div class="diagnostics-summary-value" x-text="formatCount(currentDiagnosticsOverview?.totals?.warningCount || 0)"></div>
-          <div class="diagnostics-summary-note" x-text="'Events ' + formatCount(currentDiagnosticsOverview?.totals?.totalEvents || 0)"></div>
-        </div>
-        <div class="diagnostics-summary-card">
-          <div class="diagnostics-summary-label">Avg Impact</div>
-          <div class="diagnostics-summary-value" x-text="formatNullableBps(currentDiagnosticsOverview?.totals?.avgPriceImpactBps)"></div>
-          <div class="diagnostics-summary-note" x-text="'Realized ' + formatPnl(currentDiagnosticsOverview?.totals?.totalRealizedPnl || 0)"></div>
-        </div>
-        <div class="diagnostics-summary-card">
-          <div class="diagnostics-summary-label">Attention</div>
-          <div class="diagnostics-summary-value" x-text="formatCount(diagnosticsAttentionMarkets.length)"></div>
-          <div class="diagnostics-summary-note" x-text="diagnosticsAttentionMarkets[0] ? diagnosticsAttentionMarkets[0].market.toUpperCase() + ' leads' : 'No urgent issues'"></div>
-        </div>
-      </div>
-
-      <div x-show="diagnosticsExpanded">
-      <div class="diagnostics-brief" x-show="currentDiagnosticsOverview">
-        <div class="diagnostics-block">
-          <div class="diagnostics-block-title">Needs Attention</div>
-          <div class="diagnostics-focus-list">
-            <template x-for="marketRow in diagnosticsAttentionMarkets" :key="marketRow.market">
-              <div class="diagnostics-focus-item">
-                <span class="diagnostics-market-badge" x-text="marketRow.market.toUpperCase()"></span>
-                <span x-text="diagnosticsPrimaryIssue(marketRow)"></span>
-                <span class="diagnostics-focus-metric" x-text="diagnosticsIssueMetric(marketRow)"></span>
-              </div>
-            </template>
-            <div class="diagnostics-empty" x-show="diagnosticsAttentionMarkets.length === 0">No urgent execution issues in this range.</div>
-          </div>
-        </div>
-        <div class="diagnostics-block">
-          <div class="diagnostics-block-title">System Snapshot</div>
-          <div class="diagnostics-kpi-grid">
-            <div>
-              <div class="diagnostics-kpi-label">Seat PnL</div>
-              <div class="diagnostics-kpi-value" :class="pnlClass(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)" x-text="formatPnl(currentDiagnosticsOverview?.totals?.seatRealizedPnl || 0)"></div>
-              <div class="diagnostics-kpi-note" x-text="'Trades: ' + (currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
-            </div>
-            <div>
-              <div class="diagnostics-kpi-label">Fill Rate</div>
-              <div class="diagnostics-kpi-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.fillRate || 0)"></div>
-              <div class="diagnostics-kpi-note" x-text="'Order fail: ' + formatPct(currentDiagnosticsOverview?.totals?.orderFailureRate || 0)"></div>
-            </div>
-            <div>
-              <div class="diagnostics-kpi-label">Warnings</div>
-              <div class="diagnostics-kpi-value" x-text="formatCount(currentDiagnosticsOverview?.totals?.warningCount || 0)"></div>
-              <div class="diagnostics-kpi-note" x-text="'Events: ' + formatCount(currentDiagnosticsOverview?.totals?.totalEvents || 0)"></div>
-            </div>
-            <div>
-              <div class="diagnostics-kpi-label">Avg Impact</div>
-              <div class="diagnostics-kpi-value" x-text="formatNullableBps(currentDiagnosticsOverview?.totals?.avgPriceImpactBps)"></div>
-              <div class="diagnostics-kpi-note" x-text="'Realized: ' + formatPnl(currentDiagnosticsOverview?.totals?.totalRealizedPnl || 0)"></div>
-            </div>
-          </div>
-        </div>
-        <div class="diagnostics-block">
-          <div class="diagnostics-block-title">Best Markets</div>
-          <div class="diagnostics-focus-list">
-            <template x-for="marketRow in diagnosticsBestMarkets" :key="marketRow.market">
-              <div class="diagnostics-focus-item">
-                <span class="diagnostics-market-badge good" x-text="marketRow.market.toUpperCase()"></span>
-                <span x-text="diagnosticsPositiveSummary(marketRow)"></span>
-                <span class="diagnostics-focus-metric" x-text="'warn ' + marketRow.warningCount"></span>
-              </div>
-            </template>
-            <div class="diagnostics-empty" x-show="diagnosticsBestMarkets.length === 0">No market has built a clean enough track record yet.</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="diagnostics-flags" x-show="currentDiagnosticsOverview">
-        <template x-for="flag in currentDiagnosticsFlags" :key="flag.key">
-          <div class="diagnostics-flag" x-text="flag.market ? flag.market.toUpperCase() + ' · ' + flag.message : flag.message"></div>
-        </template>
-        <div class="diagnostics-empty" x-show="currentDiagnosticsFlags.length === 0">No inefficiency flags in this range.</div>
-      </div>
-
-      <div class="diagnostics-market-table" x-show="currentDiagnosticsOverview" style="max-height:260px; overflow-y:auto;">
-        <div class="diagnostics-market-header">
-          <span>Market</span>
-          <span style="text-align:right;">Seat</span>
-          <span style="text-align:right;">Fill</span>
-          <span style="text-align:right;">Fail</span>
-          <span style="text-align:right;">Warn</span>
-          <span>Operator Read</span>
-        </div>
-        <template x-for="marketRow in currentDiagnosticsMarkets" :key="marketRow.market">
-          <div class="diagnostics-market-row" :class="diagnosticsRowClass(marketRow)">
-            <span class="diagnostics-market-name" x-text="marketRow.market.toUpperCase()" @click="openMarketActivity(marketRow.market)"></span>
-            <span style="text-align:right;" :class="pnlClass(marketRow.seatRealizedPnl)" x-text="formatPnl(marketRow.seatRealizedPnl)"></span>
-            <span style="text-align:right;" x-text="formatPct(marketRow.fillRate)"></span>
-            <span style="text-align:right;" x-text="formatPct(marketRow.orderFailureRate)"></span>
-            <span style="text-align:right;" x-text="marketRow.warningCount"></span>
-            <span class="diagnostics-row-flags" x-text="diagnosticsRowSummary(marketRow)"></span>
-          </div>
-        </template>
-        <div class="diagnostics-empty" x-show="currentDiagnosticsMarkets.length === 0">No market summaries yet.</div>
-      </div>
       </div>
     </div>
 
@@ -758,29 +663,37 @@
       <span style="font-size:9px; color:var(--text-muted); margin-left:auto;" x-text="filteredQmons.length + ' QMONs'"></span>
     </div>
 
-    <!-- CPnL log -->
+    <!-- Real log -->
     <div class="activity-section">
       <div class="activity-header">
-        <span class="activity-title">CPNL LOG</span>
-        <span class="activity-title" style="color:var(--text-muted);" x-text="cpnlLogItems.length + ' rows'"></span>
+        <span class="activity-title">REAL LOG</span>
+        <span class="activity-title" style="color:var(--text-muted);" x-text="realLogItems.length + ' rows'"></span>
       </div>
       <div class="activity-feed">
-        <div class="activity-header-row">
+        <div class="activity-header-row" style="grid-template-columns:72px 60px 54px 70px 70px 70px 70px 80px;">
           <span>TIME</span>
           <span>MARKET</span>
-          <span>FLOW</span>
-          <span style="text-align:right;">CASHFLOW</span>
+          <span>SIDE</span>
+          <span style="text-align:right;">SHARES</span>
+          <span style="text-align:right;">ENTRY</span>
+          <span style="text-align:right;">CURRENT</span>
+          <span style="text-align:right;">EXIT</span>
+          <span style="text-align:right;">UPNL / PNL</span>
         </div>
-        <template x-for="item in cpnlLogItems.slice(0, 100)" :key="item.id">
-          <div class="activity-item" :class="item.type">
+        <template x-for="item in realLogItems.slice(0, 100)" :key="item.id">
+          <div class="activity-item" :class="item.type" style="grid-template-columns:72px 60px 54px 70px 70px 70px 70px 80px;">
             <span class="activity-time" x-text="formatTime(item.timestamp)"></span>
             <span class="activity-market" x-text="item.market.toUpperCase()" @click="openMarketActivity(item.market)"></span>
-            <span class="activity-action" :class="item.type" x-text="item.message"></span>
-            <span class="activity-pnl" :class="item.cashflowClass" x-text="item.cashflowText"></span>
+            <span class="activity-action" :class="item.sideClass" x-text="item.sideText"></span>
+            <span class="activity-pnl" x-text="item.sharesText"></span>
+            <span class="activity-pnl" x-text="item.entryPriceText"></span>
+            <span class="activity-pnl" x-text="item.currentPriceText"></span>
+            <span class="activity-pnl" x-text="item.exitPriceText"></span>
+            <span class="activity-pnl" :class="item.resultClass" x-text="item.resultText"></span>
           </div>
         </template>
-        <div class="activity-empty" x-show="cpnlLogItems.length === 0">
-          Waiting for CPnL cash flows...
+        <div class="activity-empty" x-show="realLogItems.length === 0">
+          Waiting for real seat trades...
         </div>
       </div>
     </div>
@@ -1363,7 +1276,7 @@
           <div>
             <div class="modal-title" style="font-size:16px; font-weight:700; color:var(--accent); margin-bottom:4px;">
               <span x-text="selectedMarketActivity.market?.toUpperCase() || 'MARKET'"></span>
-              <span style="color:var(--text-muted); font-size:12px; margin-left:8px;">MARKET CPNL DRILLDOWN</span>
+              <span style="color:var(--text-muted); font-size:12px; margin-left:8px;">MARKET REAL DRILLDOWN</span>
             </div>
             <div class="modal-subtitle" style="font-size:11px; color:var(--text-secondary);">
             <span x-show="selectedMarketActivity.championId" style="color:var(--accent); font-weight:600;" x-text="'👑 ' + selectedMarketActivity.championId"></span>
@@ -1375,7 +1288,7 @@
         </div>
 
       <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;" x-show="marketActivityLoading">Loading market activity...</div>
-      <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;" x-show="!marketActivityLoading" x-text="(marketActivityItems?.length || 0) + ' CPnL rows'"></div>
+      <div style="font-size:10px; color:var(--text-muted); margin-bottom:8px;" x-show="!marketActivityLoading" x-text="(marketActivityItems?.length || 0) + ' real rows'"></div>
 
       <div class="diagnostics-modal-grid" x-show="selectedMarketDiagnostics && !marketActivityLoading">
         <div class="diagnostics-modal-card">
@@ -1450,9 +1363,7 @@
         stats: null,
         runtimeStatus: null,
         marketPnls: [],
-        diagnosticsRange: '24h',
-        diagnosticsExpanded: false,
-        diagnosticsByRange: { '24h': null, '7d': null, '30d': null },
+        diagnosticsOverview: null,
 
         searchQuery: '',
         filterMarket: '',
@@ -1461,12 +1372,12 @@
         currentPage: 0,
         pageSize: 20,
 
-        cpnlLogItems: [],
+        realLogItems: [],
         fastPollHandle: null,
         slowPollHandle: null,
 
         get currentDiagnosticsOverview() {
-          return this.diagnosticsByRange[this.diagnosticsRange] || null;
+          return this.diagnosticsOverview;
         },
 
         get currentDiagnosticsMarkets() {
@@ -1494,7 +1405,7 @@
           }
 
           if (!this.hasMeaningfulDiagnostics) {
-            return `Diagnostics are still warming up in ${this.diagnosticsRange}. Rankings are provisional, but warnings and execution flags remain visible while realized seat flow builds.`;
+            return 'Diagnostics are still warming up. Rankings are provisional while realized seat flow builds.';
           }
 
           const attentionCount = this.diagnosticsAttentionMarkets.length;
@@ -1502,7 +1413,7 @@
           const warningCount = overview.totals?.warningCount || 0;
           const tradeCount = overview.totals?.seatTradeCount || 0;
 
-          return `${attentionCount} markets need attention, ${bestCount} are behaving cleanly, ${warningCount} warnings and ${tradeCount} seat trades recorded in ${this.diagnosticsRange}.`;
+          return `${attentionCount} markets need attention, ${bestCount} are behaving cleanly, ${warningCount} warnings and ${tradeCount} seat trades recorded in the current session.`;
         },
 
         get diagnosticsAttentionMarkets() {
@@ -1630,19 +1541,15 @@
           this.$watch('filterMarket', () => this.resetPagination());
           this.$watch('filterRole', () => this.resetPagination());
           this.$watch('filterPosition', () => this.resetPagination());
-          this.$watch('diagnosticsRange', async () => {
-            await this.fetchSlowData(true);
-          });
-
           document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
               void this.fetchFastData();
-              void this.fetchSlowData(false);
+              void this.fetchSlowData();
             }
           });
 
           await this.fetchFastData();
-          await this.fetchSlowData(true);
+          await this.fetchSlowData();
           this.fastPollHandle = setInterval(() => {
             if (!document.hidden) {
               void this.fetchFastData();
@@ -1650,7 +1557,7 @@
           }, 3000);
           this.slowPollHandle = setInterval(() => {
             if (!document.hidden) {
-              void this.fetchSlowData(false);
+              void this.fetchSlowData();
             }
           }, 12000);
         },
@@ -1670,7 +1577,7 @@
               this.runtimeStatus = data.runtimeExecutionStatus;
 
               if (data.diagnosticsOverview) {
-                this.diagnosticsByRange['24h'] = data.diagnosticsOverview;
+                this.diagnosticsOverview = data.diagnosticsOverview;
               }
 
               this.connected = true;
@@ -1693,32 +1600,15 @@
           }
         },
 
-        async fetchSlowData(shouldForceCurrentRange = false) {
+        async fetchSlowData() {
           try {
-            const shouldLoadCurrentRange =
-              shouldForceCurrentRange || this.diagnosticsByRange[this.diagnosticsRange] === null;
-            const diagnosticsPromises = [
-              fetch('/api/qmons/diagnostics/overview?range=24h'),
-              fetch('/api/qmons/diagnostics/overview?range=7d'),
-              fetch('/api/qmons/diagnostics/overview?range=30d'),
-            ];
-            const diagnosticsResponses = await Promise.all(diagnosticsPromises);
+            const diagnosticsResponse = await fetch('/api/qmons/diagnostics/overview?range=24h');
 
-            if (diagnosticsResponses[0]?.ok) {
-              this.diagnosticsByRange['24h'] = await diagnosticsResponses[0].json();
+            if (diagnosticsResponse.ok) {
+              this.diagnosticsOverview = await diagnosticsResponse.json();
             }
 
-            if (diagnosticsResponses[1]?.ok) {
-              this.diagnosticsByRange['7d'] = await diagnosticsResponses[1].json();
-            }
-
-            if (diagnosticsResponses[2]?.ok) {
-              this.diagnosticsByRange['30d'] = await diagnosticsResponses[2].json();
-            }
-
-            if (shouldLoadCurrentRange) {
-              await this.refreshCpnlLogItems();
-            }
+            await this.refreshRealLogItems();
           } catch (error) {
             console.error('Failed to refresh diagnostics payloads', error);
           }
@@ -1738,28 +1628,20 @@
           this.currentPage = 0;
         },
 
-        async refreshCpnlLogItems() {
-          let cpnlLogItems = [];
+        async refreshRealLogItems() {
+          let realLogEvents = [];
 
           try {
-            const response = await fetch(`/api/qmons/cpnl-log?range=${encodeURIComponent(this.diagnosticsRange)}&limit=100`);
+            const response = await fetch('/api/qmons/diagnostics/events?range=24h&limit=1000');
 
             if (response.ok) {
-              cpnlLogItems = await response.json();
+              realLogEvents = await response.json();
             }
           } catch (error) {
-            cpnlLogItems = [];
+            realLogEvents = [];
           }
 
-          this.cpnlLogItems = (cpnlLogItems || []).map((cpnlLogItem) => ({
-            id: cpnlLogItem.id,
-            timestamp: cpnlLogItem.timestamp,
-            market: cpnlLogItem.market,
-            type: cpnlLogItem.flow === 'exit' ? 'exit' : 'trade',
-            message: cpnlLogItem.message,
-            cashflowText: this.formatPnl(cpnlLogItem.cashflow || 0),
-            cashflowClass: this.pnlClass(cpnlLogItem.cashflow || 0),
-          }));
+          this.realLogItems = this.buildRealLogItems(realLogEvents).slice(0, 100);
         },
 
         getSeatWindowState(market) {
@@ -1902,7 +1784,7 @@
           const marketPopulation = (this.familyState?.populations || []).find((population) => population.market === this.selectedQmon.market) || null;
           const exportPayload = {
             exportedAt: new Date().toISOString(),
-            diagnosticsRange: this.diagnosticsRange,
+            diagnosticsRange: '24h',
             qmonId: this.selectedQmon.id,
             market: this.selectedQmon.market,
             qmon: this.selectedQmon,
@@ -1953,8 +1835,8 @@
 
           try {
             const [response, diagnosticsResponse] = await Promise.all([
-              fetch(`/api/qmons/market-activity?market=${encodeURIComponent(market)}&range=${encodeURIComponent(this.diagnosticsRange)}&limit=200`),
-              fetch(`/api/qmons/diagnostics/market?market=${encodeURIComponent(market)}&range=${encodeURIComponent(this.diagnosticsRange)}`)
+              fetch(`/api/qmons/market-activity?market=${encodeURIComponent(market)}&range=24h&limit=200`),
+              fetch(`/api/qmons/diagnostics/market?market=${encodeURIComponent(market)}&range=24h`)
             ]);
 
             if (response.ok) {
@@ -2280,6 +2162,103 @@
         tradeActionClass(action) {
           // No color for actions - only PnL column gets colors
           return '';
+        },
+
+        getLiveTokenPrice(market, action) {
+          const [asset, window] = String(market || '').split('-');
+          const windowState = this.latestSignals?.[asset]?.windows?.[window] || null;
+          let tokenPrice = null;
+
+          if (windowState && action === 'BUY_UP') {
+            tokenPrice = windowState.prices?.upPrice ?? null;
+          }
+
+          if (windowState && action === 'BUY_DOWN') {
+            tokenPrice = windowState.prices?.downPrice ?? null;
+          }
+
+          return tokenPrice;
+        },
+
+        buildRealLogItems(realLogEvents) {
+          const sortedEvents = [...(realLogEvents || [])]
+            .filter((realLogEvent) => realLogEvent.isSeat === true)
+            .filter((realLogEvent) => realLogEvent.eventType === 'position-opened' || realLogEvent.eventType === 'position-closed')
+            .sort((left, right) => left.timestamp - right.timestamp);
+          const openTradesByKey = new Map();
+          const realLogItems = [];
+
+          for (const realLogEvent of sortedEvents) {
+            const tradeKey = `${realLogEvent.market || '—'}:${realLogEvent.qmonId || '—'}`;
+
+            if (realLogEvent.eventType === 'position-opened') {
+              openTradesByKey.set(tradeKey, realLogEvent);
+              continue;
+            }
+
+            const openingEvent = openTradesByKey.get(tradeKey) || null;
+            const entryPnlContribution = typeof openingEvent?.pnlContribution === 'number'
+              ? openingEvent.pnlContribution
+              : (openingEvent?.cashflow || 0);
+            const exitPnlContribution = typeof realLogEvent.pnlContribution === 'number'
+              ? realLogEvent.pnlContribution
+              : (realLogEvent.cashflow || 0);
+            const netPnl = typeof realLogEvent.netPnl === 'number'
+              ? realLogEvent.netPnl
+              : entryPnlContribution + exitPnlContribution;
+            const sideAction = realLogEvent.action || openingEvent?.action || null;
+            const shareCount = realLogEvent.shareCount ?? openingEvent?.shareCount ?? null;
+            const entryPrice = openingEvent?.entryPrice ?? openingEvent?.executionPrice ?? null;
+            const exitPrice = realLogEvent.exitPrice ?? realLogEvent.executionPrice ?? null;
+
+            realLogItems.push({
+              id: `${tradeKey}:${realLogEvent.timestamp}:closed`,
+              timestamp: realLogEvent.timestamp,
+              market: realLogEvent.market || '—',
+              type: 'exit',
+              sideText: this.formatPositionAction(sideAction),
+              sideClass: 'neutral',
+              sharesText: shareCount !== null ? Number(shareCount).toFixed(2) : '—',
+              entryPriceText: entryPrice !== null ? Number(entryPrice).toFixed(4) : '—',
+              currentPriceText: '—',
+              exitPriceText: exitPrice !== null ? Number(exitPrice).toFixed(4) : '—',
+              resultText: this.formatPnl(netPnl),
+              resultClass: this.pnlClass(netPnl),
+            });
+
+            openTradesByKey.delete(tradeKey);
+          }
+
+          for (const [tradeKey, openingEvent] of openTradesByKey.entries()) {
+            const market = openingEvent.market || '—';
+            const population = this.getPopulationState(market);
+            const seatPosition = population?.seatPosition || null;
+            const sideAction = seatPosition?.action || openingEvent.action || null;
+            const shareCount = seatPosition?.shareCount ?? openingEvent.shareCount ?? null;
+            const entryPrice = openingEvent.entryPrice ?? openingEvent.executionPrice ?? null;
+            const currentPrice = this.getLiveTokenPrice(market, sideAction);
+            const currentMarkedExitValue =
+              shareCount !== null && currentPrice !== null ? shareCount * currentPrice : null;
+            const currentOpenNet =
+              currentMarkedExitValue !== null ? currentMarkedExitValue + (openingEvent.cashflow || 0) : null;
+
+            realLogItems.push({
+              id: `${tradeKey}:${openingEvent.timestamp}:open`,
+              timestamp: openingEvent.timestamp,
+              market,
+              type: 'trade',
+              sideText: this.formatPositionAction(sideAction),
+              sideClass: 'neutral',
+              sharesText: shareCount !== null ? Number(shareCount).toFixed(2) : '—',
+              entryPriceText: entryPrice !== null ? Number(entryPrice).toFixed(4) : '—',
+              currentPriceText: currentPrice !== null ? Number(currentPrice).toFixed(4) : '—',
+              exitPriceText: '—',
+              resultText: currentOpenNet !== null ? this.formatPnl(currentOpenNet) : '—',
+              resultClass: currentOpenNet !== null ? this.pnlClass(currentOpenNet) : 'neutral',
+            });
+          }
+
+          return realLogItems.sort((left, right) => right.timestamp - left.timestamp);
         },
 
         buildMarketActivityItems(activityEvents, market) {
