@@ -326,9 +326,9 @@
       padding: 10px 16px; background: var(--bg-secondary);
       border: 1px solid var(--border); border-radius: 6px;
     }
-    .filter-section { display: flex; align-items: center; gap: 8px; }
+    .filter-section { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .filter-section-title { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; }
-    .filter-chips { display: flex; gap: 4px; }
+    .filter-chips { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
     .filter-chip {
       font-size: 9px; padding: 4px 10px; border-radius: 4px;
       background: var(--bg-card); color: var(--text-secondary);
@@ -356,19 +356,21 @@
     .activity-title { font-size: 10px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.8px; }
     .activity-feed {
       display: flex; flex-direction: column; gap: 0;
-      max-height: 180px; overflow-y: auto;
+      max-height: 180px; overflow: auto;
     }
     .activity-header-row {
       display: grid; grid-template-columns: 70px 55px 75px 1fr 50px;
       gap: 12px; padding: 6px 10px; background: var(--bg-card);
       border-bottom: 1px solid var(--border); font-size: 8px;
       color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+      min-width: max-content;
     }
     .activity-item {
       display: grid; grid-template-columns: 70px 55px 75px 1fr 50px;
       gap: 12px; align-items: center;
       padding: 6px 10px; border-bottom: 1px solid var(--border);
       transition: background 0.15s ease; font-size: 10px;
+      min-width: max-content;
     }
     .activity-item:last-child { border-bottom: none; }
     .activity-item:hover { background: var(--bg-card); }
@@ -523,14 +525,50 @@
       }
     }
     @media (max-width: 720px) {
+      .header {
+        flex-direction: column; align-items: flex-start; gap: 10px;
+        padding: 12px 14px;
+      }
+      .header-right {
+        width: 100%; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px;
+      }
+      .status {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+      }
+      .status span {
+        margin-left: 0 !important;
+      }
+      .dashboard {
+        padding: 12px;
+      }
       .market-pnl-bar {
         grid-template-columns: 1fr;
       }
-      .market-pnl-grid, .performance-grid, .metric-grid {
+      .market-pnl-item {
+        padding: 10px 12px;
+        gap: 8px;
+      }
+      .market-pnl-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .performance-grid, .metric-grid {
         grid-template-columns: 1fr;
       }
       .qmon-grid {
         grid-template-columns: 1fr;
+      }
+      .health-metric {
+        min-width: min(180px, 100%);
+        flex: 1 1 150px;
+      }
+      .filters-bar {
+        padding: 10px 12px;
+      }
+      .filter-section {
+        width: 100%; align-items: flex-start; flex-direction: column;
+      }
+      .filter-input {
+        width: 100%;
       }
     }
 
@@ -1722,13 +1760,14 @@
 
         calculateMarketPnls() {
           const populations = this.familyState?.populations || [];
+          const hasRealExecutionMode = this.runtimeStatus?.mode === 'real';
 
           this.marketPnls = populations.map((population) => {
             const champion = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) || null;
             const seatOpenPnl = this.getSeatOpenPnl(population);
             const paperOpenPnl = champion ? this.getPaperOpenPnl(champion) : 0;
             const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
-            const seatSessionPnl = (population.marketConsolidatedPnl || 0) + seatOpenPnl;
+            const seatSessionPnl = hasRealExecutionMode ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
             const paperPnl = (population.marketPaperSessionPnl || 0) + paperOpenPnl;
 
             return {

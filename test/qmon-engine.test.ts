@@ -317,6 +317,21 @@ test("QmonEngine keeps paper entry pending until the simulated wait elapses", ()
   assert.equal(filledQmon.decisionHistory.length, 1);
 });
 
+test("QmonEngine uses minimum entry shares when configured to disable EV size scaling", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.3, 0.7)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.3, 0.7, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+
+  const waitingQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(waitingQmon.pendingOrder?.requestedShares, 6);
+});
+
 test("QmonEngine rejects paper entry when visible book never reaches the full requested size", () => {
   const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;

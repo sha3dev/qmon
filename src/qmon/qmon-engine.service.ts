@@ -1456,7 +1456,7 @@ export class QmonEngine {
       const fillQualityMultiplier = tradeabilityAssessment.predictedFillQuality >= 0.7 ? 1.2 : 1;
       const sizeTierMultiplier = executionPolicy?.sizeTier === 3 ? 1.4 : executionPolicy?.sizeTier === 2 ? 1.15 : 1;
       const rawMultiplier = Math.min(MAX_EV_POSITION_MULTIPLIER, evMultiplier * fillQualityMultiplier * sizeTierMultiplier);
-      sizedShareCount = Math.ceil(baseShareCount * rawMultiplier);
+      sizedShareCount = config.QMON_USE_MINIMUM_ENTRY_SHARES ? baseShareCount : Math.ceil(baseShareCount * rawMultiplier);
     }
 
     return sizedShareCount;
