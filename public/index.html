@@ -1736,9 +1736,10 @@
           this.marketPnls = populations.map((population) => {
             const champion = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) || null;
             const seatOpenPnl = this.getSeatOpenPnl(population);
+            const paperOpenPnl = champion ? this.getPaperOpenPnl(champion) : 0;
             const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
             const seatSessionPnl = (population.marketConsolidatedPnl || 0) + seatOpenPnl;
-            const paperPnl = champion ? this.getPaperDisplayPnl(champion) : 0;
+            const paperPnl = (population.marketPaperSessionPnl || 0) + paperOpenPnl;
 
             return {
               market: population.market,

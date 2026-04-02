@@ -15,6 +15,7 @@ function createFamilyState(): QmonFamilyState {
         createdAt: 10,
         lastUpdated: 11,
         activeChampionQmonId: "QMON01",
+        marketPaperSessionPnl: 1.25,
         marketConsolidatedPnl: 2.5,
         seatPosition: {
           action: null,
@@ -168,8 +169,10 @@ test("QmonPersistenceService round-trips the family state through a single atomi
 
     assert.equal(wasSaved, true);
     assert.equal(serializedState.includes('"globalGeneration": 5'), true);
+    assert.equal(serializedState.includes('"marketPaperSessionPnl"'), false);
     assert.ok(loadedState);
     assert.equal(loadedState.populations[0]?.activeChampionQmonId, "QMON01");
+    assert.equal(loadedState.populations[0]?.marketPaperSessionPnl, 0);
     assert.equal(loadedState.populations[0]?.marketConsolidatedPnl, 2.5);
     assert.equal(loadedState.populations[0]?.qmons[0]?.pendingOrder?.action, "BUY_UP");
     assert.equal(loadedState.populations[0]?.qmons[0]?.decisionHistory.length, 0);
@@ -219,6 +222,7 @@ test("QmonPersistenceService writes a timestamped backup snapshot before runtime
     assert.equal(backupPath, join("./tmp", "family-state-backups", "family-state.123456.json"));
     assert.deepEqual(backupDirEntries, ["family-state.123456.json"]);
     assert.equal(serializedBackup.includes('"globalGeneration": 5'), true);
+    assert.equal(serializedBackup.includes('"marketPaperSessionPnl"'), false);
     assert.equal(serializedBackup.includes('"decisionHistory"'), true);
     assert.equal(serializedBackup.includes('"decisionHistory": []'), true);
   } finally {

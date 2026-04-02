@@ -243,6 +243,7 @@ export class HttpServerService {
       createdAt: population.createdAt,
       lastUpdated: population.lastUpdated,
       activeChampionQmonId: population.activeChampionQmonId,
+      marketPaperSessionPnl: population.marketPaperSessionPnl,
       marketConsolidatedPnl: population.marketConsolidatedPnl,
       seatPosition: population.seatPosition,
       seatPendingOrder: population.seatPendingOrder,

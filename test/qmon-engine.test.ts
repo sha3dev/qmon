@@ -191,6 +191,7 @@ function createPopulation(qmons: readonly Qmon[], activeChampionQmonId: string |
     createdAt: 1,
     lastUpdated: 1,
     activeChampionQmonId,
+    marketPaperSessionPnl: 0,
     marketConsolidatedPnl: 0,
     seatPosition: {
       action: null,

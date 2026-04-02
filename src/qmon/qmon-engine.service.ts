@@ -632,6 +632,7 @@ export class QmonEngine {
       createdAt: now,
       lastUpdated: now,
       activeChampionQmonId: null,
+      marketPaperSessionPnl: 0,
       marketConsolidatedPnl: 0,
       seatPosition: this.createEmptyPosition(),
       seatPendingOrder: null,
@@ -655,6 +656,7 @@ export class QmonEngine {
           createdAt: hydrationTimestamp,
           lastUpdated: hydrationTimestamp,
           activeChampionQmonId: null,
+          marketPaperSessionPnl: 0,
           marketConsolidatedPnl: 0,
           seatPosition: this.createEmptyPosition(),
           seatPendingOrder: null,
@@ -2175,6 +2177,21 @@ export class QmonEngine {
     };
   }
 
+  private getPaperSessionPnlDelta(previousPopulation: QmonPopulation, updatedQmons: readonly Qmon[]): number {
+    const previousChampionQmonId = previousPopulation.activeChampionQmonId;
+    const previousChampionQmon =
+      previousChampionQmonId === null ? null : (previousPopulation.qmons.find((qmon) => qmon.id === previousChampionQmonId) ?? null);
+    const updatedChampionQmon =
+      previousChampionQmonId === null ? null : (updatedQmons.find((qmon) => qmon.id === previousChampionQmonId) ?? null);
+    let paperSessionPnlDelta = 0;
+
+    if (previousChampionQmon !== null && updatedChampionQmon !== null) {
+      paperSessionPnlDelta = updatedChampionQmon.metrics.totalPnl - previousChampionQmon.metrics.totalPnl;
+    }
+
+    return paperSessionPnlDelta;
+  }
+
   /**
    * Sync a seat proxy result back into the population using the proxy totalPnl as the exact seat ledger delta.
    */
@@ -2790,6 +2807,7 @@ export class QmonEngine {
     let updatedPopulation: QmonPopulation = {
       ...population,
       qmons: updatedQmons,
+      marketPaperSessionPnl: population.marketPaperSessionPnl + this.getPaperSessionPnlDelta(population, updatedQmons),
       lastUpdated: now,
     };
 

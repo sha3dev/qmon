@@ -293,6 +293,7 @@ export type QmonPopulation = {
   readonly createdAt: number;
   readonly lastUpdated: number;
   readonly activeChampionQmonId: QmonId | null;
+  readonly marketPaperSessionPnl: number;
   readonly marketConsolidatedPnl: number;
   readonly seatPosition: QmonPosition;
   readonly seatPendingOrder: QmonPendingOrder | null;

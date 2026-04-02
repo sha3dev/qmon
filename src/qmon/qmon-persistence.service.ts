@@ -275,6 +275,7 @@ export class QmonPersistenceService {
   ): QmonPopulation {
     const normalizedPopulation: QmonPopulation = {
       ...population,
+      marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
       executionRuntime: this.normalizeExecutionRuntime(population, route, legacyLiveExecutionState),
     };
 
@@ -290,17 +291,28 @@ export class QmonPersistenceService {
     return sanitizedQmon;
   }
 
-  private sanitizePopulationForPersistence(population: QmonPopulation): QmonPopulation {
-    const sanitizedPopulation: QmonPopulation = {
-      ...population,
+  private sanitizePopulationForPersistence(population: QmonPopulation): Record<string, unknown> {
+    const { marketPaperSessionPnl: _marketPaperSessionPnl, ...persistablePopulation } = population;
+    const sanitizedPopulation: Record<string, unknown> = {
+      ...persistablePopulation,
       qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
     };
 
     return sanitizedPopulation;
   }
 
-  private sanitizeFamilyStateForPersistence(state: QmonFamilyState): QmonFamilyState {
-    const sanitizedState: QmonFamilyState = {
+  private sanitizeLoadedPopulation(population: QmonPopulation): QmonPopulation {
+    const sanitizedPopulation: QmonPopulation = {
+      ...population,
+      qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
+      marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
+    };
+
+    return sanitizedPopulation;
+  }
+
+  private sanitizeFamilyStateForPersistence(state: QmonFamilyState): Record<string, unknown> {
+    const sanitizedState: Record<string, unknown> = {
       ...state,
       populations: state.populations.map((population) => this.sanitizePopulationForPersistence(population)),
     };
@@ -329,6 +341,7 @@ export class QmonPersistenceService {
     const resetPopulation: QmonPopulation = {
       ...population,
       qmons: population.qmons.map((qmon) => this.resetQmonRuntimeState(qmon)),
+      marketPaperSessionPnl: 0,
       marketConsolidatedPnl: 0,
       seatPosition: this.createEmptySeatPosition(),
       seatPendingOrder: null,
@@ -375,6 +388,7 @@ export class QmonPersistenceService {
         createdAt: Date.now(),
         lastUpdated: Date.now(),
         activeChampionQmonId: null,
+        marketPaperSessionPnl: 0,
         marketConsolidatedPnl: 0,
         seatPosition: {
           action: null,
@@ -459,7 +473,7 @@ export class QmonPersistenceService {
       ...state,
       populations: state.populations.map((population) =>
         this.normalizePopulation(
-          this.sanitizePopulationForPersistence(population),
+          this.sanitizeLoadedPopulation(population),
           executionMode === "real" ? "real" : population.executionRuntime?.route ?? "paper",
           legacyLiveExecutionState,
         ),

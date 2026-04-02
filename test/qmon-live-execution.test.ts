@@ -44,6 +44,7 @@ function createPopulation(
     createdAt: 1,
     lastUpdated: 1,
     activeChampionQmonId: null,
+    marketPaperSessionPnl: 0,
     marketConsolidatedPnl: 0,
     seatPosition: {
       action,
