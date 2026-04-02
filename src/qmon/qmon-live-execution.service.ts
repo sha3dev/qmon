@@ -45,7 +45,15 @@ import type { PersistedLiveExecutionState } from "./qmon-live-state-persistence.
  */
 
 const BALANCE_ERROR_PATTERNS = ["balance", "allowance", "insufficient"];
-const REAL_ACTIVITY_EVENT_TYPES = new Set(["live-order-posted", "live-order-confirmed", "live-order-cancelled"]);
+const REAL_ACTIVITY_EVENT_TYPES = new Set([
+  "live-order-posted",
+  "live-order-confirmed",
+  "live-order-cancelled",
+  "live-reconcile-started",
+  "live-reconcile-pending",
+  "live-reconcile-confirmed",
+  "live-reconcile-failed",
+]);
 const REAL_ACTIVITY_WARNING_CODES = new Set([
   "live-order-expired",
   "live-order-failed",
@@ -645,6 +653,11 @@ export class QmonLiveExecutionService {
     let resolvedExecutionRuntime: QmonExecutionRuntime | null = null;
 
     if (pendingIntent !== null && executionRuntime.orderId !== null) {
+      this.logLiveExecutionEvent(
+        "live-reconcile-started",
+        market,
+        `reconciling orderId=${executionRuntime.orderId} kind=${pendingIntent.kind} action=${pendingIntent.action}`,
+      );
       const reconciliationStatus = await this.orderService.reconcileOrderStatus({
         orderId: executionRuntime.orderId,
         shouldCancelOnPending: false,
@@ -653,6 +666,11 @@ export class QmonLiveExecutionService {
       });
 
       if (reconciliationStatus === "confirmed") {
+        this.logLiveExecutionEvent(
+          "live-reconcile-confirmed",
+          market,
+          `reconciliation confirmed orderId=${executionRuntime.orderId}`,
+        );
         qmonEngine.applyRealSeatPendingOrderFill(market, pendingIntent.limitPrice, pendingIntent.requestedShares, Date.now());
         await this.refreshBalanceSnapshot();
 
@@ -673,6 +691,11 @@ export class QmonLiveExecutionService {
       } else if (reconciliationStatus === "cancelled" || reconciliationStatus === "failed") {
         const errorMessage = `live order ${reconciliationStatus}`;
 
+        this.logLiveExecutionEvent(
+          "live-reconcile-failed",
+          market,
+          `reconciliation resolved orderId=${executionRuntime.orderId} status=${reconciliationStatus}`,
+        );
         qmonEngine.clearRealSeatPendingOrder(market, Date.now());
         resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
           pendingIntent: null,
@@ -685,6 +708,11 @@ export class QmonLiveExecutionService {
           lastReconciledAt: Date.now(),
         }, Date.now());
       } else if (reconciliationStatus === "pending") {
+        this.logLiveExecutionEvent(
+          "live-reconcile-pending",
+          market,
+          `reconciliation still pending for orderId=${executionRuntime.orderId}`,
+        );
         resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
           isHalted: true,
           recoveryStartedAt: executionRuntime.recoveryStartedAt ?? Date.now(),

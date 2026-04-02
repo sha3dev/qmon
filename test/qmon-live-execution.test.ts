@@ -787,6 +787,60 @@ test("QmonLiveExecutionService rechecks a disappeared tracked order before halti
   assert.equal(status.marketRoutes[0]?.confirmedLiveSeat?.action, "BUY_UP");
 });
 
+test("QmonLiveExecutionService logs reconciliation progress for timed out tracked orders", async () => {
+  const trackedPendingOrder = createPendingOrder("eth-5m", "entry", "BUY_UP");
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    reconcileOrderStatus: async () => "pending" as const,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      trackedPendingOrder,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-recovery-required",
+        pendingIntent: trackedPendingOrder,
+        orderId: "pending-1",
+        submittedAt: 100,
+        recoveryStartedAt: 100,
+        isHalted: true,
+        lastError: "Order pending-1 timed out after 5000ms.",
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  const warnMessages = await captureWarnMessages(async () => {
+    liveExecutionService.queueSync(engine as never, createSignals() as never);
+    await liveExecutionService.flush();
+  });
+
+  assert.equal(warnMessages.some((message) => message.includes("[real-activity] code=live-reconcile-started market=eth-5m")), true);
+  assert.equal(warnMessages.some((message) => message.includes("[real-activity] code=live-reconcile-pending market=eth-5m")), true);
+});
+
 test("QmonLiveExecutionService clears ambiguous disappeared tracked orders so the halt is not retried forever", async () => {
   const trackedPendingOrder = createPendingOrder("eth-5m", "entry", "BUY_UP");
   const orderService = {

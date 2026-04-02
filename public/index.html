@@ -694,7 +694,7 @@
     <!-- QMON cards grid -->
     <div class="qmon-grid">
       <template x-for="qmon in paginatedQmons" :key="qmon.id">
-        <div class="qmon-card" :class="{ 'has-position': qmon.position.action }" @click="openModal(qmon)">
+        <div class="qmon-card" :class="{ 'has-position': hasDisplayedPosition(qmon) }" @click="openModal(qmon)">
           <!-- Header -->
           <div class="qmon-head">
             <div class="qmon-head-id">
@@ -736,7 +736,7 @@
               </div>
               <div style="padding:7px 8px; border-radius:5px; background:var(--bg-card); border:1px solid var(--border);">
                 <div style="font-size:8px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.5px;">Entry Model</div>
-                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(qmon.position.directionalAlpha ?? qmon.position.entryScore)" x-text="formatNullableScore(qmon.position.directionalAlpha ?? qmon.position.entryScore)"></div>
+                <div style="margin-top:4px; font-size:11px; font-weight:700;" :class="scoreClass(getDisplayedPosition(qmon).directionalAlpha ?? getDisplayedPosition(qmon).entryScore)" x-text="formatNullableScore(getDisplayedPosition(qmon).directionalAlpha ?? getDisplayedPosition(qmon).entryScore)"></div>
               </div>
             </div>
 
@@ -802,7 +802,7 @@
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Window Realized PnL</span>
             <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getCurrentWindowRealizedPnl(selectedQmon))" x-text="formatPnl(getCurrentWindowRealizedPnl(selectedQmon))"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">uPnL</span>
             <span class="modal-val" style="font-size:11px; font-weight:600; margin-left:auto; display:block; width:100%; text-align:right;" :class="pnlClass(getOpenPnl(selectedQmon))" x-text="formatPnl(getOpenPnl(selectedQmon))"></span>
           </div>
@@ -900,51 +900,51 @@
           <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">CURRENT POSITION</div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Action</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(selectedQmon.position.action)" x-text="formatPositionAction(selectedQmon.position.action)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="actionClass(getDisplayedPosition(selectedQmon).action)" x-text="formatPositionAction(getDisplayedPosition(selectedQmon).action)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Score</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(selectedQmon.position.entryScore)" x-text="selectedQmon.position.entryScore?.toFixed(2) ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getDisplayedPosition(selectedQmon).entryScore)" x-text="getDisplayedPosition(selectedQmon).entryScore?.toFixed(2) ?? '—'"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entry Price</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.position.entryPrice)" x-text="selectedQmon.position.entryPrice?.toFixed(3) ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getDisplayedPosition(selectedQmon).entryPrice)" x-text="getDisplayedPosition(selectedQmon).entryPrice?.toFixed(3) ?? '—'"></span>
           </div>
-          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="selectedQmon.position.action">
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;" x-show="hasDisplayedPosition(selectedQmon)">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Shares</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.position.shareCount)" x-text="selectedQmon.position.shareCount ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(getDisplayedPosition(selectedQmon).shareCount)" x-text="getDisplayedPosition(selectedQmon).shareCount ?? '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Entered At</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="selectedQmon.position.enteredAt ? formatDateTime(selectedQmon.position.enteredAt) : '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getDisplayedPosition(selectedQmon).enteredAt ? formatDateTime(getDisplayedPosition(selectedQmon).enteredAt) : '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Directional Alpha</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(selectedQmon.position.directionalAlpha ?? selectedQmon.position.entryScore)" x-text="formatNullableScore(selectedQmon.position.directionalAlpha ?? selectedQmon.position.entryScore)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="scoreClass(getDisplayedPosition(selectedQmon).directionalAlpha ?? getDisplayedPosition(selectedQmon).entryScore)" x-text="formatNullableScore(getDisplayedPosition(selectedQmon).directionalAlpha ?? getDisplayedPosition(selectedQmon).entryScore)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Edge</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(selectedQmon.position.estimatedEdgeBps)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getDisplayedPosition(selectedQmon).estimatedEdgeBps)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Net EV</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.position.estimatedNetEvUsd || 0)" x-text="formatNullablePnl(selectedQmon.position.estimatedNetEvUsd)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(getDisplayedPosition(selectedQmon).estimatedNetEvUsd || 0)" x-text="formatNullablePnl(getDisplayedPosition(selectedQmon).estimatedNetEvUsd)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Predicted Slippage</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(selectedQmon.position.predictedSlippageBps)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableBps(getDisplayedPosition(selectedQmon).predictedSlippageBps)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fill Quality</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(selectedQmon.position.predictedFillQuality)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatRatio(getDisplayedPosition(selectedQmon).predictedFillQuality)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Signal Agreement</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="selectedQmon.position.signalAgreementCount ?? '—'"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="getDisplayedPosition(selectedQmon).signalAgreementCount ?? '—'"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Dominant Block</span>
-            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatDominantSignalGroup(selectedQmon.position.dominantSignalGroup)"></span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatDominantSignalGroup(getDisplayedPosition(selectedQmon).dominantSignalGroup)"></span>
           </div>
         </div>
 
@@ -1405,7 +1405,7 @@
           }
 
           if (this.filterPosition) {
-            qmons = qmons.filter(qm => qm.position.action !== null);
+            qmons = qmons.filter(qm => this.hasDisplayedPosition(qm));
           }
 
           return qmons.sort((a, b) => this.getDisplayPnl(b) - this.getDisplayPnl(a));
@@ -2327,9 +2327,25 @@
           return population?.activeChampionQmonId === qmon.id;
         },
 
+        getDisplayedPosition(qmon) {
+          const shouldUseSeatPosition = this.runtimeStatus?.mode === 'real' && this.isMarketChampion(qmon);
+          let displayedPosition = qmon.position || {};
+
+          if (shouldUseSeatPosition) {
+            displayedPosition = this.getPopulationState(qmon.market)?.seatPosition || displayedPosition;
+          }
+
+          return displayedPosition;
+        },
+
+        hasDisplayedPosition(qmon) {
+          return this.getDisplayedPosition(qmon)?.action !== null;
+        },
+
         getCurrentTokenPrice(qmon) {
           const windowState = this.getWindowState(qmon);
-          const action = qmon.position?.action;
+          const displayedPosition = this.getDisplayedPosition(qmon);
+          const action = displayedPosition?.action;
           let tokenPrice = null;
 
           if (windowState && action === 'BUY_UP') {
@@ -2343,8 +2359,9 @@
         },
 
         getSettledTokenValue(qmon) {
-          const action = qmon.position?.action;
-          const priceToBeat = qmon.position?.priceToBeat ?? null;
+          const displayedPosition = this.getDisplayedPosition(qmon);
+          const action = displayedPosition?.action;
+          const priceToBeat = displayedPosition?.priceToBeat ?? null;
           const asset = qmon.market.split('-')[0];
           const chainlinkPrice = asset ? this.latestSignals?.[asset]?.chainlinkPrice ?? null : null;
           let settledValue = null;
@@ -2364,10 +2381,11 @@
         },
 
         getOpenPnl(qmon) {
-          const action = qmon.position?.action;
-          const entryPrice = qmon.position?.entryPrice ?? null;
-          const shareCount = qmon.position?.shareCount ?? null;
-          const marketEndMs = qmon.position?.marketEndMs ?? null;
+          const displayedPosition = this.getDisplayedPosition(qmon);
+          const action = displayedPosition?.action;
+          const entryPrice = displayedPosition?.entryPrice ?? null;
+          const shareCount = displayedPosition?.shareCount ?? null;
+          const marketEndMs = displayedPosition?.marketEndMs ?? null;
           const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
           const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
           let openPnl = 0;
@@ -2380,9 +2398,10 @@
         },
 
         getMarkedOpenValue(qmon) {
-          const action = qmon.position?.action;
-          const shareCount = qmon.position?.shareCount ?? null;
-          const marketEndMs = qmon.position?.marketEndMs ?? null;
+          const displayedPosition = this.getDisplayedPosition(qmon);
+          const action = displayedPosition?.action;
+          const shareCount = displayedPosition?.shareCount ?? null;
+          const marketEndMs = displayedPosition?.marketEndMs ?? null;
           const isSettled = marketEndMs !== null && Date.now() >= marketEndMs;
           const exitPrice = isSettled ? this.getSettledTokenValue(qmon) : this.getCurrentTokenPrice(qmon);
           let markedOpenValue = 0;
@@ -2414,7 +2433,7 @@
         },
 
         windowPnlClass(qmon) {
-          if (qmon.position?.action) {
+          if (this.hasDisplayedPosition(qmon)) {
             return 'orange';
           }
 
