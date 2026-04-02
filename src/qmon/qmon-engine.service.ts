@@ -2972,6 +2972,26 @@ export class QmonEngine {
   }
 
   /**
+   * Clear an unrecoverable live dust remainder after a confirmed exit leaves less than one venue-minimum order.
+   */
+  public clearRealSeatDustPosition(market: MarketKey, timestamp: number): void {
+    const population = this.getPopulation(market);
+
+    if (population === null || population.seatPosition.action === null) {
+      return;
+    }
+
+    this.markStateMutation(true);
+    this.replacePopulation({
+      ...population,
+      seatPosition: this.createEmptyPosition(),
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: timestamp,
+      lastUpdated: timestamp,
+    });
+  }
+
+  /**
    * Determine if an open position should be closed.
    */
   private shouldClosePosition(

@@ -481,7 +481,6 @@ export class QmonLiveExecutionService {
     if (this.hasLiveSeatDivergence(currentPopulation, executionRuntime)) {
       const shouldLogDivergence = executionRuntime.lastError !== "live seat divergence detected between venue state and local seat ledger" || !executionRuntime.isHalted;
 
-      qmonEngine.clearRealSeatPendingOrder(population.market, Date.now());
       executionRuntime = await this.updateExecutionRuntime(qmonEngine, population.market, {
         isHalted: true,
         recoveryStartedAt: null,
@@ -710,6 +709,17 @@ export class QmonLiveExecutionService {
     return errorMessage;
   }
 
+  private shouldClearConfirmedExitDust(population: QmonPopulation | null, pendingOrder: QmonPendingOrder, market: PolymarketMarket): boolean {
+    const seatShareCount = population?.seatPosition.shareCount ?? null;
+    let shouldClearDust = false;
+
+    if (pendingOrder.kind === "exit" && seatShareCount !== null && seatShareCount > 0) {
+      shouldClearDust = seatShareCount < market.orderMinSize;
+    }
+
+    return shouldClearDust;
+  }
+
   private async processPendingSeatOrder(
     qmonEngine: QmonEngine,
     population: QmonPopulation,
@@ -769,7 +779,20 @@ export class QmonLiveExecutionService {
       qmonEngine.applyRealSeatPendingOrderFill(marketKey, executedPrice, executedSize, Date.now());
       await this.refreshBalanceSnapshot();
 
-      const updatedPopulation = qmonEngine.getPopulation(marketKey);
+      let updatedPopulation = qmonEngine.getPopulation(marketKey);
+
+      if (this.shouldClearConfirmedExitDust(updatedPopulation, pendingOrder, market)) {
+        const residualShareCount = updatedPopulation?.seatPosition.shareCount ?? 0;
+
+        qmonEngine.clearRealSeatDustPosition(marketKey, Date.now());
+        updatedPopulation = qmonEngine.getPopulation(marketKey);
+        this.logLiveWarning(
+          marketKey,
+          "live-seat-dust-cleared",
+          `cleared residual seat shares below venue minimum after confirmed exit: remaining=${residualShareCount.toFixed(4)} minimum=${market.orderMinSize.toFixed(4)}`,
+        );
+      }
+
       const confirmedVenueSeat = this.createConfirmedVenueSeatFromPopulation(updatedPopulation);
 
       await this.updateExecutionRuntime(qmonEngine, marketKey, {
@@ -783,6 +806,8 @@ export class QmonLiveExecutionService {
         lastError: null,
         lastReconciledAt: Date.now(),
       }, Date.now());
+
+      updatedPopulation = qmonEngine.getPopulation(marketKey);
 
       if (updatedPopulation !== null && this.hasLiveSeatDivergence(updatedPopulation, this.getExecutionRuntime(updatedPopulation, "real"))) {
         await this.updateExecutionRuntime(qmonEngine, marketKey, {
@@ -810,14 +835,25 @@ export class QmonLiveExecutionService {
       return;
     }
 
-    qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
-
     if (this.isBalanceError(errorMessage)) {
+      qmonEngine.clearRealSeatPendingOrder(marketKey, Date.now());
       this.balanceSnapshot = {
         ...this.balanceSnapshot,
         balanceState: "stale",
       };
       await this.refreshBalanceSnapshot();
+
+      await this.updateExecutionRuntime(qmonEngine, marketKey, {
+        pendingIntent: null,
+        orderId: null,
+        submittedAt: null,
+        pendingVenueOrders: [],
+        lastError: errorMessage,
+        isHalted: false,
+        recoveryStartedAt: null,
+      }, Date.now());
+      this.logLiveWarning(marketKey, "live-order-failed", errorMessage);
+      return;
     }
 
     if (errorMessage.includes("traceable orderId") || errorMessage.includes("without id")) {
@@ -832,15 +868,16 @@ export class QmonLiveExecutionService {
     }
 
     await this.updateExecutionRuntime(qmonEngine, marketKey, {
-      pendingIntent: null,
+      pendingIntent: pendingOrder,
       orderId: null,
       submittedAt: null,
       pendingVenueOrders: [],
       lastError: errorMessage,
-      isHalted: false,
+      isHalted: true,
       recoveryStartedAt: null,
+      lastReconciledAt: Date.now(),
     }, Date.now());
-    this.logLiveWarning(marketKey, "live-order-failed", errorMessage);
+    this.logLiveWarning(marketKey, "live-routing-halted", errorMessage);
   }
 
   private async postAndConfirmOrder(
