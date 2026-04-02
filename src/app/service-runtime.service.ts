@@ -88,10 +88,10 @@ export class ServiceRuntime {
     const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
     const normalizedExistingState =
       existingState !== null
-        ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_REAL_MARKET_ALLOWLIST, legacyLiveExecutionState)
+        ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_EXECUTION_MODE, legacyLiveExecutionState)
         : null;
     const initialFamilyState =
-      normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_REAL_MARKET_ALLOWLIST) : null;
+      normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_EXECUTION_MODE) : null;
     const qmonEngine = existingState
       ? new QmonEngine(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, initialFamilyState ?? undefined, signalEngine, undefined, qmonValidationLogService)
       : QmonEngine.createDefault(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, signalEngine, qmonValidationLogService);
@@ -103,11 +103,11 @@ export class ServiceRuntime {
       logger.info("QMON state loaded from persistence with CPnL reset");
     }
 
-    qmonEngine.applyExecutionRoutes(config.QMON_REAL_MARKET_ALLOWLIST, Date.now());
+    qmonEngine.applyExecutionRoutes(config.QMON_EXECUTION_MODE, Date.now());
 
     if (!existingState && legacyLiveExecutionState !== null) {
       qmonEngine.setFamilyState(
-        qmonPersistence.normalizeFamilyState(qmonEngine.getFamilyState(), config.QMON_REAL_MARKET_ALLOWLIST, legacyLiveExecutionState),
+        qmonPersistence.normalizeFamilyState(qmonEngine.getFamilyState(), config.QMON_EXECUTION_MODE, legacyLiveExecutionState),
       );
       logger.info("QMON legacy live execution state migrated into family state");
     }
@@ -124,7 +124,6 @@ export class ServiceRuntime {
       qmonLiveExecutionService = new QmonLiveExecutionService(undefined, undefined, qmonLiveStatePersistenceService, qmonValidationLogService);
       const liveExecutionOptions: {
         readonly mode: "real";
-        readonly allowlistedMarkets: readonly `${string}-${string}`[];
         readonly privateKey?: string;
         readonly funderAddress?: string;
         readonly signatureType?: SignatureType;
@@ -133,7 +132,6 @@ export class ServiceRuntime {
         readonly cpnlSessionStartedAt: number | null;
       } = {
         mode: config.QMON_EXECUTION_MODE,
-        allowlistedMarkets: config.QMON_REAL_MARKET_ALLOWLIST,
         confirmationTimeoutMs: config.QMON_REAL_CONFIRMATION_TIMEOUT_MS,
         cpnlSessionStartedAt: qmonValidationLogService.getCpnlSessionStartedAt(),
       };
@@ -174,7 +172,6 @@ export class ServiceRuntime {
       const allMarkets = familyState.populations.map((population) => population.market);
       const paperRuntimeExecutionStatus: RuntimeExecutionStatus = {
         mode: "paper",
-        allowlistedMarkets: [],
         balanceUsd: null,
         balanceState: "unavailable",
         balanceUpdatedAt: null,
@@ -251,7 +248,7 @@ export class ServiceRuntime {
 
     if (lastStructuredSignals) {
       this.qmonEngine.evaluateAll(lastStructuredSignals, lastRegimes, this.buffer, {
-        realExecutionMarkets: config.QMON_REAL_MARKET_ALLOWLIST,
+        executionMode: config.QMON_EXECUTION_MODE,
       });
 
       if (this.qmonLiveExecutionService !== null) {

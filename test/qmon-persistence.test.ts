@@ -323,7 +323,7 @@ test("QmonPersistenceService preserves real market seat state during CPnL reset"
     ],
   };
 
-  const resetState = persistenceService.resetCpnlState(familyState, ["btc-5m"]);
+  const resetState = persistenceService.resetCpnlState(familyState, "real");
 
   assert.equal(resetState.populations[0]?.marketConsolidatedPnl, 0);
   assert.equal(resetState.populations[0]?.seatPosition.action, "BUY_UP");
@@ -336,7 +336,7 @@ test("QmonPersistenceService migrates legacy live execution state into the canon
   const familyState = createFamilyState();
   const migratedState = persistenceService.normalizeFamilyState(
     familyState,
-    ["btc-5m"],
+    "real",
     {
       updatedAt: 999,
       markets: [

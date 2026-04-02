@@ -366,7 +366,7 @@ export class QmonPersistenceService {
 
   public normalizeFamilyState(
     state: QmonFamilyState,
-    realExecutionMarkets: readonly MarketKey[] = [],
+    executionMode: QmonExecutionRoute = "paper",
     legacyLiveExecutionState: PersistedLiveExecutionState | null = null,
   ): QmonFamilyState {
     const normalizedState: QmonFamilyState = {
@@ -374,7 +374,7 @@ export class QmonPersistenceService {
       populations: state.populations.map((population) =>
         this.normalizePopulation(
           population,
-          realExecutionMarkets.includes(population.market) ? "real" : population.executionRuntime?.route ?? "paper",
+          executionMode === "real" ? "real" : population.executionRuntime?.route ?? "paper",
           legacyLiveExecutionState,
         ),
       ),
@@ -383,25 +383,25 @@ export class QmonPersistenceService {
     return normalizedState;
   }
 
-  public resetCpnlState(state: QmonFamilyState, realExecutionMarkets: readonly MarketKey[] = []): QmonFamilyState {
+  public resetCpnlState(state: QmonFamilyState, executionMode: QmonExecutionRoute = "paper"): QmonFamilyState {
     const now = Date.now();
     const resetState: QmonFamilyState = {
       ...state,
       populations: state.populations.map((population) => ({
         ...population,
         marketConsolidatedPnl: 0,
-        seatPosition: realExecutionMarkets.includes(population.market) ? population.seatPosition : this.createEmptySeatPosition(),
-        seatPendingOrder: realExecutionMarkets.includes(population.market) ? population.seatPendingOrder : null,
-        seatLastCloseTimestamp: realExecutionMarkets.includes(population.market) ? population.seatLastCloseTimestamp : null,
-        seatLastWindowStartMs: realExecutionMarkets.includes(population.market) ? population.seatLastWindowStartMs : null,
-        seatLastSettledWindowStartMs: realExecutionMarkets.includes(population.market) ? population.seatLastSettledWindowStartMs : null,
+        seatPosition: executionMode === "real" ? population.seatPosition : this.createEmptySeatPosition(),
+        seatPendingOrder: executionMode === "real" ? population.seatPendingOrder : null,
+        seatLastCloseTimestamp: executionMode === "real" ? population.seatLastCloseTimestamp : null,
+        seatLastWindowStartMs: executionMode === "real" ? population.seatLastWindowStartMs : null,
+        seatLastSettledWindowStartMs: executionMode === "real" ? population.seatLastSettledWindowStartMs : null,
         executionRuntime: this.normalizeExecutionRuntime(
           {
             ...population,
-            seatPosition: realExecutionMarkets.includes(population.market) ? population.seatPosition : this.createEmptySeatPosition(),
-            seatPendingOrder: realExecutionMarkets.includes(population.market) ? population.seatPendingOrder : null,
+            seatPosition: executionMode === "real" ? population.seatPosition : this.createEmptySeatPosition(),
+            seatPendingOrder: executionMode === "real" ? population.seatPendingOrder : null,
           },
-          realExecutionMarkets.includes(population.market) ? "real" : "paper",
+          executionMode,
           null,
         ),
         lastUpdated: now,

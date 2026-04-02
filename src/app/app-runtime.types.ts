@@ -43,7 +43,6 @@ export type MarketExecutionRoute = {
 
 export type RuntimeExecutionStatus = {
   readonly mode: ExecutionMode;
-  readonly allowlistedMarkets: readonly MarketKey[];
   readonly balanceUsd: number | null;
   readonly balanceState: BalanceSnapshotState;
   readonly balanceUpdatedAt: number | null;

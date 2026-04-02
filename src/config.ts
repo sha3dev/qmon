@@ -6,14 +6,6 @@ const ENV = process.env;
 const signalAssets = ["btc", "eth", "sol", "xrp"] as const;
 const signalWindows = ["5m", "15m"] as const;
 const qmonExecutionMode = ENV.QMON_EXECUTION_MODE === "real" ? "real" : "paper";
-const rawQmonRealMarketAllowlist = (ENV.QMON_REAL_MARKET_ALLOWLIST ?? "")
-  .split(",")
-  .map((market) => market.trim())
-  .filter((market) => market.length > 0);
-const qmonRealMarketAllowlist =
-  rawQmonRealMarketAllowlist.includes("*")
-    ? signalAssets.flatMap((asset) => signalWindows.map((window) => `${asset}-${window}` as const))
-    : (rawQmonRealMarketAllowlist as readonly `${string}-${string}`[]);
 const polymarketSignatureType = ENV.POLYMARKET_SIGNATURE_TYPE !== undefined ? Number(ENV.POLYMARKET_SIGNATURE_TYPE) : undefined;
 const polymarketMaxAllowedSlippage = ENV.POLYMARKET_MAX_ALLOWED_SLIPPAGE !== undefined ? Number(ENV.POLYMARKET_MAX_ALLOWED_SLIPPAGE) : undefined;
 const polymarketSafeMaxBuyAmount = Number(ENV.POLYMARKET_SAFE_MAX_BUY_AMOUNT || 15);
@@ -37,7 +29,6 @@ const config = {
   QMON_EVOLUTION_MUTATION_RATE: Number(ENV.QMON_EVOLUTION_MUTATION_RATE || 0.08),
   QMON_HYDRATION_WINDOW_COUNT: Number(ENV.QMON_HYDRATION_WINDOW_COUNT || 10),
   QMON_EXECUTION_MODE: qmonExecutionMode,
-  QMON_REAL_MARKET_ALLOWLIST: qmonRealMarketAllowlist,
   POLYMARKET_PRIVATE_KEY: ENV.POLYMARKET_PRIVATE_KEY,
   POLYMARKET_FUNDER_ADDRESS: ENV.POLYMARKET_FUNDER_ADDRESS,
   POLYMARKET_SIGNATURE_TYPE: polymarketSignatureType,

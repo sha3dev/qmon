@@ -152,7 +152,7 @@ type CompiledQmonGenome = {
 type EvaluationOptions = {
   readonly shouldBlockEntries: boolean;
   readonly shouldSkipEvolution: boolean;
-  readonly realExecutionMarkets: readonly MarketKey[];
+  readonly executionMode: "paper" | "real";
 };
 
 type QmonEngineStats = {
@@ -416,7 +416,7 @@ export class QmonEngine {
   private isRealExecutionMarket(market: MarketKey, evaluationOptions: EvaluationOptions): boolean {
     let isRealMarket = false;
 
-    if (evaluationOptions.realExecutionMarkets.includes(market)) {
+    if (evaluationOptions.executionMode === "real") {
       isRealMarket = true;
     }
 
@@ -2309,7 +2309,7 @@ export class QmonEngine {
     const resolvedEvaluationOptions: EvaluationOptions = {
       shouldBlockEntries: evaluationOptions?.shouldBlockEntries ?? false,
       shouldSkipEvolution: evaluationOptions?.shouldSkipEvolution ?? false,
-      realExecutionMarkets: evaluationOptions?.realExecutionMarkets ?? [],
+      executionMode: evaluationOptions?.executionMode ?? "paper",
     };
     const isChampionReady = this.isSeatChampionReady(championQmon);
     const isRealExecutionMarket = this.isRealExecutionMarket(market, resolvedEvaluationOptions);
@@ -2494,12 +2494,10 @@ export class QmonEngine {
   /**
    * Apply route ownership for markets that should execute in real mode.
    */
-  public applyExecutionRoutes(realExecutionMarkets: readonly MarketKey[], timestamp: number): void {
+  public applyExecutionRoutes(executionMode: "paper" | "real", timestamp: number): void {
     this.familyState = {
       ...this.familyState,
-      populations: this.familyState.populations.map((population) =>
-        this.normalizePopulationExecutionRuntime(population, realExecutionMarkets.includes(population.market) ? "real" : "paper"),
-      ),
+      populations: this.familyState.populations.map((population) => this.normalizePopulationExecutionRuntime(population, executionMode)),
       lastUpdated: timestamp,
     };
     this.markStateMutation(true);
@@ -2640,7 +2638,7 @@ export class QmonEngine {
     const resolvedEvaluationOptions: EvaluationOptions = {
       shouldBlockEntries: evaluationOptions?.shouldBlockEntries ?? false,
       shouldSkipEvolution: evaluationOptions?.shouldSkipEvolution ?? false,
-      realExecutionMarkets: evaluationOptions?.realExecutionMarkets ?? [],
+      executionMode: evaluationOptions?.executionMode ?? "paper",
     };
     if (!population) {
       return [];
@@ -2827,7 +2825,7 @@ export class QmonEngine {
 
     if (isNewWindow) {
       const shouldPreserveSeatState =
-        resolvedEvaluationOptions.realExecutionMarkets.includes(market) &&
+        resolvedEvaluationOptions.executionMode === "real" &&
         (updatedPopulation.seatPosition.action !== null || updatedPopulation.seatPendingOrder !== null);
 
       updatedPopulation = this.championService.finalizePopulation(

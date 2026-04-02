@@ -239,6 +239,11 @@ function createMockEngine(initialPopulations: readonly QmonPopulation[]) {
     getPopulations(): readonly QmonPopulation[] {
       return [...populationsByMarket.values()];
     },
+    getFamilyState() {
+      return {
+        populations: [...populationsByMarket.values()],
+      };
+    },
   };
 }
 
@@ -307,7 +312,6 @@ test("QmonLiveExecutionService moves posted but unconfirmed orders into recovery
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -329,7 +333,7 @@ test("QmonLiveExecutionService moves posted but unconfirmed orders into recovery
   assert.equal(ethRoute?.orderId, "order-1");
 });
 
-test("QmonLiveExecutionService routes real seat pending orders only for allowlisted markets", async () => {
+test("QmonLiveExecutionService routes all markets through real execution when real mode is enabled", async () => {
   const postedOrders: {
     readonly op: string;
     readonly direction: string;
@@ -375,7 +379,13 @@ test("QmonLiveExecutionService routes real seat pending orders only for allowlis
     }),
   };
   const marketCatalogService = {
-    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+    loadCryptoWindowMarkets: async (options: { readonly symbols: readonly string[] }) => {
+      if (options.symbols[0] === "btc") {
+        return [createMockMarket("btc-updown-5m")];
+      }
+
+      return [createMockMarket("eth-updown-5m")];
+    },
   };
   const liveExecutionService = new QmonLiveExecutionService(
     orderService as never,
@@ -390,7 +400,6 @@ test("QmonLiveExecutionService routes real seat pending orders only for allowlis
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -410,10 +419,14 @@ test("QmonLiveExecutionService routes real seat pending orders only for allowlis
   const status = liveExecutionService.getStatus(exitEngine.getPopulations());
 
   assert.equal(balanceReads >= 2, true);
-  assert.equal(postedOrders.length, 2);
-  assert.deepEqual(postedOrders.map((order) => `${order.op}:${order.direction}:${order.slug}`), ["buy:up:eth-updown-5m", "sell:up:eth-updown-5m"]);
+  assert.equal(postedOrders.length, 3);
+  assert.deepEqual(postedOrders.map((order) => `${order.op}:${order.direction}:${order.slug}`), [
+    "buy:up:eth-updown-5m",
+    "buy:up:btc-updown-5m",
+    "sell:up:eth-updown-5m",
+  ]);
   assert.equal(status.marketRoutes.find((route) => route.market === "eth-5m")?.route, "real");
-  assert.equal(status.marketRoutes.find((route) => route.market === "btc-5m")?.route, "paper");
+  assert.equal(status.marketRoutes.find((route) => route.market === "btc-5m")?.route, "real");
 });
 
 test("QmonLiveExecutionService logs posted and confirmed real orders at warn level", async () => {
@@ -453,7 +466,6 @@ test("QmonLiveExecutionService logs posted and confirmed real orders at warn lev
   const warnMessages = await captureWarnMessages(async () => {
     await liveExecutionService.initialize({
       mode: "real",
-      allowlistedMarkets: ["eth-5m"],
       privateKey: "0xabc",
       confirmationTimeoutMs: 5_000,
       persistedState: null,
@@ -503,7 +515,6 @@ test("QmonLiveExecutionService logs recovery-required real orders at warn level"
   const warnMessages = await captureWarnMessages(async () => {
     await liveExecutionService.initialize({
       mode: "real",
-      allowlistedMarkets: ["eth-5m"],
       privateKey: "0xabc",
       confirmationTimeoutMs: 5_000,
       persistedState: null,
@@ -546,7 +557,6 @@ test("QmonLiveExecutionService clears failed real seat orders and refreshes bala
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -606,7 +616,6 @@ test("QmonLiveExecutionService keeps recovery-required markets halted on startup
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -667,7 +676,6 @@ test("QmonLiveExecutionService cancels stale open venue orders only after the lo
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -726,7 +734,6 @@ test("QmonLiveExecutionService halts a market when a new entry appears while a c
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -764,7 +771,6 @@ test("QmonLiveExecutionService does not infer a confirmed live position from loc
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,
@@ -814,7 +820,6 @@ test("QmonLiveExecutionService halts when a confirmed live order is missing a tr
 
   await liveExecutionService.initialize({
     mode: "real",
-    allowlistedMarkets: ["eth-5m"],
     privateKey: "0xabc",
     confirmationTimeoutMs: 5_000,
     persistedState: null,

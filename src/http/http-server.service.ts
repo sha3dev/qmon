@@ -323,7 +323,6 @@ export class HttpServerService {
     };
     const runtimeExecutionStatus = this.runtimeExecutionStatusProvider?.() ?? {
       mode: "paper",
-      allowlistedMarkets: [],
       balanceUsd: null,
       balanceState: "unavailable",
       balanceUpdatedAt: null,
@@ -440,7 +439,6 @@ export class HttpServerService {
     app.get("/api/runtime-status", (context) => {
       const runtimeExecutionStatus = this.runtimeExecutionStatusProvider?.() ?? {
         mode: "paper",
-        allowlistedMarkets: [],
         balanceUsd: null,
         balanceState: "unavailable",
         balanceUpdatedAt: null,

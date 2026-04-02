@@ -45,7 +45,6 @@ import type { PersistedLiveExecutionState } from "./qmon-live-state-persistence.
  */
 
 const BALANCE_ERROR_PATTERNS = ["balance", "allowance", "insufficient"];
-const EMPTY_ALLOWLIST: readonly MarketKey[] = [];
 const REAL_ACTIVITY_EVENT_TYPES = new Set(["live-order-posted", "live-order-confirmed", "live-order-cancelled"]);
 const REAL_ACTIVITY_WARNING_CODES = new Set([
   "live-order-expired",
@@ -72,7 +71,6 @@ type LiveMarketCache = {
 
 type InitializeLiveExecutionOptions = {
   readonly mode: ExecutionMode;
-  readonly allowlistedMarkets: readonly MarketKey[];
   readonly privateKey?: string;
   readonly funderAddress?: string;
   readonly signatureType?: SignatureType;
@@ -102,7 +100,6 @@ export class QmonLiveExecutionService {
   private readonly liveStatePersistenceService: QmonLiveStatePersistenceService;
   private readonly validationLogService: QmonValidationLogService | null;
   private mode: ExecutionMode;
-  private allowlistedMarkets: readonly MarketKey[];
   private confirmationTimeoutMs: number;
   private cpnlSessionStartedAt: number | null;
   private balanceSnapshot: LiveBalanceSnapshot;
@@ -125,7 +122,6 @@ export class QmonLiveExecutionService {
     this.liveStatePersistenceService = liveStatePersistenceService ?? QmonLiveStatePersistenceService.createDefault("./data");
     this.validationLogService = validationLogService;
     this.mode = "paper";
-    this.allowlistedMarkets = EMPTY_ALLOWLIST;
     this.confirmationTimeoutMs = 15_000;
     this.cpnlSessionStartedAt = null;
     this.balanceSnapshot = {
@@ -144,7 +140,6 @@ export class QmonLiveExecutionService {
 
   public async initialize(options: InitializeLiveExecutionOptions): Promise<void> {
     this.mode = options.mode;
-    this.allowlistedMarkets = [...options.allowlistedMarkets];
     this.confirmationTimeoutMs = options.confirmationTimeoutMs;
     this.cpnlSessionStartedAt = options.cpnlSessionStartedAt;
     this.applyPolymarketSafetyConfig();
@@ -203,7 +198,7 @@ export class QmonLiveExecutionService {
     const marketRoutes: MarketExecutionRoute[] = [];
 
     for (const population of populations) {
-      const hasRealRouting = this.mode === "real" && this.allowlistedMarkets.includes(population.market);
+      const hasRealRouting = this.mode === "real";
       const executionRuntime = this.getExecutionRuntime(population, hasRealRouting ? "real" : "paper");
       const confirmedLiveSeat = hasRealRouting ? this.buildConfirmedLiveSeatSummary(executionRuntime.confirmedVenueSeat) : null;
       const pendingIntentKey = hasRealRouting && executionRuntime.pendingIntent !== null ? this.buildPendingIntentKey(executionRuntime.pendingIntent) : null;
@@ -231,7 +226,6 @@ export class QmonLiveExecutionService {
 
     return {
       mode: this.mode,
-      allowlistedMarkets: [...this.allowlistedMarkets],
       balanceUsd: this.balanceSnapshot.balanceUsd,
       balanceState: this.balanceSnapshot.balanceState,
       balanceUpdatedAt: this.balanceSnapshot.balanceUpdatedAt,
@@ -413,12 +407,10 @@ export class QmonLiveExecutionService {
 
     const pendingVenueOrders = await this.listActiveOrdersPendingConfirmation();
 
-    for (const market of this.allowlistedMarkets) {
-      const population = qmonEngine.getPopulation(market);
+    for (const population of qmonEngine.getFamilyState().populations) {
+      const market = population.market;
 
-      if (population !== null) {
-        await this.syncMarket(qmonEngine, population, latestSignals, pendingVenueOrders);
-      }
+      await this.syncMarket(qmonEngine, population, latestSignals, pendingVenueOrders);
     }
   }
 
