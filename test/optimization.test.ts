@@ -92,6 +92,56 @@ test("QmonReplayHistoryService reuses the hydration tape inside one live window 
   assert.deepEqual(thirdTape, [firstSnapshot, secondSnapshot, thirdSnapshot]);
 });
 
+test("QmonReplayHistoryService downsamples retained window snapshots while preserving first and last points", () => {
+  const replayHistoryService = new QmonReplayHistoryService(2, 2);
+  const firstWindowSignals = {
+    eth: {
+      chainlinkPrice: 2_000,
+      signals: {} as Record<string, never>,
+      windows: {
+        "5m": {
+          signals: {} as Record<string, never>,
+          prices: {
+            priceToBeat: 2_000,
+            upPrice: 0.4,
+            downPrice: 0.6,
+            marketStartMs: 100,
+            marketEndMs: 200,
+          },
+        },
+      },
+    },
+  };
+  const secondWindowSignals = {
+    eth: {
+      chainlinkPrice: 2_000,
+      signals: {} as Record<string, never>,
+      windows: {
+        "5m": {
+          signals: {} as Record<string, never>,
+          prices: {
+            priceToBeat: 2_000,
+            upPrice: 0.45,
+            downPrice: 0.55,
+            marketStartMs: 300,
+            marketEndMs: 400,
+          },
+        },
+      },
+    },
+  };
+
+  replayHistoryService.recordSnapshot({ generated_at: 1 } as never, firstWindowSignals as never);
+  replayHistoryService.recordSnapshot({ generated_at: 2 } as never, firstWindowSignals as never);
+  replayHistoryService.recordSnapshot({ generated_at: 3 } as never, firstWindowSignals as never);
+  replayHistoryService.recordSnapshot({ generated_at: 4 } as never, firstWindowSignals as never);
+  replayHistoryService.recordSnapshot({ generated_at: 5 } as never, secondWindowSignals as never);
+
+  const hydrationTape = replayHistoryService.buildHydrationSnapshotTape("eth-5m");
+
+  assert.deepEqual(hydrationTape, [{ generated_at: 1 }, { generated_at: 2 }, { generated_at: 4 }, { generated_at: 5 }]);
+});
+
 test("HttpServerService serves structured signals without using the removed legacy calculate path", async () => {
   const structuredSignals = {
     btc: {

@@ -21,6 +21,8 @@ type ActiveReplayWindow = {
   marketStartMs: number;
   marketEndMs: number | null;
   snapshots: Snapshot[];
+  observedSnapshotCount: number;
+  latestSnapshot: Snapshot;
 };
 
 type CompletedReplayWindow = {
@@ -40,6 +42,7 @@ export class QmonReplayHistoryService {
    */
 
   private readonly retainedWindowCount: number;
+  private readonly snapshotStride: number;
   private readonly activeWindowsByMarket: Map<MarketKey, ActiveReplayWindow>;
   private readonly completedWindowsByMarket: Map<MarketKey, readonly CompletedReplayWindow[]>;
   private readonly hydrationTapeCacheByMarket: Map<MarketKey, readonly Snapshot[]>;
@@ -48,8 +51,12 @@ export class QmonReplayHistoryService {
    * @section constructor
    */
 
-  public constructor(retainedWindowCount = config.QMON_HYDRATION_WINDOW_COUNT) {
+  public constructor(
+    retainedWindowCount = config.QMON_HYDRATION_WINDOW_COUNT,
+    snapshotStride = config.QMON_HYDRATION_SNAPSHOT_STRIDE,
+  ) {
     this.retainedWindowCount = retainedWindowCount;
+    this.snapshotStride = Math.max(1, Math.floor(snapshotStride));
     this.activeWindowsByMarket = new Map();
     this.completedWindowsByMarket = new Map();
     this.hydrationTapeCacheByMarket = new Map();
@@ -122,26 +129,46 @@ export class QmonReplayHistoryService {
         marketStartMs,
         marketEndMs,
         snapshots: [snapshot],
+        observedSnapshotCount: 1,
+        latestSnapshot: snapshot,
       });
       this.invalidateHydrationTapeCache(market);
     } else if (activeWindow.marketStartMs !== marketStartMs) {
-      this.storeCompletedWindow({
-        market,
-        marketStartMs: activeWindow.marketStartMs,
-        marketEndMs: activeWindow.marketEndMs,
-        snapshots: activeWindow.snapshots,
-      });
+      this.storeCompletedWindow(this.buildCompletedReplayWindow(activeWindow));
       this.activeWindowsByMarket.set(market, {
         market,
         marketStartMs,
         marketEndMs,
         snapshots: [snapshot],
+        observedSnapshotCount: 1,
+        latestSnapshot: snapshot,
       });
       this.invalidateHydrationTapeCache(market);
     } else {
       activeWindow.marketEndMs = marketEndMs;
-      activeWindow.snapshots.push(snapshot);
+      activeWindow.observedSnapshotCount += 1;
+      activeWindow.latestSnapshot = snapshot;
+
+      if (activeWindow.observedSnapshotCount % this.snapshotStride === 0) {
+        activeWindow.snapshots.push(snapshot);
+      }
     }
+  }
+
+  private buildCompletedReplayWindow(activeWindow: ActiveReplayWindow): CompletedReplayWindow {
+    const lastStoredSnapshot = activeWindow.snapshots[activeWindow.snapshots.length - 1] ?? null;
+    const snapshots =
+      lastStoredSnapshot === activeWindow.latestSnapshot
+        ? activeWindow.snapshots
+        : [...activeWindow.snapshots, activeWindow.latestSnapshot];
+    const completedWindow: CompletedReplayWindow = {
+      market: activeWindow.market,
+      marketStartMs: activeWindow.marketStartMs,
+      marketEndMs: activeWindow.marketEndMs,
+      snapshots,
+    };
+
+    return completedWindow;
   }
 
   /**
