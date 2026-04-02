@@ -737,6 +737,26 @@ export class QmonValidationLogService {
     return recentEvents;
   }
 
+  private async readSessionEventsFromCache(filter: EventFilter): Promise<readonly ValidationLogEvent[]> {
+    const matchingEvents: ValidationLogEvent[] = [];
+    const sessionStartTimestamp = this.cpnlSessionStartedAt ?? 0;
+
+    await this.flush();
+    await this.hydrateRecentEventCache();
+
+    for (const cachedEvent of this.recentEventCache) {
+      const isInsideSession = cachedEvent.timestamp >= sessionStartTimestamp;
+      const matchesMarket = filter.market === undefined || cachedEvent.market === filter.market;
+      const matchesCategory = filter.category === undefined || cachedEvent.category === filter.category;
+
+      if (isInsideSession && matchesMarket && matchesCategory) {
+        matchingEvents.push(cachedEvent);
+      }
+    }
+
+    return matchingEvents.slice(-filter.limit);
+  }
+
   private isSeatCashflowEvent(event: ValidationLogEvent, market?: string): boolean {
     const isMatchingMarket = market === undefined || event.market === market;
     const hasCashflow = typeof event.cashflow === "number";
@@ -913,7 +933,7 @@ export class QmonValidationLogService {
   private async readAggregateForCurrentSession(
     range: DiagnosticRange,
   ): Promise<{ readonly global: DiagnosticsAggregate; readonly markets: Record<string, DiagnosticsAggregate> }> {
-    const sessionEvents = await this.readEventsFromRange({
+    const sessionEvents = await this.readSessionEventsFromCache({
       range,
       limit: Number.MAX_SAFE_INTEGER,
     });
@@ -1072,6 +1092,10 @@ export class QmonValidationLogService {
   }
 
   private async readEventsFromRange(filter: EventFilter): Promise<readonly ValidationLogEvent[]> {
+    if (this.cpnlSessionStartedAt !== null) {
+      return this.readSessionEventsFromCache(filter);
+    }
+
     const matchingEvents: ValidationLogEvent[] = [];
     const rangeDates = [...this.getRangeDates(filter.range)].sort((left, right) => left.localeCompare(right));
 
@@ -1128,8 +1152,12 @@ export class QmonValidationLogService {
     }
 
     try {
-      await this.appendRawEvent(event);
+      const shouldPersistRawEvent = this.shouldPersistRawEvent(event);
       this.appendRecentEvent(event);
+
+      if (shouldPersistRawEvent) {
+        await this.appendRawEvent(event);
+      }
 
       const date = this.getUtcDateString(event.timestamp);
       const currentSummary = await this.loadDailySummary(date);
@@ -1141,6 +1169,12 @@ export class QmonValidationLogService {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Failed to append validation log: ${message}`);
     }
+  }
+
+  private shouldPersistRawEvent(event: ValidationLogEvent): boolean {
+    const shouldPersist = event.isSeat === true;
+
+    return shouldPersist;
   }
 
   private enqueueWrite(eventType: string, payload: ValidationLogPayload): void {
