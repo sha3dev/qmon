@@ -181,6 +181,9 @@
     .health-panel {
       display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
     }
+    .health-metric-grid {
+      display: flex; gap: 14px; flex-wrap: wrap;
+    }
     .health-copy {
       display: flex; flex-direction: column; gap: 4px;
     }
@@ -552,14 +555,27 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .performance-grid, .metric-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
       }
       .qmon-grid {
         grid-template-columns: 1fr;
       }
+      .health-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        width: 100%;
+      }
       .health-metric {
-        min-width: min(180px, 100%);
-        flex: 1 1 150px;
+        min-width: 0;
+        padding: 9px 10px;
+      }
+      .health-metric-value {
+        font-size: 18px;
+      }
+      .health-metric-note, .performance-metric-note {
+        white-space: normal;
       }
       .filters-bar {
         padding: 10px 12px;
@@ -669,7 +685,7 @@
           <div class="health-title">EXECUTION HEALTH</div>
           <div class="health-note">Current-session execution quality, split between model paper fills and confirmed live venue fills.</div>
         </div>
-        <div style="display:flex; gap:14px; flex-wrap:wrap;">
+        <div class="health-metric-grid">
           <div class="health-metric">
             <div class="health-metric-label">Paper Fill Rate</div>
             <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.paperFillRate || 0)"></div>
