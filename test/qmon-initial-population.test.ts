@@ -37,8 +37,8 @@ test("QmonGenomeService builds a deterministic taker-only bootstrap population",
   const uniqueGenomes = new Set(initialPopulation.map((genome) => JSON.stringify(genome)));
   const enabledTriggerCounts = initialPopulation.map((genome) => genome.triggerGenes.filter((triggerGene) => triggerGene.isEnabled).length);
   const thresholdPairs = new Set(initialPopulation.map((genome) => `${genome.minScoreBuy}/${genome.minScoreSell}`));
-  assert.equal(initialPopulation.length, 100);
-  assert.equal(uniqueGenomes.size, 100);
+  assert.equal(initialPopulation.length, 200);
+  assert.equal(uniqueGenomes.size, 200);
   assert.equal(
     initialPopulation.every((genome) => genome.maxTradesPerWindow >= 1),
     true,
@@ -118,11 +118,23 @@ test("QmonGenomeService initial population preserves coherent strategic families
   const reversionFamily = families.get("mispricing|reversion-extreme") ?? [];
   const orderBookFamily = families.get("book-pressure|liquidity-shift") ?? [];
   const lateWindowFamily = families.get("extreme-distance|time-decay") ?? [];
+  const crossAssetFamily = families.get("consensus-flip|strong-momentum") ?? [];
+  const liquidityVacuumFamily = families.get("liquidity-shift|reversion-extreme") ?? [];
+  const micropriceScalperFamily = families.get("book-pressure|strong-imbalance") ?? [];
+  const breakoutFamily = families.get("acceleration-spike|breakout") ?? [];
+  const efficiencyFamily = families.get("efficiency-anomaly|mispricing") ?? [];
+  const timeDecayFamily = families.get("consensus-flip|time-decay") ?? [];
 
-  assert.equal(momentumFamily.length >= 20, true);
-  assert.equal(reversionFamily.length >= 20, true);
-  assert.equal(orderBookFamily.length >= 20, true);
-  assert.equal(lateWindowFamily.length >= 20, true);
+  assert.equal(momentumFamily.length >= 16, true);
+  assert.equal(reversionFamily.length >= 16, true);
+  assert.equal(orderBookFamily.length >= 16, true);
+  assert.equal(lateWindowFamily.length >= 16, true);
+  assert.equal(crossAssetFamily.length >= 16, true);
+  assert.equal(liquidityVacuumFamily.length >= 16, true);
+  assert.equal(micropriceScalperFamily.length >= 16, true);
+  assert.equal(breakoutFamily.length >= 16, true);
+  assert.equal(efficiencyFamily.length >= 16, true);
+  assert.equal(timeDecayFamily.length >= 16, true);
 
   assert.equal(
     momentumFamily.every(
@@ -165,6 +177,24 @@ test("QmonGenomeService initial population preserves coherent strategic families
     ),
     true,
   );
+  assert.equal(
+    crossAssetFamily.every(
+      (genome) =>
+        hasPredictiveSignal(genome, "crossAssetMomentum", "aligned") &&
+        hasPredictiveSignal(genome, "momentum", "aligned") &&
+        genome.executionPolicy.maxTradesPerWindow >= 2,
+    ),
+    true,
+  );
+  assert.equal(
+    micropriceScalperFamily.every(
+      (genome) =>
+        hasMicrostructureSignal(genome, "microprice", "aligned") &&
+        hasMicrostructureSignal(genome, "imbalance", "aligned") &&
+        genome.entryPolicy.minConfirmations === 3,
+    ),
+    true,
+  );
 });
 
 test("QmonGenomeService initial population keeps meaningful variability across coherent families", () => {
@@ -174,6 +204,23 @@ test("QmonGenomeService initial population keeps meaningful variability across c
   const cooldownProfiles = new Set(initialPopulation.map((genome) => genome.executionPolicy.cooldownProfile));
   const fillQualityLevels = new Set(initialPopulation.map((genome) => genome.entryPolicy.minFillQuality));
   const scorePairs = new Set(initialPopulation.map((genome) => `${genome.minScoreBuy}/${genome.minScoreSell}`));
+  const triggerPairs = new Set(initialPopulation.map((genome) => getEnabledTriggerKey(genome)));
+  const predictiveCombos = new Set(
+    initialPopulation.map((genome) =>
+      genome.predictiveSignalGenes
+        .map((signalGene) => `${signalGene.signalId}:${signalGene.orientation}:${signalGene.weightTier}`)
+        .sort()
+        .join(","),
+    ),
+  );
+  const microstructureCombos = new Set(
+    initialPopulation.map((genome) =>
+      genome.microstructureSignalGenes
+        .map((signalGene) => `${signalGene.signalId}:${signalGene.orientation}:${signalGene.weightTier}`)
+        .sort()
+        .join(","),
+    ),
+  );
 
   assert.equal(sizeTiers.size >= 3, true);
   assert.equal(cooldownProfiles.has("tight"), true);
@@ -181,4 +228,7 @@ test("QmonGenomeService initial population keeps meaningful variability across c
   assert.equal(cooldownProfiles.has("patient"), true);
   assert.equal(fillQualityLevels.size >= 5, true);
   assert.equal(scorePairs.size >= 5, true);
+  assert.equal(triggerPairs.size >= 20, true);
+  assert.equal(predictiveCombos.size >= 30, true);
+  assert.equal(microstructureCombos.size >= 30, true);
 });

@@ -53,7 +53,7 @@ import type {
 /**
  * Default population size per market.
  */
-const _DEFAULT_POPULATION_SIZE = 100;
+const _DEFAULT_POPULATION_SIZE = 200;
 
 /**
  * Maximum decision history to keep per QMON.
@@ -2574,7 +2574,7 @@ export class QmonEngine {
 
   /**
    * Initialize populations for all markets if they don't exist.
-   * Creates 100 diverse QMONs per market (800 total).
+   * Creates 200 diverse QMONs per market (1600 total).
    */
   public initializePopulations(): void {
     const marketKeys = this.getMarketKeys();
@@ -2585,7 +2585,7 @@ export class QmonEngine {
       const existing = existingIndex >= 0 ? (newPopulations[existingIndex] ?? null) : null;
 
       if (!existing || existing.qmons.length === 0) {
-        // Generate 100 diverse genomes for this market
+        // Generate 200 diverse genomes for this market
         const genomes = this.genomeService.generateInitialPopulation();
         const qmons: Qmon[] = [];
 

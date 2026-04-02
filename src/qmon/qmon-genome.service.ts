@@ -67,7 +67,7 @@ const AVAILABLE_TRIGGERS = [
 const MAX_ENABLED_TRIGGERS = 2;
 const MAX_PREDICTIVE_SIGNALS = 3;
 const MAX_MICROSTRUCTURE_SIGNALS = 3;
-const INITIAL_POPULATION_SIZE = 100;
+const INITIAL_POPULATION_SIZE = 200;
 const SIGNAL_WEIGHT_TIERS: readonly SignalWeightTier[] = [1, 2, 3] as const;
 const SIGNAL_ORIENTATIONS: readonly SignalOrientation[] = ["aligned", "inverse"] as const;
 const SIZE_TIERS: readonly ExecutionPolicy["sizeTier"][] = [1, 2, 3] as const;
@@ -110,7 +110,30 @@ const INITIAL_VOLATILITY_PATTERNS: readonly VolatilityRegimeGenes[] = [
   [false, true, false],
 ] as const;
 
-type QmonGenomeFamily = "momentum-following" | "mispricing-reversion" | "order-book-confirmation" | "late-window-dislocation";
+type QmonGenomeFamily =
+  | "momentum-following"
+  | "mispricing-reversion"
+  | "order-book-confirmation"
+  | "late-window-dislocation"
+  | "cross-asset-lead-lag"
+  | "liquidity-vacuum-reversion"
+  | "microprice-pressure-scalper"
+  | "early-breakout-surge"
+  | "efficiency-anomaly-reversion"
+  | "time-decay-consensus";
+
+const INITIAL_FAMILY_SECONDARY_TRIGGERS: Record<QmonGenomeFamily, readonly string[]> = {
+  "momentum-following": ["strong-momentum", "momentum-shift", "acceleration-spike", "breakout"],
+  "mispricing-reversion": ["reversion-extreme", "mispricing", "efficiency-anomaly", "extreme-distance"],
+  "order-book-confirmation": ["liquidity-shift", "book-pressure", "consensus-flip", "efficiency-anomaly"],
+  "late-window-dislocation": ["extreme-distance", "time-decay", "efficiency-anomaly", "liquidity-shift"],
+  "cross-asset-lead-lag": ["consensus-flip", "strong-momentum", "breakout", "acceleration-spike"],
+  "liquidity-vacuum-reversion": ["liquidity-shift", "reversion-extreme", "mispricing", "extreme-distance"],
+  "microprice-pressure-scalper": ["strong-imbalance", "book-pressure", "acceleration-spike", "reversion-extreme"],
+  "early-breakout-surge": ["acceleration-spike", "breakout", "strong-momentum", "momentum-shift"],
+  "efficiency-anomaly-reversion": ["efficiency-anomaly", "mispricing", "reversion-extreme", "time-decay"],
+  "time-decay-consensus": ["time-decay", "consensus-flip", "extreme-distance", "strong-imbalance"],
+} as const;
 
 /**
  * @section class
@@ -401,7 +424,7 @@ export class QmonGenomeService {
       executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "balanced" };
       exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "microstructure-failure" };
       scoreThresholds = { minScoreBuy: 0.35, minScoreSell: 0.35 };
-    } else {
+    } else if (family === "late-window-dislocation") {
       predictiveSignalGenes = [
         { signalId: "edge", orientation: "aligned", weightTier: 2 },
         { signalId: "distance", orientation: "aligned", weightTier: 3 },
@@ -425,6 +448,150 @@ export class QmonGenomeService {
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.5, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
       scoreThresholds = { minScoreBuy: 0.55, minScoreSell: 0.55 };
+    } else if (family === "cross-asset-lead-lag") {
+      predictiveSignalGenes = [
+        { signalId: "crossAssetMomentum", orientation: "aligned", weightTier: 3 },
+        { signalId: "momentum", orientation: "aligned", weightTier: 2 },
+        { signalId: "edge", orientation: "aligned", weightTier: 1 },
+      ];
+      microstructureSignalGenes = [
+        { signalId: "tokenPressure", orientation: "aligned", weightTier: 2 },
+        { signalId: "staleness", orientation: "inverse", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("strong-momentum", "consensus-flip");
+      directionRegimeGenes = [false, true, true];
+      volatilityRegimeGenes = [true, true, true];
+      entryPolicy = {
+        minEdgeBps: 25,
+        minNetEvUsd: 0.06,
+        minConfirmations: 2,
+        maxSpreadPenaltyBps: 45,
+        maxSlippageBps: 70,
+        minFillQuality: 0.45,
+      };
+      executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "balanced" };
+      exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "alpha-flip" };
+      scoreThresholds = { minScoreBuy: 0.4, minScoreSell: 0.4 };
+    } else if (family === "liquidity-vacuum-reversion") {
+      predictiveSignalGenes = [
+        { signalId: "distance", orientation: "inverse", weightTier: 3 },
+        { signalId: "meanReversion", orientation: "inverse", weightTier: 2 },
+      ];
+      microstructureSignalGenes = [
+        { signalId: "bookDepth", orientation: "inverse", weightTier: 3 },
+        { signalId: "spread", orientation: "inverse", weightTier: 2 },
+        { signalId: "staleness", orientation: "inverse", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("liquidity-shift", "reversion-extreme");
+      timeWindowGenes = [false, true, true];
+      directionRegimeGenes = [true, true, true];
+      volatilityRegimeGenes = [false, true, true];
+      entryPolicy = {
+        minEdgeBps: 40,
+        minNetEvUsd: 0.08,
+        minConfirmations: 2,
+        maxSpreadPenaltyBps: 25,
+        maxSlippageBps: 45,
+        minFillQuality: 0.5,
+      };
+      executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
+      exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
+      scoreThresholds = { minScoreBuy: 0.5, minScoreSell: 0.5 };
+    } else if (family === "microprice-pressure-scalper") {
+      predictiveSignalGenes = [{ signalId: "edge", orientation: "aligned", weightTier: 2 }];
+      microstructureSignalGenes = [
+        { signalId: "microprice", orientation: "aligned", weightTier: 3 },
+        { signalId: "imbalance", orientation: "aligned", weightTier: 3 },
+        { signalId: "spread", orientation: "inverse", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("book-pressure", "strong-imbalance");
+      directionRegimeGenes = [true, true, true];
+      volatilityRegimeGenes = [true, true, false];
+      entryPolicy = {
+        minEdgeBps: 20,
+        minNetEvUsd: 0.04,
+        minConfirmations: 3,
+        maxSpreadPenaltyBps: 30,
+        maxSlippageBps: 55,
+        minFillQuality: 0.55,
+      };
+      executionPolicy = { sizeTier: 1, maxTradesPerWindow: 2, cooldownProfile: "tight" };
+      exitPolicy = { extremeStopLossPct: 0.12, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "microstructure-failure" };
+      scoreThresholds = { minScoreBuy: 0.35, minScoreSell: 0.35 };
+    } else if (family === "early-breakout-surge") {
+      predictiveSignalGenes = [
+        { signalId: "velocity", orientation: "aligned", weightTier: 3 },
+        { signalId: "momentum", orientation: "aligned", weightTier: 2 },
+        { signalId: "distance", orientation: "aligned", weightTier: 2 },
+      ];
+      microstructureSignalGenes = [
+        { signalId: "imbalance", orientation: "aligned", weightTier: 2 },
+        { signalId: "microprice", orientation: "aligned", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("breakout", "acceleration-spike");
+      timeWindowGenes = [true, true, false];
+      directionRegimeGenes = [false, true, true];
+      volatilityRegimeGenes = [true, true, true];
+      entryPolicy = {
+        minEdgeBps: 30,
+        minNetEvUsd: 0.05,
+        minConfirmations: 2,
+        maxSpreadPenaltyBps: 40,
+        maxSlippageBps: 80,
+        minFillQuality: 0.45,
+      };
+      executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "tight" };
+      exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "alpha-flip" };
+      scoreThresholds = { minScoreBuy: 0.4, minScoreSell: 0.4 };
+    } else if (family === "efficiency-anomaly-reversion") {
+      predictiveSignalGenes = [
+        { signalId: "edge", orientation: "aligned", weightTier: 3 },
+        { signalId: "distance", orientation: "inverse", weightTier: 2 },
+        { signalId: "meanReversion", orientation: "inverse", weightTier: 3 },
+      ];
+      microstructureSignalGenes = [
+        { signalId: "staleness", orientation: "inverse", weightTier: 2 },
+        { signalId: "spread", orientation: "inverse", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("efficiency-anomaly", "mispricing");
+      directionRegimeGenes = [true, true, true];
+      volatilityRegimeGenes = [false, true, true];
+      entryPolicy = {
+        minEdgeBps: 35,
+        minNetEvUsd: 0.08,
+        minConfirmations: 2,
+        maxSpreadPenaltyBps: 35,
+        maxSlippageBps: 50,
+        minFillQuality: 0.5,
+      };
+      executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
+      exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
+      scoreThresholds = { minScoreBuy: 0.5, minScoreSell: 0.5 };
+    } else {
+      predictiveSignalGenes = [
+        { signalId: "edge", orientation: "aligned", weightTier: 2 },
+        { signalId: "crossAssetMomentum", orientation: "aligned", weightTier: 1 },
+      ];
+      microstructureSignalGenes = [
+        { signalId: "tokenPressure", orientation: "aligned", weightTier: 2 },
+        { signalId: "spread", orientation: "inverse", weightTier: 1 },
+        { signalId: "staleness", orientation: "inverse", weightTier: 1 },
+      ];
+      triggerGenes = this.generateTriggerGenesForFamily("time-decay", "consensus-flip");
+      timeWindowGenes = [false, true, true];
+      directionRegimeGenes = [true, true, true];
+      volatilityRegimeGenes = [true, true, true];
+      entryPolicy = {
+        minEdgeBps: 30,
+        minNetEvUsd: 0.06,
+        minConfirmations: 2,
+        maxSpreadPenaltyBps: 35,
+        maxSlippageBps: 45,
+        minFillQuality: 0.45,
+      };
+      executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "balanced" };
+      exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
+      scoreThresholds = { minScoreBuy: 0.45, minScoreSell: 0.45 };
     }
 
     return {
@@ -467,18 +634,18 @@ export class QmonGenomeService {
     );
     let minFillQuality = Number(this.clampNumber(baseGenome.entryPolicy.minFillQuality + variantOffset * 0.05, 0.35, 0.7).toFixed(2));
 
-    if (family === "order-book-confirmation") {
+    if (family === "order-book-confirmation" || family === "microprice-pressure-scalper") {
       minFillQuality = Number(Math.max(minFillQuality, 0.5).toFixed(2));
     }
 
-    if (family === "late-window-dislocation") {
+    if (family === "late-window-dislocation" || family === "time-decay-consensus") {
       minEdgeBps = Math.round(Math.max(minEdgeBps, 40));
       minNetEvUsd = Number(Math.max(minNetEvUsd, 0.08).toFixed(2));
       maxSlippageBps = Math.round(Math.min(maxSlippageBps, 75));
-    } else if (family === "mispricing-reversion") {
+    } else if (family === "mispricing-reversion" || family === "liquidity-vacuum-reversion" || family === "efficiency-anomaly-reversion") {
       minNetEvUsd = Number(this.clampNumber(minNetEvUsd, 0.05, 0.12).toFixed(2));
       maxSlippageBps = Math.round(Math.min(maxSlippageBps, 75));
-    } else if (family === "momentum-following") {
+    } else if (family === "momentum-following" || family === "cross-asset-lead-lag" || family === "early-breakout-surge") {
       minNetEvUsd = Number(this.clampNumber(minNetEvUsd, 0.03, 0.1).toFixed(2));
       maxSlippageBps = Math.round(Math.max(maxSlippageBps, 50));
     }
@@ -500,10 +667,10 @@ export class QmonGenomeService {
     let maxTradesPerWindow = baseGenome.executionPolicy.maxTradesPerWindow;
     let cooldownProfile = baseGenome.executionPolicy.cooldownProfile;
 
-    if (family === "momentum-following") {
+    if (family === "momentum-following" || family === "cross-asset-lead-lag" || family === "early-breakout-surge") {
       maxTradesPerWindow = 2 + (variantIndex % 2);
       cooldownProfile = variantIndex % 3 === 0 ? "balanced" : "tight";
-    } else if (family === "order-book-confirmation") {
+    } else if (family === "order-book-confirmation" || family === "microprice-pressure-scalper") {
       maxTradesPerWindow = 1 + (variantIndex % 2);
       cooldownProfile = "balanced";
     } else {
@@ -524,9 +691,9 @@ export class QmonGenomeService {
     const stopLossOffset = STOP_LOSS_OPTIONS[variantIndex % STOP_LOSS_OPTIONS.length] ?? baseGenome.exitPolicy.extremeStopLossPct;
     let thesisInvalidationPolicy = baseGenome.exitPolicy.thesisInvalidationPolicy;
 
-    if (family === "momentum-following") {
+    if (family === "momentum-following" || family === "cross-asset-lead-lag" || family === "early-breakout-surge") {
       thesisInvalidationPolicy = "alpha-flip";
-    } else if (family === "order-book-confirmation") {
+    } else if (family === "order-book-confirmation" || family === "microprice-pressure-scalper") {
       thesisInvalidationPolicy = "microstructure-failure";
     } else {
       thesisInvalidationPolicy = "hybrid";
@@ -546,7 +713,7 @@ export class QmonGenomeService {
     minScoreSell: number;
   } {
     const thresholdShift = ((variantIndex % 3) - 1) * 0.05;
-    const minimumScoreFloor = family === "late-window-dislocation" ? 0.45 : 0.3;
+    const minimumScoreFloor = family === "late-window-dislocation" || family === "time-decay-consensus" ? 0.45 : 0.3;
     const scoreThresholds = {
       minScoreBuy: Number(this.clampNumber(baseGenome.minScoreBuy + thresholdShift, minimumScoreFloor, 0.65).toFixed(2)),
       minScoreSell: Number(this.clampNumber(baseGenome.minScoreSell + thresholdShift, minimumScoreFloor, 0.65).toFixed(2)),
@@ -559,7 +726,7 @@ export class QmonGenomeService {
     const basePattern = INITIAL_TIME_WINDOW_PATTERNS[(baseIndex + variantIndex) % INITIAL_TIME_WINDOW_PATTERNS.length] ?? baseGenome.timeWindowGenes;
     let timeWindowGenes: TimeWindowGenes = [...basePattern] as TimeWindowGenes;
 
-    if (family === "late-window-dislocation") {
+    if (family === "late-window-dislocation" || family === "time-decay-consensus" || family === "liquidity-vacuum-reversion") {
       timeWindowGenes = [false, true, true];
     }
 
@@ -570,33 +737,78 @@ export class QmonGenomeService {
     const basePattern = INITIAL_DIRECTION_PATTERNS[(baseIndex + variantIndex) % INITIAL_DIRECTION_PATTERNS.length] ?? baseGenome.directionRegimeGenes;
     let directionRegimeGenes: DirectionRegimeGenes = [...basePattern] as DirectionRegimeGenes;
 
-    if (family === "momentum-following") {
+    if (family === "momentum-following" || family === "cross-asset-lead-lag" || family === "early-breakout-surge") {
       directionRegimeGenes = [basePattern[0] ?? true, false, false];
     }
 
     return directionRegimeGenes;
   }
 
-  private createInitialPopulationVariant(baseGenome: QmonGenome, family: QmonGenomeFamily, baseIndex: number, variantIndex: number): QmonGenome {
-    const variantGenome = this.cloneGenome(baseGenome);
-    const predictiveSignalGenes = variantGenome.predictiveSignalGenes.map((signalGene) => ({
+  private createInitialPopulationPredictiveSignalGenes(
+    baseGenome: QmonGenome,
+    family: QmonGenomeFamily,
+    baseIndex: number,
+    variantIndex: number,
+  ): readonly PredictiveSignalGene[] {
+    const predictiveSignalGenes = baseGenome.predictiveSignalGenes.map((signalGene) => ({
       ...signalGene,
+      orientation:
+        ((family === "momentum-following" && signalGene.signalId === "crossAssetMomentum") ||
+          (family === "mispricing-reversion" && signalGene.signalId === "edge") ||
+          (family === "order-book-confirmation" && signalGene.signalId === "distance") ||
+          (family === "late-window-dislocation" && signalGene.signalId === "meanReversion")) &&
+        variantIndex % 2 === 1
+          ? (signalGene.orientation === "aligned" ? "inverse" : "aligned")
+          : signalGene.orientation,
       weightTier: SIGNAL_WEIGHT_TIERS[(signalGene.weightTier + variantIndex + baseIndex - 1) % SIGNAL_WEIGHT_TIERS.length] ?? signalGene.weightTier,
     })) as readonly PredictiveSignalGene[];
-    const microstructureSignalGenes = variantGenome.microstructureSignalGenes.map((signalGene) => ({
+
+    return predictiveSignalGenes;
+  }
+
+  private createInitialPopulationMicrostructureSignalGenes(
+    baseGenome: QmonGenome,
+    family: QmonGenomeFamily,
+    baseIndex: number,
+    variantIndex: number,
+  ): readonly MicrostructureSignalGene[] {
+    const microstructureSignalGenes = baseGenome.microstructureSignalGenes.map((signalGene) => ({
       ...signalGene,
+      orientation:
+        ((family === "momentum-following" && signalGene.signalId === "microprice") ||
+          (family === "mispricing-reversion" && signalGene.signalId === "bookDepth") ||
+          (family === "late-window-dislocation" && signalGene.signalId === "tokenPressure")) &&
+        variantIndex % 2 === 1
+          ? (signalGene.orientation === "aligned" ? "inverse" : "aligned")
+          : signalGene.orientation,
       weightTier: SIGNAL_WEIGHT_TIERS[(signalGene.weightTier + baseIndex + variantIndex - 1) % SIGNAL_WEIGHT_TIERS.length] ?? signalGene.weightTier,
     })) as readonly MicrostructureSignalGene[];
-    const secondaryTriggerId = AVAILABLE_TRIGGERS[(baseIndex + variantIndex + 2) % AVAILABLE_TRIGGERS.length] ?? null;
-    const triggerGenes = variantGenome.triggerGenes.map((triggerGene) => ({
-      ...triggerGene,
-      isEnabled:
-        triggerGene.isEnabled ||
-        (variantIndex % 2 === 1 &&
-          secondaryTriggerId !== null &&
-          triggerGene.triggerId === secondaryTriggerId &&
-          this.countEnabledTriggers(variantGenome.triggerGenes) < 2),
-    }));
+
+    return microstructureSignalGenes;
+  }
+
+  private createInitialPopulationTriggerGenes(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): readonly TriggerGene[] {
+    const baseTriggerIds = baseGenome.triggerGenes.filter((triggerGene) => triggerGene.isEnabled).map((triggerGene) => triggerGene.triggerId);
+    const primaryTriggerId = baseTriggerIds[0] ?? "mispricing";
+    const fallbackSecondaryTriggerId = baseTriggerIds[1] ?? null;
+    const secondaryTriggerOptions = INITIAL_FAMILY_SECONDARY_TRIGGERS[family];
+    const selectedSecondaryTriggerId =
+      variantIndex % 2 === 0
+        ? fallbackSecondaryTriggerId
+        : (secondaryTriggerOptions[(Math.floor(variantIndex / 2) + variantIndex) % secondaryTriggerOptions.length] ?? fallbackSecondaryTriggerId);
+    const triggerGenes = this.generateTriggerGenesForFamily(
+      primaryTriggerId,
+      selectedSecondaryTriggerId !== primaryTriggerId ? selectedSecondaryTriggerId : fallbackSecondaryTriggerId,
+    );
+
+    return triggerGenes;
+  }
+
+  private createInitialPopulationVariant(baseGenome: QmonGenome, family: QmonGenomeFamily, baseIndex: number, variantIndex: number): QmonGenome {
+    const variantGenome = this.cloneGenome(baseGenome);
+    const predictiveSignalGenes = this.createInitialPopulationPredictiveSignalGenes(baseGenome, family, baseIndex, variantIndex);
+    const microstructureSignalGenes = this.createInitialPopulationMicrostructureSignalGenes(baseGenome, family, baseIndex, variantIndex);
+    const triggerGenes = this.createInitialPopulationTriggerGenes(variantGenome, family, variantIndex);
     const rawExchangeWeights = [
       (variantGenome.exchangeWeights[0] ?? 0.25) + variantIndex * 0.01,
       (variantGenome.exchangeWeights[1] ?? 0.25) + baseIndex * 0.01,
@@ -978,6 +1190,12 @@ export class QmonGenomeService {
       { family: "mispricing-reversion", genome: this.createGenomeFamily("mispricing-reversion") },
       { family: "order-book-confirmation", genome: this.createGenomeFamily("order-book-confirmation") },
       { family: "late-window-dislocation", genome: this.createGenomeFamily("late-window-dislocation") },
+      { family: "cross-asset-lead-lag", genome: this.createGenomeFamily("cross-asset-lead-lag") },
+      { family: "liquidity-vacuum-reversion", genome: this.createGenomeFamily("liquidity-vacuum-reversion") },
+      { family: "microprice-pressure-scalper", genome: this.createGenomeFamily("microprice-pressure-scalper") },
+      { family: "early-breakout-surge", genome: this.createGenomeFamily("early-breakout-surge") },
+      { family: "efficiency-anomaly-reversion", genome: this.createGenomeFamily("efficiency-anomaly-reversion") },
+      { family: "time-decay-consensus", genome: this.createGenomeFamily("time-decay-consensus") },
     ];
     const initialPopulation: QmonGenome[] = [];
 

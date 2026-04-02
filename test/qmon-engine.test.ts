@@ -239,8 +239,8 @@ test("QmonEngine initializes one deterministic taker-only population per market"
 
   const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
 
-  assert.equal(population.qmons.length, 100);
-  assert.equal(new Set(population.qmons.map((qmon) => JSON.stringify(qmon.genome))).size, 100);
+  assert.equal(population.qmons.length, 200);
+  assert.equal(new Set(population.qmons.map((qmon) => JSON.stringify(qmon.genome))).size, 200);
   assert.equal(
     population.qmons.every((qmon) => qmon.pendingOrder === null),
     true,
