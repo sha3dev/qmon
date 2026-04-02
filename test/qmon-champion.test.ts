@@ -174,7 +174,7 @@ test("QmonChampionService uses persisted drawdown and remains evaluable after de
   assert.equal(refreshedQmon.metrics.isChampionEligible, true);
 });
 
-test("QmonChampionService treats zero-trade windows as neutral in champion median checks", () => {
+test("QmonChampionService counts zero-trade windows in champion median checks", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("SPARSE", 0.7, 0.2);
   const refreshedQmon = championService.refreshMetrics({
@@ -182,10 +182,24 @@ test("QmonChampionService treats zero-trade windows as neutral in champion media
     paperWindowPnls: [0, 0, 0.2, 0.3, 0.4, 0.5],
   });
 
-  assert.equal(refreshedQmon.metrics.paperWindowMedianPnl, 0.35);
+  assert.equal(refreshedQmon.metrics.paperWindowMedianPnl, 0.3);
   assert.equal(refreshedQmon.metrics.isChampionEligible, false);
   assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("non-positive-median"), true);
 });
+
+test("QmonChampionService evaluates negative window rate and worst window over ten windows", () => {
+  const championService = new QmonChampionService();
+  const refreshedQmon = championService.refreshMetrics({
+    ...createChampionCandidate("RISK10", 0.8, 0.2),
+    paperWindowPnls: [-3, -3, -3, -3, -3, 2, 2, 2, 2, 2],
+  });
+
+  assert.equal(refreshedQmon.metrics.negativeWindowRateLast10, 0.5);
+  assert.equal(refreshedQmon.metrics.worstWindowPnlLast10, -3);
+  assert.equal(refreshedQmon.metrics.isChampionEligible, false);
+  assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("high-negative-window-rate"), true);
+}
+);
 
 test("QmonChampionService computes fee ratio from lifetime pnl and fees", () => {
   const championService = new QmonChampionService();
@@ -405,6 +419,29 @@ test("QmonChampionService rejects candidates with excessive fees or drawdown", (
   assert.equal(expensiveQmon.metrics.isChampionEligible, false);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-fee-ratio"), true);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-drawdown"), true);
+});
+
+test("QmonChampionService caps estimated EV contribution in fitness", () => {
+  const championService = new QmonChampionService();
+  const realisticEvQmon = championService.refreshMetrics({
+    ...createChampionCandidate("RELEV", 0.8, 0.2),
+    metrics: {
+      ...createChampionCandidate("RELEV", 0.8, 0.2).metrics,
+      totalEstimatedNetEvUsd: 10,
+    },
+  });
+  const inflatedEvQmon = championService.refreshMetrics({
+    ...createChampionCandidate("HIGHEV", 0.8, 0.2),
+    metrics: {
+      ...createChampionCandidate("HIGHEV", 0.8, 0.2).metrics,
+      totalEstimatedNetEvUsd: 10_000,
+    },
+  });
+
+  assert.equal(
+    Number(((inflatedEvQmon.metrics.fitnessScore ?? 0) - (realisticEvQmon.metrics.fitnessScore ?? 0)).toFixed(2)),
+    2.5,
+  );
 });
 
 test("QmonChampionService selects the best eligible champion by the new score priority", () => {

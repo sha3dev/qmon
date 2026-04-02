@@ -9,6 +9,7 @@ import type { Qmon, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSli
  */
 
 const PAPER_CHAMPION_HISTORY_WINDOW = 5;
+const PAPER_CHAMPION_RISK_HISTORY_WINDOW = 10;
 const PAPER_CHAMPION_LONG_HISTORY_WINDOW = 30;
 const CHAMPION_MIN_FITNESS_SCORE = 150;
 const CHAMPION_MIN_WIN_RATE = 0.55;
@@ -29,6 +30,8 @@ const CHAMPION_AVG_SLIPPAGE_PENALTY = 8;
 const CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY = 220;
 const CHAMPION_WORST_WINDOW_PENALTY = 80;
 const CHAMPION_DRAWDOWN_PENALTY = 55;
+const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
+const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
 
 type ChampionInputs = {
   readonly championScore: number | null;
@@ -57,82 +60,6 @@ type ChampionInputs = {
 
 export class QmonChampionService {
   /**
-   * @section public:methods
-   */
-
-  public refreshMetrics(qmon: Qmon): Qmon {
-    const championInputs = this.buildChampionInputs(qmon);
-    const refreshedQmon: Qmon = {
-      ...qmon,
-      metrics: {
-        ...qmon.metrics,
-        championScore: championInputs.championScore,
-        fitnessScore: championInputs.fitnessScore,
-        paperWindowMedianPnl: championInputs.paperWindowMedianPnl,
-        paperWindowPnlSum: championInputs.paperWindowPnlSum,
-        paperLongWindowPnlSum: championInputs.paperLongWindowPnlSum,
-        negativeWindowRateLast10: championInputs.negativeWindowRateLast10,
-        worstWindowPnlLast10: championInputs.worstWindowPnlLast10,
-        recentAvgSlippageBps: championInputs.recentAvgSlippageBps,
-        netPnlPerTrade: championInputs.netPnlPerTrade,
-        feeRatio: championInputs.feeRatio,
-        slippageRatio: championInputs.slippageRatio,
-        grossAlphaCapture: championInputs.grossAlphaCapture,
-        noTradeDisciplineScore: championInputs.noTradeDisciplineScore,
-        regimeBreakdown: championInputs.regimeBreakdown,
-        triggerBreakdown: championInputs.triggerBreakdown,
-        maxDrawdown: championInputs.maxDrawdown,
-        isChampionEligible: championInputs.isChampionEligible,
-        championEligibilityReasons: championInputs.championEligibilityReasons,
-      },
-    };
-
-    return refreshedQmon;
-  }
-
-  public appendPaperWindowPnl(qmon: Qmon, paperWindowPnl: number): Qmon {
-    const updatedPaperWindowPnls = [...qmon.paperWindowPnls, paperWindowPnl].slice(-PAPER_CHAMPION_LONG_HISTORY_WINDOW);
-    const completedWindowSlippageBps = qmon.currentWindowSlippageFillCount > 0 ? qmon.currentWindowSlippageTotalBps / qmon.currentWindowSlippageFillCount : 0;
-    const updatedPaperWindowSlippageBps = [...qmon.paperWindowSlippageBps, completedWindowSlippageBps].slice(-PAPER_CHAMPION_LONG_HISTORY_WINDOW);
-    const updatedQmon = this.refreshMetrics({
-      ...qmon,
-      paperWindowPnls: updatedPaperWindowPnls,
-      paperWindowSlippageBps: updatedPaperWindowSlippageBps,
-      paperWindowBaselinePnl: qmon.metrics.totalPnl,
-      currentWindowSlippageTotalBps: 0,
-      currentWindowSlippageFillCount: 0,
-    });
-
-    return updatedQmon;
-  }
-
-  public finalizePopulation(
-    population: QmonPopulation,
-    qmons: readonly Qmon[],
-    emptyPosition: QmonPosition,
-    shouldPreserveSeatState = false,
-  ): QmonPopulation {
-    const finalizedPaperQmons = this.finalizePaperWindowHistory(qmons);
-    const preservedChampion =
-      population.activeChampionQmonId !== null ? (finalizedPaperQmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
-    const selectedChampion = shouldPreserveSeatState ? preservedChampion : this.selectActiveChampion(finalizedPaperQmons);
-    const activeChampionQmonId = selectedChampion?.id ?? null;
-    const qmonsWithRoles = this.applyChampionRoles(finalizedPaperQmons, activeChampionQmonId);
-    const nextWindowStartMs = qmonsWithRoles[0]?.currentWindowStart ?? population.seatLastWindowStartMs;
-    const finalizedPopulation: QmonPopulation = {
-      ...population,
-      qmons: qmonsWithRoles,
-      activeChampionQmonId,
-      seatPosition: shouldPreserveSeatState ? population.seatPosition : emptyPosition,
-      seatPendingOrder: shouldPreserveSeatState ? population.seatPendingOrder : null,
-      seatLastCloseTimestamp: shouldPreserveSeatState ? population.seatLastCloseTimestamp : null,
-      seatLastWindowStartMs: nextWindowStartMs,
-    };
-
-    return finalizedPopulation;
-  }
-
-  /**
    * @section private:methods
    */
 
@@ -142,10 +69,10 @@ export class QmonChampionService {
     return recentPaperWindowPnls;
   }
 
-  private getRecentActiveChampionWindowPnls(paperWindowPnls: readonly number[]): readonly number[] {
-    const recentActivePaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls).filter((paperWindowPnl) => paperWindowPnl !== 0);
+  private getRecentChampionRiskWindowPnls(paperWindowPnls: readonly number[]): readonly number[] {
+    const recentPaperWindowPnls = paperWindowPnls.slice(-PAPER_CHAMPION_RISK_HISTORY_WINDOW);
 
-    return recentActivePaperWindowPnls;
+    return recentPaperWindowPnls;
   }
 
   private getRecentChampionWindowSlippage(paperWindowSlippageBps: readonly number[]): readonly number[] {
@@ -155,7 +82,7 @@ export class QmonChampionService {
   }
 
   private calculatePaperWindowMedianPnl(paperWindowPnls: readonly number[]): number | null {
-    const recentPaperWindowPnls = this.getRecentActiveChampionWindowPnls(paperWindowPnls);
+    const recentPaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls);
     let paperWindowMedianPnl: number | null = null;
 
     if (recentPaperWindowPnls.length > 0) {
@@ -181,7 +108,7 @@ export class QmonChampionService {
   }
 
   private calculateNegativeWindowRateLast10(paperWindowPnls: readonly number[]): number {
-    const recentPaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls);
+    const recentPaperWindowPnls = this.getRecentChampionRiskWindowPnls(paperWindowPnls);
     let negativeWindowRateLast10 = 0;
 
     if (recentPaperWindowPnls.length > 0) {
@@ -192,7 +119,7 @@ export class QmonChampionService {
   }
 
   private calculateWorstWindowPnlLast10(paperWindowPnls: readonly number[]): number | null {
-    const recentPaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls);
+    const recentPaperWindowPnls = this.getRecentChampionRiskWindowPnls(paperWindowPnls);
     const worstWindowPnlLast10 = recentPaperWindowPnls.length > 0 ? Math.min(...recentPaperWindowPnls) : null;
 
     return worstWindowPnlLast10;
@@ -263,6 +190,13 @@ export class QmonChampionService {
     return noTradeDisciplineScore;
   }
 
+  private calculateEstimatedEvBonus(qmon: Qmon): number {
+    const totalEstimatedNetEvUsd = qmon.metrics.totalEstimatedNetEvUsd ?? 0;
+    const estimatedEvBonus = Math.min(Math.max(totalEstimatedNetEvUsd, 0) * CHAMPION_ESTIMATED_EV_BONUS_WEIGHT, CHAMPION_ESTIMATED_EV_BONUS_CAP);
+
+    return estimatedEvBonus;
+  }
+
   private hasConsistentTradeState(qmon: Qmon): boolean {
     const hasOpenPosition = qmon.position.action !== null;
     const hasPositionFields = qmon.position.enteredAt !== null || qmon.position.entryPrice !== null || qmon.position.shareCount !== null;
@@ -308,6 +242,7 @@ export class QmonChampionService {
     const triggerBreakdown = this.buildTriggerBreakdown(qmon);
     const maxDrawdown = this.calculateMaxDrawdown(qmon);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
+    const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
     const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
     const frictionPenalty =
@@ -320,8 +255,7 @@ export class QmonChampionService {
       Math.max(0, (paperWindowMedianPnl ?? 0) * CHAMPION_RECENT_MEDIAN_WEIGHT) +
       Math.max(0, paperWindowPnlSum * CHAMPION_RECENT_SUM_WEIGHT) +
       Math.max(0, netPnlPerTrade * CHAMPION_NET_PNL_PER_TRADE_WEIGHT);
-    const fitnessScore =
-      qmon.metrics.totalPnl + (qmon.metrics.totalEstimatedNetEvUsd ?? 0) + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
+    const fitnessScore = qmon.metrics.totalPnl + estimatedEvBonus + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
     const championEligibilityReasons: string[] = [];
 
     if (qmon.lifecycle !== "active") {
@@ -473,5 +407,82 @@ export class QmonChampionService {
     }
 
     return qmonsWithRoles;
+  }
+
+  /**
+   * @section public:methods
+   */
+
+  public refreshMetrics(qmon: Qmon): Qmon {
+    const championInputs = this.buildChampionInputs(qmon);
+    const refreshedQmon: Qmon = {
+      ...qmon,
+      metrics: {
+        ...qmon.metrics,
+        championScore: championInputs.championScore,
+        fitnessScore: championInputs.fitnessScore,
+        paperWindowMedianPnl: championInputs.paperWindowMedianPnl,
+        paperWindowPnlSum: championInputs.paperWindowPnlSum,
+        paperLongWindowPnlSum: championInputs.paperLongWindowPnlSum,
+        negativeWindowRateLast10: championInputs.negativeWindowRateLast10,
+        worstWindowPnlLast10: championInputs.worstWindowPnlLast10,
+        recentAvgSlippageBps: championInputs.recentAvgSlippageBps,
+        netPnlPerTrade: championInputs.netPnlPerTrade,
+        feeRatio: championInputs.feeRatio,
+        slippageRatio: championInputs.slippageRatio,
+        grossAlphaCapture: championInputs.grossAlphaCapture,
+        noTradeDisciplineScore: championInputs.noTradeDisciplineScore,
+        regimeBreakdown: championInputs.regimeBreakdown,
+        triggerBreakdown: championInputs.triggerBreakdown,
+        maxDrawdown: championInputs.maxDrawdown,
+        isChampionEligible: championInputs.isChampionEligible,
+        championEligibilityReasons: championInputs.championEligibilityReasons,
+      },
+    };
+
+    return refreshedQmon;
+  }
+
+  public appendPaperWindowPnl(qmon: Qmon, paperWindowPnl: number): Qmon {
+    const updatedPaperWindowPnls = [...qmon.paperWindowPnls, paperWindowPnl].slice(-PAPER_CHAMPION_LONG_HISTORY_WINDOW);
+    const completedWindowSlippageBps =
+      qmon.currentWindowSlippageFillCount > 0 ? qmon.currentWindowSlippageTotalBps / qmon.currentWindowSlippageFillCount : 0;
+    const updatedPaperWindowSlippageBps = [...qmon.paperWindowSlippageBps, completedWindowSlippageBps].slice(-PAPER_CHAMPION_LONG_HISTORY_WINDOW);
+    const updatedQmon = this.refreshMetrics({
+      ...qmon,
+      paperWindowPnls: updatedPaperWindowPnls,
+      paperWindowSlippageBps: updatedPaperWindowSlippageBps,
+      paperWindowBaselinePnl: qmon.metrics.totalPnl,
+      currentWindowSlippageTotalBps: 0,
+      currentWindowSlippageFillCount: 0,
+    });
+
+    return updatedQmon;
+  }
+
+  public finalizePopulation(
+    population: QmonPopulation,
+    qmons: readonly Qmon[],
+    emptyPosition: QmonPosition,
+    shouldPreserveSeatState = false,
+  ): QmonPopulation {
+    const finalizedPaperQmons = this.finalizePaperWindowHistory(qmons);
+    const preservedChampion =
+      population.activeChampionQmonId !== null ? (finalizedPaperQmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
+    const selectedChampion = shouldPreserveSeatState ? preservedChampion : this.selectActiveChampion(finalizedPaperQmons);
+    const activeChampionQmonId = selectedChampion?.id ?? null;
+    const qmonsWithRoles = this.applyChampionRoles(finalizedPaperQmons, activeChampionQmonId);
+    const nextWindowStartMs = qmonsWithRoles[0]?.currentWindowStart ?? population.seatLastWindowStartMs;
+    const finalizedPopulation: QmonPopulation = {
+      ...population,
+      qmons: qmonsWithRoles,
+      activeChampionQmonId,
+      seatPosition: shouldPreserveSeatState ? population.seatPosition : emptyPosition,
+      seatPendingOrder: shouldPreserveSeatState ? population.seatPendingOrder : null,
+      seatLastCloseTimestamp: shouldPreserveSeatState ? population.seatLastCloseTimestamp : null,
+      seatLastWindowStartMs: nextWindowStartMs,
+    };
+
+    return finalizedPopulation;
   }
 }
