@@ -489,15 +489,6 @@
 
   <!-- QMONS View -->
   <div class="dashboard">
-    <div class="market-route-legend" x-show="marketPnls.length > 0">
-      <span class="market-route-legend-label">Routing</span>
-      <span class="market-route-badge real">REAL</span>
-      <span class="market-route-badge paper">PAPER</span>
-      <span class="market-route-badge pending">PENDING</span>
-      <span class="market-route-badge error">ERROR</span>
-      <span class="market-route-badge halted">HALTED</span>
-    </div>
-
     <!-- Seat / consolidated PnL bar -->
     <div class="market-pnl-bar" x-show="marketPnls.length > 0">
       <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
@@ -508,7 +499,7 @@
       <template x-for="mp in marketPnls" :key="mp.market">
         <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">
           <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
-          <span class="market-route-badge" :class="mp.routeClass" x-text="mp.routeLabel"></span>
+          <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
           <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(mp.pnl)" x-text="formatPnl(mp.pnl)"></span>
           <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
         </div>
@@ -1686,25 +1677,21 @@
           const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === market) || null;
           const executionState = route?.executionState || 'paper';
           const labels = {
-            paper: 'PAPER',
-            'real-armed': 'REAL',
+            paper: '',
+            'real-armed': '',
             'real-pending-entry': 'ENTRY',
-            'real-open': 'OPEN',
+            'real-open': '',
             'real-pending-exit': 'EXIT',
             'real-error': 'ERROR',
             'real-halted': 'HALTED',
             'real-recovery-required': 'RECOVERY',
           };
-          return labels[executionState] || 'PAPER';
+          return labels[executionState] || '';
         },
 
         getMarketRouteClass(market) {
           const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === market) || null;
           const executionState = route?.executionState || 'paper';
-
-          if (executionState === 'real-open' || executionState === 'real-armed') {
-            return 'real';
-          }
 
           if (executionState === 'real-pending-entry' || executionState === 'real-pending-exit') {
             return 'pending';
@@ -1718,7 +1705,7 @@
             return 'halted';
           }
 
-          return 'paper';
+          return '';
         },
 
         async openModal(qmon) {
