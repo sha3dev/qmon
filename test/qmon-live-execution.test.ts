@@ -147,7 +147,7 @@ function createSignals(): {
   };
 }
 
-function createMockMarket(slug: string) {
+function createMockMarket(slug: string, orderMinSize = 1) {
   return {
     id: slug,
     slug,
@@ -158,7 +158,7 @@ function createMockMarket(slug: string) {
     clobTokenIds: ["1", "2"],
     upTokenId: "1",
     downTokenId: "2",
-    orderMinSize: 1,
+    orderMinSize,
     orderPriceMinTickSize: "0.01",
     eventStartTime: new Date(0).toISOString(),
     endDate: new Date(Date.now() + 60_000).toISOString(),
@@ -953,4 +953,67 @@ test("QmonLiveExecutionService halts when a confirmed live order is missing a tr
   assert.equal(status.marketRoutes[0]?.executionState, "real-halted");
   assert.equal(status.marketRoutes[0]?.confirmedLiveSeat, null);
   assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder, null);
+});
+
+test("QmonLiveExecutionService halts tiny live exit orders before posting below market minimum size", async () => {
+  let postCount = 0;
+  const tinyExitOrder: QmonPendingOrder = {
+    ...createPendingOrder("eth-5m", "exit", "SELL_UP"),
+    requestedShares: 0.0523,
+    remainingShares: 0.0523,
+  };
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => {
+      postCount += 1;
+      return null;
+    },
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m", 1)],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      tinyExitOrder,
+      "BUY_UP",
+      createRealExecutionRuntime({
+        executionState: "real-open",
+        confirmedVenueSeat: {
+          action: "BUY_UP",
+          shareCount: 0.0523,
+          entryPrice: 0.38,
+          enteredAt: 100,
+        },
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(postCount, 0);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-halted");
+  assert.equal(status.marketRoutes[0]?.isHalted, true);
+  assert.equal(status.marketRoutes[0]?.lastError?.includes("below market minimum size"), true);
+  assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder?.requestedShares, 0.0523);
 });

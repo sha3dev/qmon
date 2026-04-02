@@ -656,6 +656,18 @@ export class QmonLiveExecutionService {
     return resolvedExecutionRuntime;
   }
 
+  private getBelowMinimumOrderSizeError(pendingOrder: QmonPendingOrder, market: PolymarketMarket): string | null {
+    const minimumOrderSize = market.orderMinSize;
+    let errorMessage: string | null = null;
+
+    if (typeof minimumOrderSize === "number" && minimumOrderSize > 0 && pendingOrder.requestedShares < minimumOrderSize) {
+      errorMessage =
+        `live order below market minimum size: requested=${pendingOrder.requestedShares.toFixed(4)} minimum=${minimumOrderSize.toFixed(4)}`;
+    }
+
+    return errorMessage;
+  }
+
   private async processPendingSeatOrder(
     qmonEngine: QmonEngine,
     population: QmonPopulation,
@@ -679,6 +691,19 @@ export class QmonLiveExecutionService {
       marketKey,
       `attempt kind=${pendingOrder.kind} action=${pendingOrder.action} shares=${pendingOrder.requestedShares.toFixed(4)} price=${pendingOrder.limitPrice.toFixed(4)} key=${pendingIntentKey}`,
     );
+    const belowMinimumOrderSizeError = this.getBelowMinimumOrderSizeError(pendingOrder, market);
+
+    if (belowMinimumOrderSizeError !== null) {
+      await this.updateExecutionRuntime(qmonEngine, marketKey, {
+        pendingIntent: pendingOrder,
+        isHalted: true,
+        recoveryStartedAt: null,
+        lastError: belowMinimumOrderSizeError,
+        lastReconciledAt: Date.now(),
+      }, Date.now());
+      this.logLiveWarning(marketKey, "live-routing-halted", belowMinimumOrderSizeError);
+      return;
+    }
 
     const attemptResult = await this.postAndConfirmOrder(market, marketKey, pendingOrder);
     const confirmation = attemptResult.confirmation;
