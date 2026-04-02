@@ -1893,13 +1893,33 @@ export class QmonEngine {
 
     this.logPaperOrderChecked(qmon.id, pendingOrder, fillResult, isSeat);
 
+    if (!this.executionService.hasPendingOrderReachedCheckTime(pendingOrder, fillResult, now)) {
+      shouldSkipEvaluation = true;
+      return { qmon: updatedQmon, shouldSkipEvaluation };
+    }
+
     if (fillResult.filledShares <= 0 || fillResult.averagePrice === null) {
-      this.logPaperOrderExpired(qmon.id, pendingOrder, "not-filled", fillResult, isSeat);
-      updatedQmon = {
-        ...qmon,
-        pendingOrder: null,
-      };
-      this.markStateMutation(true);
+      if (this.executionService.hasPendingOrderTimedOut(pendingOrder, fillResult, now)) {
+        this.logPaperOrderExpired(qmon.id, pendingOrder, "not-filled", fillResult, isSeat);
+        updatedQmon = {
+          ...qmon,
+          pendingOrder: null,
+        };
+        this.markStateMutation(true);
+      }
+      shouldSkipEvaluation = true;
+      return { qmon: updatedQmon, shouldSkipEvaluation };
+    }
+
+    if (this.executionService.shouldRequireFullFill(pendingOrder) && fillResult.remainingShares > 0) {
+      if (this.executionService.hasPendingOrderTimedOut(pendingOrder, fillResult, now)) {
+        this.logPaperOrderExpired(qmon.id, pendingOrder, "not-fully-filled", fillResult, isSeat);
+        updatedQmon = {
+          ...qmon,
+          pendingOrder: null,
+        };
+        this.markStateMutation(true);
+      }
       shouldSkipEvaluation = true;
       return { qmon: updatedQmon, shouldSkipEvaluation };
     }

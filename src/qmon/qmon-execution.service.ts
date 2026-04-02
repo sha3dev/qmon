@@ -25,6 +25,11 @@ const MIN_POSITION_SHARES = 5;
 const MIN_POSITION_NOTIONAL_USD = 1;
 const POLYMARKET_CRYPTO_TAKER_FEE_RATE = 0.072;
 const POLYMARKET_CRYPTO_TAKER_FEE_EXPONENT = 1;
+const PAPER_ORDER_FULL_FILL_CHECK_DELAY_MS = 1_500;
+const PAPER_ORDER_PARTIAL_FILL_CHECK_DELAY_MS = 4_000;
+const PAPER_ORDER_NO_FILL_CHECK_DELAY_MS = 9_000;
+const PAPER_ORDER_PARTIAL_FILL_TIMEOUT_MS = 9_000;
+const PAPER_ORDER_NO_FILL_TIMEOUT_MS = 15_000;
 
 /**
  * @section types
@@ -343,6 +348,51 @@ export class QmonExecutionService {
   }
 
   /**
+   * Paper entries should only confirm when the visible book can satisfy the
+   * whole request, matching the real FOK-like entry behavior more closely.
+   */
+  public shouldRequireFullFill(pendingOrder: QmonPendingOrder): boolean {
+    let shouldRequire = false;
+
+    if (pendingOrder.kind === "entry") {
+      shouldRequire = true;
+    }
+
+    return shouldRequire;
+  }
+
+  /**
+   * Delay paper order checks based on visible book executability.
+   */
+  public hasPendingOrderReachedCheckTime(pendingOrder: QmonPendingOrder, fillResult: QmonFillResult, timestamp: number): boolean {
+    const orderAgeMs = timestamp - pendingOrder.createdAt;
+    const checkDelayMs = this.getPaperOrderCheckDelayMs(pendingOrder, fillResult);
+    let hasReachedCheckTime = false;
+
+    if (orderAgeMs >= checkDelayMs) {
+      hasReachedCheckTime = true;
+    }
+
+    return hasReachedCheckTime;
+  }
+
+  /**
+   * Give the visible book some time to improve before treating a paper order
+   * as rejected.
+   */
+  public hasPendingOrderTimedOut(pendingOrder: QmonPendingOrder, fillResult: QmonFillResult, timestamp: number): boolean {
+    const orderAgeMs = timestamp - pendingOrder.createdAt;
+    const timeoutMs = this.getPaperOrderTimeoutMs(pendingOrder, fillResult);
+    let hasTimedOut = false;
+
+    if (orderAgeMs >= timeoutMs) {
+      hasTimedOut = true;
+    }
+
+    return hasTimedOut;
+  }
+
+  /**
    * @section private:methods
    */
 
@@ -420,5 +470,51 @@ export class QmonExecutionService {
     const takerBuyFeeShareRate = POLYMARKET_CRYPTO_TAKER_FEE_RATE * feeWeight ** POLYMARKET_CRYPTO_TAKER_FEE_EXPONENT;
 
     return takerBuyFeeShareRate;
+  }
+
+  /**
+   * Convert visible book depth into a crude wait time proxy. When the whole
+   * order is visible we fill quickly; when only part of it is visible we wait
+   * longer before giving up; and with zero visible fill we wait the longest.
+   */
+  private getPaperOrderCheckDelayMs(pendingOrder: QmonPendingOrder, fillResult: QmonFillResult): number {
+    const visibleFillRatio = this.getVisibleFillRatio(pendingOrder, fillResult);
+    let checkDelayMs = PAPER_ORDER_NO_FILL_CHECK_DELAY_MS;
+
+    if (visibleFillRatio >= 1) {
+      checkDelayMs = PAPER_ORDER_FULL_FILL_CHECK_DELAY_MS;
+    } else if (visibleFillRatio > 0) {
+      checkDelayMs = PAPER_ORDER_PARTIAL_FILL_CHECK_DELAY_MS;
+    }
+
+    return checkDelayMs;
+  }
+
+  /**
+   * Timeouts are also derived from current visible fill quality so paper does
+   * not reject immediately when the book is merely thin for a moment.
+   */
+  private getPaperOrderTimeoutMs(pendingOrder: QmonPendingOrder, fillResult: QmonFillResult): number {
+    const visibleFillRatio = this.getVisibleFillRatio(pendingOrder, fillResult);
+    let timeoutMs = PAPER_ORDER_NO_FILL_TIMEOUT_MS;
+
+    if (visibleFillRatio > 0 && visibleFillRatio < 1) {
+      timeoutMs = PAPER_ORDER_PARTIAL_FILL_TIMEOUT_MS;
+    } else if (visibleFillRatio >= 1) {
+      timeoutMs = this.getPaperOrderCheckDelayMs(pendingOrder, fillResult);
+    }
+
+    return timeoutMs;
+  }
+
+  /**
+   * Visible fill ratio is the simplest book-derived proxy for whether the
+   * order is realistically executable right now.
+   */
+  private getVisibleFillRatio(pendingOrder: QmonPendingOrder, fillResult: QmonFillResult): number {
+    const requestedShares = Math.max(pendingOrder.remainingShares, Number.EPSILON);
+    const visibleFillRatio = fillResult.filledShares / requestedShares;
+
+    return visibleFillRatio;
   }
 }

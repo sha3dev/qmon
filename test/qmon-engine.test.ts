@@ -80,16 +80,16 @@ function createSignals(
   };
 }
 
-function createSnapshot(upPrice: number, downPrice: number): Snapshot {
+function createSnapshot(upPrice: number, downPrice: number, upSize = 50, downSize = 50): Snapshot {
   return {
     generated_at: 1,
     btc_5m_up_order_book_json: JSON.stringify({
-      bids: [{ price: upPrice, size: 50 }],
-      asks: [{ price: upPrice, size: 50 }],
+      bids: [{ price: upPrice, size: upSize }],
+      asks: [{ price: upPrice, size: upSize }],
     }),
     btc_5m_down_order_book_json: JSON.stringify({
-      bids: [{ price: downPrice, size: 50 }],
-      asks: [{ price: downPrice, size: 50 }],
+      bids: [{ price: downPrice, size: downSize }],
+      asks: [{ price: downPrice, size: downSize }],
     }),
   } as Snapshot;
 }
@@ -257,7 +257,7 @@ test("QmonEngine evaluates entry and exit decisions with taker-only cashflow his
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
   });
-  withMockNow(1_500, () => {
+  withMockNow(3_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
   });
 
@@ -277,7 +277,7 @@ test("QmonEngine evaluates entry and exit decisions with taker-only cashflow his
   withMockNow(2_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.7, 0.3, marketStartMs, marketEndMs), createRegimes(), [], exitSnapshots);
   });
-  withMockNow(2_500, () => {
+  withMockNow(4_500, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.7, 0.3, marketStartMs, marketEndMs), createRegimes(), [], exitSnapshots);
   });
 
@@ -288,6 +288,62 @@ test("QmonEngine evaluates entry and exit decisions with taker-only cashflow his
   assert.equal(closedQmon.metrics.totalTrades, 1);
   assert.equal((exitDecision.modelScore ?? 0) > 0.5, true);
   assert.equal(exitDecision.cashflow > 0, true);
+});
+
+test("QmonEngine keeps paper entry pending until the simulated wait elapses", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+
+  const waitingQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(waitingQmon.position.action, null);
+  assert.notEqual(waitingQmon.pendingOrder, null);
+  assert.equal(waitingQmon.decisionHistory.length, 0);
+
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+
+  const filledQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(filledQmon.position.action, "BUY_UP");
+  assert.equal(filledQmon.pendingOrder, null);
+  assert.equal(filledQmon.decisionHistory.length, 1);
+});
+
+test("QmonEngine rejects paper entry when visible book never reaches the full requested size", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 20_000;
+  const thinEntrySnapshots = [createSnapshot(0.1, 0.9, 3, 50)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], thinEntrySnapshots);
+  });
+  withMockNow(5_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], thinEntrySnapshots);
+  });
+
+  const stillPendingQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.notEqual(stillPendingQmon.pendingOrder, null);
+  assert.equal(stillPendingQmon.position.action, null);
+
+  withMockNow(11_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], thinEntrySnapshots);
+  });
+
+  const rejectedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(rejectedQmon.pendingOrder, null);
+  assert.equal(rejectedQmon.position.action, null);
+  assert.equal(rejectedQmon.decisionHistory.length, 0);
 });
 
 test("QmonEngine blocks entries when directional edge and distance contradict the trade", () => {
@@ -421,7 +477,7 @@ test("QmonEngine keeps champion paper evaluation running while live routing is h
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, signals, createRegimes(), ["consensus-flip"], snapshots, { executionMode: "real" });
   });
-  withMockNow(1_500, () => {
+  withMockNow(3_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, signals, createRegimes(), ["consensus-flip"], snapshots, { executionMode: "real" });
   });
 
@@ -464,7 +520,7 @@ test("QmonEngine caps in-memory decision history to the most recent 20 decisions
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
   });
-  withMockNow(1_500, () => {
+  withMockNow(3_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
   });
 
@@ -472,7 +528,7 @@ test("QmonEngine caps in-memory decision history to the most recent 20 decisions
 
   assert.equal(updatedQmon.decisionHistory.length, 20);
   assert.equal(updatedQmon.decisionHistory[0]?.timestamp, 7);
-  assert.equal(updatedQmon.decisionHistory[19]?.timestamp, 1000);
+  assert.equal(updatedQmon.decisionHistory[19]?.timestamp, 3000);
 });
 
 test("QmonEngine keeps the seat flat when the active champion loses readiness", () => {

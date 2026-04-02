@@ -103,6 +103,10 @@
       transform: translateY(-1px);
       box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
     }
+    .market-pnl-item.has-champion {
+      border-color: rgba(0,230,118,0.45);
+      box-shadow: inset 0 0 0 1px rgba(0,230,118,0.12);
+    }
     .market-pnl-item.total {
       grid-column: span 2;
       background: linear-gradient(180deg, rgba(124,77,255,0.16), rgba(34,38,54,0.96));
@@ -599,7 +603,7 @@
         </div>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
-        <div class="market-pnl-item" style="cursor:pointer;" @click="openMarketActivity(mp.market)">
+        <div class="market-pnl-item" :class="{ 'has-champion': mp.championId }" style="cursor:pointer;" @click="openMarketActivity(mp.market)">
           <div class="market-pnl-head">
             <div class="market-pnl-meta">
               <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
