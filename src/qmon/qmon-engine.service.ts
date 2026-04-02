@@ -3007,7 +3007,13 @@ export class QmonEngine {
   /**
    * Apply a confirmed real seat order to the same seat ledger used by paper execution.
    */
-  public applyRealSeatPendingOrderFill(market: MarketKey, averagePrice: number, filledShares: number, timestamp: number): void {
+  public applyRealSeatPendingOrderFill(
+    market: MarketKey,
+    averagePrice: number,
+    filledShares: number,
+    timestamp: number,
+    venuePositionShareCount: number | null = null,
+  ): void {
     const population = this.getPopulation(market);
     const championQmon =
       population?.activeChampionQmonId !== null ? (population?.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
@@ -3025,6 +3031,16 @@ export class QmonEngine {
 
     if (pendingOrder.kind === "entry") {
       updatedSeatProxyQmon = this.applyEntryFill(seatProxyQmon, pendingOrder, fillResult, timestamp);
+      updatedSeatProxyQmon =
+        venuePositionShareCount !== null && updatedSeatProxyQmon.position.action !== null
+          ? {
+              ...updatedSeatProxyQmon,
+              position: {
+                ...updatedSeatProxyQmon.position,
+                shareCount: venuePositionShareCount,
+              },
+            }
+          : updatedSeatProxyQmon;
 
       const entryShareCount = updatedSeatProxyQmon.position.shareCount ?? fillResult.filledShares;
       const entryFee =

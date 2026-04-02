@@ -759,12 +759,18 @@ export class QmonLiveExecutionService {
       });
 
       if (reconciliationStatus === "confirmed") {
+        const marketMetadata = this.liveMarketCacheByMarket.get(market)?.market ?? null;
+        const venuePositionShareCount =
+          marketMetadata !== null && pendingIntent.kind === "entry"
+            ? await this.getVenueSellableSize(marketMetadata, pendingIntent)
+            : null;
+
         this.logLiveExecutionEvent(
           "live-reconcile-confirmed",
           market,
           `reconciliation confirmed orderId=${executionRuntime.orderId}`,
         );
-        qmonEngine.applyRealSeatPendingOrderFill(market, pendingIntent.limitPrice, pendingIntent.requestedShares, Date.now());
+        qmonEngine.applyRealSeatPendingOrderFill(market, pendingIntent.limitPrice, pendingIntent.requestedShares, Date.now(), venuePositionShareCount);
         await this.refreshBalanceSnapshot();
 
         const updatedPopulation = qmonEngine.getPopulation(market);
@@ -1053,7 +1059,11 @@ export class QmonLiveExecutionService {
           return liveOrderAttemptResult;
         }
 
-        this.logLiveExecutionEvent("live-order-posted", marketKey, `posted ${op} ${direction} ${size.toFixed(2)} @ ${price.toFixed(4)} id=${postedOrderId}`);
+        this.logLiveExecutionEvent(
+          "live-order-posted",
+          marketKey,
+          `posted ${op} ${direction} ${postedOrder.size.toFixed(2)} @ ${postedOrder.price.toFixed(4)} id=${postedOrderId}`,
+        );
         const confirmation = await this.orderService.waitForOrderConfirmation({
           order: postedOrder,
           timeoutMs: this.confirmationTimeoutMs,
@@ -1061,7 +1071,11 @@ export class QmonLiveExecutionService {
         });
 
         if (confirmation.ok && confirmation.status === "confirmed") {
-          this.logLiveExecutionEvent("live-order-confirmed", marketKey, `confirmed ${op} ${direction} ${size.toFixed(2)} @ ${price.toFixed(4)} id=${postedOrderId}`);
+          this.logLiveExecutionEvent(
+            "live-order-confirmed",
+            marketKey,
+            `confirmed ${op} ${direction} ${confirmation.size.toFixed(2)} @ ${confirmation.price.toFixed(4)} id=${postedOrderId}`,
+          );
         }
 
         liveOrderAttemptResult = {
@@ -1083,6 +1097,30 @@ export class QmonLiveExecutionService {
     }
 
     return liveOrderAttemptResult;
+  }
+
+  private getPendingOrderDirection(pendingOrder: QmonPendingOrder): "up" | "down" {
+    const direction = pendingOrder.action === "BUY_DOWN" || pendingOrder.action === "SELL_DOWN" ? "down" : "up";
+
+    return direction;
+  }
+
+  private async getVenueSellableSize(market: PolymarketMarket, pendingOrder: QmonPendingOrder): Promise<number | null> {
+    const direction = this.getPendingOrderDirection(pendingOrder);
+    let sellableSize: number | null = null;
+
+    try {
+      sellableSize = await this.orderService.getSellableSize({
+        market,
+        direction,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logLiveWarning(pendingOrder.market, "live-balance-refresh-failed", `could not read sellable size after entry confirmation: ${message}`);
+    }
+
+    return sellableSize;
   }
 
   private async listActiveOrdersPendingConfirmation(): Promise<readonly PendingConfirmationOrder[]> {
