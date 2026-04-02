@@ -63,7 +63,7 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
     pendingOrder: null,
     metrics: {
       totalTrades: 16,
-      totalPnl: 4,
+      totalPnl: 12,
       championScore: null,
       paperWindowMedianPnl: null,
       paperWindowPnlSum: 0,
@@ -83,7 +83,7 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
     decisionHistory: [],
     windowTradeCount: 0,
     windowsLived: 8,
-    paperWindowPnls: [0.4, 0.5, 0.45, 0.35, 0.5, 0.55],
+    paperWindowPnls: [0.5, 0.55, 0.6, 0.5, 0.55, 0.65],
     paperWindowSlippageBps: [10, 12, 12, 13, 11, 12],
     paperWindowBaselinePnl: null,
     currentWindowStart: 1,
@@ -286,7 +286,8 @@ test("QmonChampionService treats zero-trade windows as neutral in champion media
   });
 
   assert.equal(refreshedQmon.metrics.paperWindowMedianPnl, 0.35);
-  assert.equal(refreshedQmon.metrics.isChampionEligible, true);
+  assert.equal(refreshedQmon.metrics.isChampionEligible, false);
+  assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("non-positive-median"), true);
 });
 
 test("QmonChampionService computes fee ratio from lifetime pnl and fees", () => {

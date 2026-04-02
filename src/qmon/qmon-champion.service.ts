@@ -10,10 +10,12 @@ import type { Qmon, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSli
 
 const PAPER_CHAMPION_HISTORY_WINDOW = 5;
 const PAPER_CHAMPION_LONG_HISTORY_WINDOW = 30;
+const CHAMPION_MIN_FITNESS_SCORE = 150;
 const CHAMPION_MIN_WIN_RATE = 0.55;
 const CHAMPION_MAX_NEGATIVE_WINDOW_RATE = 0.4;
 const CHAMPION_MAX_FEE_RATIO = 0.65;
-const CHAMPION_MAX_DRAWDOWN = 10;
+const CHAMPION_MAX_DRAWDOWN = 5;
+const CHAMPION_MIN_WINDOW_MEDIAN_PNL = 0.5;
 const CHAMPION_MIN_REGIME_COVERAGE = 2;
 
 type ChampionInputs = {
@@ -381,6 +383,12 @@ export class QmonChampionService {
     const maxDrawdown = this.calculateMaxDrawdown(qmon);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
+    const robustnessBonus = positiveRegimeCount * 35 + noTradeDisciplineScore * 40;
+    const frictionPenalty = feeRatio * 250 + slippageRatio * 120 + recentAvgSlippageBps / 10;
+    const instabilityPenalty = negativeWindowRateLast10 * 180 + Math.max(0, -(worstWindowPnlLast10 ?? 0)) * 60 + maxDrawdown * 40;
+    const consistencyBonus = Math.max(0, (paperWindowMedianPnl ?? 0) * 200) + Math.max(0, netPnlPerTrade * 120);
+    const fitnessScore =
+      qmon.metrics.totalPnl + (qmon.metrics.totalEstimatedNetEvUsd ?? 0) + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
     const championEligibilityReasons: string[] = [];
 
     if (qmon.lifecycle !== "active") {
@@ -392,7 +400,7 @@ export class QmonChampionService {
     if (paperWindowPnlSum <= 0) {
       championEligibilityReasons.push("non-positive-sum");
     }
-    if ((paperWindowMedianPnl ?? 0) <= 0) {
+    if ((paperWindowMedianPnl ?? 0) < CHAMPION_MIN_WINDOW_MEDIAN_PNL) {
       championEligibilityReasons.push("non-positive-median");
     }
     if (qmon.metrics.totalPnl <= 0) {
@@ -403,6 +411,9 @@ export class QmonChampionService {
     }
     if (qmon.metrics.totalTrades < 10) {
       championEligibilityReasons.push("insufficient-trades");
+    }
+    if (fitnessScore <= CHAMPION_MIN_FITNESS_SCORE) {
+      championEligibilityReasons.push("low-fitness");
     }
     if (paperLongWindowPnlSum <= 0) {
       championEligibilityReasons.push("non-positive-long-window-sum");
@@ -424,12 +435,6 @@ export class QmonChampionService {
     }
 
     const isChampionEligible = championEligibilityReasons.length === 0;
-    const robustnessBonus = positiveRegimeCount * 35 + noTradeDisciplineScore * 40;
-    const frictionPenalty = feeRatio * 250 + slippageRatio * 120 + recentAvgSlippageBps / 10;
-    const instabilityPenalty = negativeWindowRateLast10 * 180 + Math.max(0, -(worstWindowPnlLast10 ?? 0)) * 60 + maxDrawdown * 40;
-    const consistencyBonus = Math.max(0, (paperWindowMedianPnl ?? 0) * 200) + Math.max(0, netPnlPerTrade * 120);
-    const fitnessScore =
-      qmon.metrics.totalPnl + (qmon.metrics.totalEstimatedNetEvUsd ?? 0) + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
     const championScore = isChampionEligible ? fitnessScore + paperLongWindowPnlSum * 20 : null;
 
     return {
