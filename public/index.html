@@ -502,8 +502,7 @@
     <div class="market-pnl-bar" x-show="marketPnls.length > 0">
       <div class="market-pnl-item total" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px;">
         <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL</span>
-        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalRealMarketPnl)" x-text="'REAL ' + formatPnl(totalRealMarketPnl)"></span>
-        <span class="market-pnl-subval" x-text="'PAPER ' + formatPnl(totalPaperMarketPnl)"></span>
+        <span class="market-pnl-val" style="font-size:15px; font-weight:700;" :class="pnlClass(totalActiveMarketPnl)" x-text="executionModeLabel + ' ' + formatPnl(totalActiveMarketPnl)"></span>
       </div>
       <template x-for="mp in marketPnls" :key="mp.market">
         <div class="market-pnl-item" :class="{ 'real-routed': mp.route === 'real' }" style="display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 12px; cursor:pointer;" @click="openMarketActivity(mp.market)">
@@ -1466,16 +1465,9 @@
           return Array.from(markets).sort();
         },
 
-        get totalRealMarketPnl() {
+        get totalActiveMarketPnl() {
           return this.marketPnls.reduce((runningPnl, marketPnl) => {
-            const nextPnl = marketPnl.route === 'real' ? (marketPnl.pnl || 0) : 0;
-            return runningPnl + nextPnl;
-          }, 0);
-        },
-
-        get totalPaperMarketPnl() {
-          return this.marketPnls.reduce((runningPnl, marketPnl) => {
-            const nextPnl = marketPnl.route === 'paper' ? (marketPnl.pnl || 0) : 0;
+            const nextPnl = marketPnl.pnl || 0;
             return runningPnl + nextPnl;
           }, 0);
         },

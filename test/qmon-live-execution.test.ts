@@ -693,6 +693,126 @@ test("QmonLiveExecutionService cancels stale open venue orders only after the lo
   assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder, null);
 });
 
+test("QmonLiveExecutionService rechecks a disappeared tracked order before halting and restores the confirmed seat", async () => {
+  let confirmationChecks = 0;
+  const trackedPendingOrder = createPendingOrder("eth-5m", "entry", "BUY_UP");
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    reconcileOrderStatus: async () => {
+      confirmationChecks += 1;
+      return "confirmed" as const;
+    },
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      trackedPendingOrder,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-recovery-required",
+        pendingIntent: trackedPendingOrder,
+        orderId: "late-fill-1",
+        submittedAt: 100,
+        recoveryStartedAt: 100,
+        isHalted: true,
+        lastError: "Order late-fill-1 timed out after 5000ms.",
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(confirmationChecks, 1);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-open");
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.orderId, null);
+  assert.equal(status.marketRoutes[0]?.confirmedLiveSeat?.action, "BUY_UP");
+});
+
+test("QmonLiveExecutionService clears ambiguous disappeared tracked orders so the halt is not retried forever", async () => {
+  const trackedPendingOrder = createPendingOrder("eth-5m", "entry", "BUY_UP");
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    reconcileOrderStatus: async () => "failed" as const,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      trackedPendingOrder,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-recovery-required",
+        pendingIntent: trackedPendingOrder,
+        orderId: "missing-1",
+        submittedAt: 100,
+        recoveryStartedAt: 100,
+        isHalted: true,
+        lastError: "Order missing-1 timed out after 5000ms.",
+      }),
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(status.marketRoutes[0]?.executionState, "real-error");
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.orderId, null);
+  assert.equal(status.marketRoutes[0]?.hasPendingIntent, false);
+  assert.equal(engine.getPopulation("eth-5m")?.seatPendingOrder, null);
+});
+
 test("QmonLiveExecutionService halts a market when a new entry appears while a confirmed live position already exists", async () => {
   let postCount = 0;
   const orderService = {

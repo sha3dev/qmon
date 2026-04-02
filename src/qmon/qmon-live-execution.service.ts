@@ -439,7 +439,7 @@ export class QmonLiveExecutionService {
       pendingVenueOrders: marketPendingVenueOrders,
       lastReconciledAt: now,
     }, now);
-    executionRuntime = await this.reconcileTrackedOrder(qmonEngine, population.market, executionRuntime, marketPendingVenueOrders);
+    executionRuntime = await this.reconcileTrackedOrder(qmonEngine, population.market, executionRuntime, marketPendingVenueOrders, liveMarket);
     currentPopulation = qmonEngine.getPopulation(population.market) ?? currentPopulation;
 
     if (this.hasLiveSeatDivergence(currentPopulation, executionRuntime)) {
@@ -506,6 +506,7 @@ export class QmonLiveExecutionService {
     market: MarketKey,
     executionRuntime: QmonExecutionRuntime,
     marketPendingVenueOrders: readonly QmonPendingVenueOrderSnapshot[],
+    liveMarket: PolymarketMarket | null,
   ): Promise<QmonExecutionRuntime> {
     const now = Date.now();
 
@@ -551,10 +552,23 @@ export class QmonLiveExecutionService {
     }
 
     if (executionRuntime.pendingIntent !== null) {
+      const resolvedExecutionRuntime = await this.resolveMissingTrackedOrderTerminalState(
+        qmonEngine,
+        market,
+        executionRuntime,
+      );
+
+      if (resolvedExecutionRuntime !== null) {
+        return resolvedExecutionRuntime;
+      }
+
       qmonEngine.clearRealSeatPendingOrder(market, now);
       this.logLiveWarning(market, "live-routing-halted", `order ${executionRuntime.orderId} disappeared without a provable terminal reconciliation`);
 
       return this.updateExecutionRuntime(qmonEngine, market, {
+        pendingIntent: null,
+        orderId: null,
+        submittedAt: null,
         pendingVenueOrders: [],
         isHalted: true,
         recoveryStartedAt: null,
@@ -579,6 +593,67 @@ export class QmonLiveExecutionService {
       recoveryStartedAt: null,
       lastError: null,
     }, now);
+  }
+
+  private async resolveMissingTrackedOrderTerminalState(
+    qmonEngine: QmonEngine,
+    market: MarketKey,
+    executionRuntime: QmonExecutionRuntime,
+  ): Promise<QmonExecutionRuntime | null> {
+    const pendingIntent = executionRuntime.pendingIntent;
+    let resolvedExecutionRuntime: QmonExecutionRuntime | null = null;
+
+    if (pendingIntent !== null && executionRuntime.orderId !== null) {
+      const reconciliationStatus = await this.orderService.reconcileOrderStatus({
+        orderId: executionRuntime.orderId,
+        shouldCancelOnPending: false,
+        maxAttempts: 1,
+        retryDelayMs: 1,
+      });
+
+      if (reconciliationStatus === "confirmed") {
+        qmonEngine.applyRealSeatPendingOrderFill(market, pendingIntent.limitPrice, pendingIntent.requestedShares, Date.now());
+        await this.refreshBalanceSnapshot();
+
+        const updatedPopulation = qmonEngine.getPopulation(market);
+        const confirmedVenueSeat = this.createConfirmedVenueSeatFromPopulation(updatedPopulation);
+
+        resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
+          pendingIntent: null,
+          orderId: null,
+          submittedAt: null,
+          confirmedVenueSeat,
+          pendingVenueOrders: [],
+          isHalted: false,
+          recoveryStartedAt: null,
+          lastError: null,
+          lastReconciledAt: Date.now(),
+        }, Date.now());
+      } else if (reconciliationStatus === "cancelled" || reconciliationStatus === "failed") {
+        const errorMessage = `live order ${reconciliationStatus}`;
+
+        qmonEngine.clearRealSeatPendingOrder(market, Date.now());
+        resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
+          pendingIntent: null,
+          orderId: null,
+          submittedAt: null,
+          pendingVenueOrders: [],
+          isHalted: false,
+          recoveryStartedAt: null,
+          lastError: errorMessage,
+          lastReconciledAt: Date.now(),
+        }, Date.now());
+      } else if (reconciliationStatus === "pending") {
+        resolvedExecutionRuntime = await this.updateExecutionRuntime(qmonEngine, market, {
+          isHalted: true,
+          recoveryStartedAt: executionRuntime.recoveryStartedAt ?? Date.now(),
+          lastError: executionRuntime.lastError ?? "waiting for venue confirmation",
+          lastReconciledAt: Date.now(),
+        }, Date.now());
+      }
+    }
+
+    return resolvedExecutionRuntime;
   }
 
   private async processPendingSeatOrder(
