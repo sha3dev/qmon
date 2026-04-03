@@ -960,7 +960,8 @@ export class QmonValidationLogService {
 
   private calculateFillRate(aggregate: DiagnosticsAggregate): number {
     const denominator = aggregate.orderCreatedCount;
-    const fillRate = denominator > 0 ? aggregate.orderFilledCount / denominator : 0;
+    const filledOrderEventCount = Math.min(aggregate.orderFilledCount + aggregate.orderPartialFillCount, aggregate.orderCreatedCount);
+    const fillRate = denominator > 0 ? filledOrderEventCount / denominator : 0;
 
     return fillRate;
   }
@@ -974,7 +975,8 @@ export class QmonValidationLogService {
 
   private calculateRealFillRate(aggregate: DiagnosticsAggregate): number {
     const denominator = aggregate.liveOrderPostedCount;
-    const realFillRate = denominator > 0 ? aggregate.liveOrderConfirmedCount / denominator : 0;
+    const confirmedOrderCount = Math.min(aggregate.liveOrderConfirmedCount, aggregate.liveOrderPostedCount);
+    const realFillRate = denominator > 0 ? confirmedOrderCount / denominator : 0;
 
     return realFillRate;
   }

@@ -398,51 +398,7 @@ export class QmonChampionService {
       }
     }
 
-    if (selectedChampion === null) {
-      selectedChampion = this.selectFallbackChampion(qmons);
-    }
-
     return selectedChampion;
-  }
-
-  /**
-   * Select a conservative fallback champion when strict eligibility leaves the market unmanaged.
-   */
-  private selectFallbackChampion(qmons: readonly Qmon[]): Qmon | null {
-    let selectedChampion: Qmon | null = null;
-
-    for (const qmon of qmons) {
-      if (this.isFallbackChampionCandidate(qmon) && (selectedChampion === null || this.shouldReplaceChampionCandidate(qmon, selectedChampion))) {
-        selectedChampion = qmon;
-      }
-    }
-
-    return selectedChampion;
-  }
-
-  /**
-   * Accept only active, internally consistent and net-positive agents as fallback champions.
-   */
-  private isFallbackChampionCandidate(qmon: Qmon): boolean {
-    let isFallbackCandidate = qmon.lifecycle === "active";
-
-    if (isFallbackCandidate) {
-      isFallbackCandidate = this.hasConsistentTradeState(qmon);
-    }
-
-    if (isFallbackCandidate) {
-      isFallbackCandidate = qmon.metrics.totalTrades >= 2 && qmon.metrics.totalPnl > 0;
-    }
-
-    if (isFallbackCandidate) {
-      isFallbackCandidate = (qmon.metrics.fitnessScore ?? Number.NEGATIVE_INFINITY) > 0 && qmon.metrics.winRate >= 0.5;
-    }
-
-    if (isFallbackCandidate) {
-      isFallbackCandidate = (qmon.metrics.negativeWindowRateLast10 ?? 1) <= 0.5 && (qmon.metrics.feeRatio ?? 1) <= 0.75;
-    }
-
-    return isFallbackCandidate;
   }
 
   private applyChampionRoles(qmons: readonly Qmon[], activeChampionQmonId: string | null): Qmon[] {

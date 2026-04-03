@@ -502,7 +502,7 @@ test("QmonChampionService selects the best eligible champion by the new score pr
   assert.equal(finalizedPopulation.activeChampionQmonId, "STEADY01");
 });
 
-test("QmonChampionService selects a conservative fallback champion when strict eligibility leaves no seat owner", () => {
+test("QmonChampionService leaves the seat without champion when strict eligibility rejects every candidate", () => {
   const championService = new QmonChampionService();
   const fallbackQmon = championService.refreshMetrics({
     ...createChampionCandidate("FALLBACK", 0.7, 0.2),
@@ -568,5 +568,6 @@ test("QmonChampionService selects a conservative fallback champion when strict e
   );
 
   assert.equal(fallbackQmon.metrics.isChampionEligible, false);
-  assert.equal(finalizedPopulation.activeChampionQmonId, "FALLBACK");
+  assert.equal(weakQmon.metrics.isChampionEligible, false);
+  assert.equal(finalizedPopulation.activeChampionQmonId, null);
 });

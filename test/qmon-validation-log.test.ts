@@ -117,6 +117,68 @@ test("QmonValidationLogService ignores tradeability warnings in diagnostics aggr
   }
 });
 
+test("QmonValidationLogService caps paper and real fill rates to one filled order per created order", async () => {
+  const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
+  const validationLogService = new QmonValidationLogService(diagnosticsDir);
+  const mockNow = Date.now();
+
+  try {
+    withMockNow(mockNow, () => {
+      validationLogService.logPaperOrderCreated({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+      });
+      validationLogService.logPaperOrderPartialFill({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        priceImpactBps: 4,
+      });
+      validationLogService.logPaperOrderPartialFill({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        priceImpactBps: 5,
+      });
+      validationLogService.logPaperOrderFilled({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        priceImpactBps: 6,
+      });
+      validationLogService.logLiveExecutionEvent({
+        market: "btc-5m",
+        orderId: "order-1",
+        kind: "entry",
+        action: "BUY_UP",
+      }, "live-order-posted");
+      validationLogService.logLiveExecutionEvent({
+        market: "btc-5m",
+        orderId: "order-1",
+        kind: "entry",
+        action: "BUY_UP",
+      }, "live-order-confirmed");
+      validationLogService.logLiveExecutionEvent({
+        market: "btc-5m",
+        orderId: "order-1",
+        kind: "entry",
+        action: "BUY_UP",
+      }, "live-order-confirmed");
+    });
+
+    await validationLogService.flush();
+
+    const marketSummary = await validationLogService.readMarketDiagnostics("btc-5m", "24h");
+
+    assert.equal(marketSummary.paperFillRate, 1);
+    assert.equal(marketSummary.realFillRate, 1);
+    assert.equal(marketSummary.fillRate, 1);
+  } finally {
+    await rm(diagnosticsDir, { recursive: true, force: true });
+  }
+});
+
 test("QmonValidationLogService resets persisted CPnL diagnostics state", async () => {
   const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
   const validationLogService = new QmonValidationLogService(diagnosticsDir);

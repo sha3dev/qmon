@@ -1609,22 +1609,30 @@ export class QmonEngine {
     const slippageCostUsd = baseShareCount === null || limitPrice === null ? 0 : (predictedSlippageBps / 10_000) * baseShareCount * limitPrice;
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
     const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getCompiledGenome(qmon).enabledTriggerIds.includes(triggerId));
-    const requiredNetEvUsd = (qmon.genome.entryPolicy?.minNetEvUsd ?? 0.05) + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : NO_TRIGGER_EV_PREMIUM_USD);
+    const minimumEdgeBps = Math.max(qmon.genome.entryPolicy?.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS);
+    const minimumNetEvUsd = Math.max(qmon.genome.entryPolicy?.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD);
+    const minimumFillQuality = Math.max(qmon.genome.entryPolicy?.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
+    const minimumConfirmations = Math.max(qmon.genome.entryPolicy?.minConfirmations ?? 2, config.QMON_MIN_ENTRY_CONFIRMATIONS);
+    const maximumSlippageBps = Math.min(
+      qmon.genome.entryPolicy?.maxSlippageBps ?? qmon.genome.maxSlippageBps,
+      config.QMON_MAX_ENTRY_SLIPPAGE_BPS,
+    );
+    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : NO_TRIGGER_EV_PREMIUM_USD);
     let tradeabilityRejectReason: string | null = null;
 
-    if (estimatedEdgeBps < (qmon.genome.entryPolicy?.minEdgeBps ?? 25)) {
+    if (estimatedEdgeBps < minimumEdgeBps) {
       tradeabilityRejectReason = "edge-too-small";
     } else if (directionMultiplier * edgeSignalValue < -0.05 || directionMultiplier * distanceSignalValue < -0.05) {
       tradeabilityRejectReason = "directional-conflict";
     } else if (grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd < requiredNetEvUsd) {
       tradeabilityRejectReason = "net-ev-too-small";
-    } else if (adjustedFillQuality < (qmon.genome.entryPolicy?.minFillQuality ?? 0.45)) {
+    } else if (adjustedFillQuality < minimumFillQuality) {
       tradeabilityRejectReason = "fill-quality-too-low";
-    } else if (predictedSlippageBps > (qmon.genome.entryPolicy?.maxSlippageBps ?? qmon.genome.maxSlippageBps)) {
+    } else if (predictedSlippageBps > maximumSlippageBps) {
       tradeabilityRejectReason = "predicted-slippage-too-high";
     } else if (Math.abs(spreadSignalValue) * 100 > (qmon.genome.entryPolicy?.maxSpreadPenaltyBps ?? 40)) {
       tradeabilityRejectReason = "spread-penalty-too-high";
-    } else if (directionalAlphaResult.signalAgreementCount < (qmon.genome.entryPolicy?.minConfirmations ?? 2)) {
+    } else if (directionalAlphaResult.signalAgreementCount < minimumConfirmations) {
       tradeabilityRejectReason = "insufficient-confirmations";
     } else if (directionMultiplier * imbalanceSignalValue < -THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR) {
       tradeabilityRejectReason = "book-opposes-direction";
