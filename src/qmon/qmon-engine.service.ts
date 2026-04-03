@@ -1553,26 +1553,13 @@ export class QmonEngine {
       const normalizedSignalValue = this.getNormalizedSignalValue(signalValues, compiledSignalGene.signalId);
 
       if (normalizedSignalValue !== null) {
-        // Get correlation and filter invalid signals
-        const correlation = this.correlationService.getSignalCorrelation(compiledSignalGene.signalId);
-        const isValidCorrelation = this.correlationService.isSignalValid(compiledSignalGene.signalId);
-
-        // Skip signals with insufficient correlation data
-        if (correlation === null && !isValidCorrelation) {
-          continue;
-        }
-
+        // PAPER MODE: Use all signals without correlation filtering
+        // Correlation filtering only applies in REAL mode for champions
         validSignalCount += 1;
 
-        // Apply correlation weighting: genome weight × correlation magnitude
-        // Negative correlation inverts the signal direction
-        const correlationMultiplier = correlation !== null ? Math.abs(correlation) : 0.5;
-        const orientationMultiplier = correlation !== null && correlation < 0
-          ? -compiledSignalGene.orientationMultiplier
-          : compiledSignalGene.orientationMultiplier;
-
-        const effectiveWeight = compiledSignalGene.weight * correlationMultiplier;
-        const signedSignalValue = normalizedSignalValue * orientationMultiplier;
+        // No correlation multiplier in paper mode - use genome weights as-is
+        const effectiveWeight = compiledSignalGene.weight;
+        const signedSignalValue = normalizedSignalValue * compiledSignalGene.orientationMultiplier;
 
         if (signedSignalValue > 0.05) {
           positiveAgreementCount += 1;
@@ -1590,8 +1577,8 @@ export class QmonEngine {
       }
     }
 
-    // If insufficient valid signals, return neutral
-    if (validSignalCount < 3) {
+    // No minimum signal requirement in paper mode
+    // QMONs can trade even with limited signal data
       return {
         directionalAlpha: 0,
         predictiveAlpha: 0,
