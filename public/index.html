@@ -770,7 +770,12 @@
           <!-- Header -->
           <div class="qmon-head">
             <div class="qmon-head-id">
-              <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
+              <div style="display:flex; gap:4px; align-items:center;">
+                <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
+                <template x-if="isExploratoryQmon(qmon)">
+                  <span style="font-size:7px; padding:2px 5px; background:rgba(124,77,255,0.2); color:var(--accent); font-weight:700; border-radius:3px; text-transform:uppercase; letter-spacing:0.5px;">EXP</span>
+                </template>
+              </div>
               <div>
               <span class="qmon-id" x-text="qmon.id"></span>
               <span class="qmon-market" x-text="qmon.market"></span>
@@ -863,6 +868,19 @@
           Generation <span x-text="selectedQmon.generation"></span> •
           Age <span style="color:var(--accent); font-weight:600;" x-text="(selectedQmon.windowsLived ?? 0) + ' windows'"></span> •
           <span class="qmon-mode" :class="'mode-' + roleClass(selectedQmon)" x-text="roleLabel(selectedQmon)"></span>
+          <template x-if="isExploratoryQmon(selectedQmon)">
+            <span style="margin-left:8px; padding:2px 6px; background:rgba(124,77,255,0.15); color:var(--accent); font-size:9px; font-weight:700; border-radius:3px; text-transform:uppercase; letter-spacing:0.5px;">EXPLORATORY</span>
+          </template>
+        </div>
+
+        <!-- Parent IDs Section -->
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="selectedQmon.parentIds && selectedQmon.parentIds.length > 0">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">ANCESTRY</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <template x-for="parentId in selectedQmon.parentIds.slice(0, 2)" :key="parentId">
+              <span style="font-size:9px; padding:3px 8px; background:var(--bg-card); color:var(--text-secondary); border-radius:4px; font-family:monospace;" x-text="'Parent: ' + parentId.slice(0, 8)"></span>
+            </template>
+          </div>
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
@@ -926,6 +944,12 @@
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Fitness Score</span>
             <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="pnlClass(selectedQmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(selectedQmon.metrics.fitnessScore)"></span>
+          </div>
+          <div style="margin-top:6px; padding:6px; border-radius:4px; background:rgba(0,230,118,0.08); border:1px solid rgba(0,230,118,0.2);">
+            <div style="font-size:8px; color:var(--green-mid); font-weight:600; margin-bottom:2px;">SIMPLIFIED FITNESS (3 components)</div>
+            <div style="font-size:8px; color:var(--text-secondary);">
+              <span style="color:var(--green-mid);">Long PnL × 10</span> + <span style="color:var(--green-mid);">Median × 50</span> − <span style="color:var(--red-mid);">Drawdown × 20</span>
+            </div>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Promotion Score</span>
@@ -1100,6 +1124,10 @@
               <span style="color:var(--text-secondary);">Max Slippage</span>
               <span style="font-weight:600;" :class="costClass(selectedQmon.genome.entryPolicy?.maxSlippageBps)" x-text="formatNullableBps(selectedQmon.genome.entryPolicy?.maxSlippageBps)"></span>
             </div>
+            <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-secondary);">No Trigger Mode</span>
+              <span style="font-weight:600;" :style="selectedQmon.genome.entryPolicy?.allowNoTrigger ? 'color:var(--green-mid);' : 'color:var(--text-muted);'" x-text="selectedQmon.genome.entryPolicy?.allowNoTrigger ? 'ENABLED' : 'DISABLED'"></span>
+            </div>
           </div>
         </div>
 
@@ -1159,6 +1187,14 @@
                 <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.volatilityRegimeGenes[1] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Norm</span>
                 <span style="font-size:8px; padding:3px 8px; border-radius:3px;" :style="selectedQmon.genome.volatilityRegimeGenes[2] ? 'background:var(--green-faint);color:var(--green-mid);' : 'background:var(--bg-card);color:var(--text-muted);'">Low</span>
               </div>
+            </div>
+          </div>
+          <div style="margin-top:10px; padding:8px; border-radius:4px; background:rgba(124,77,255,0.08); border:1px solid rgba(124,77,255,0.2);">
+            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">REVISED GATE LOGIC</div>
+            <div style="font-size:8px; color:var(--text-secondary); line-height:1.3;">
+              • Regime gate: <span style="color:var(--text-primary);">OR logic</span> with 50% penalty when only one regime matches<br/>
+              • Time gate: <span style="color:var(--text-primary);">Always passes</span> with 30% penalty when segment disabled<br/>
+              • Trigger gate: <span style="color:var(--text-primary);">Can be disabled</span> with +$0.05 EV premium when allowNoTrigger enabled
             </div>
           </div>
         </div>
@@ -1270,6 +1306,19 @@
               </template>
             </tbody>
           </table>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">SIGNAL CORRELATION STATUS</div>
+          <div style="padding:8px; border-radius:4px; background:rgba(124,77,255,0.08); border:1px solid rgba(124,77,255,0.2);">
+            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">CORRELATION-BASED FILTERING</div>
+            <div style="font-size:8px; color:var(--text-secondary); line-height:1.3; margin-bottom:6px;">
+              Only signals with <span style="color:var(--text-primary);">|correlation| ≥ 0.2</span> and <span style="color:var(--text-primary);">p-value < 0.05</span> are used in directional alpha calculations.
+            </div>
+            <div style="font-size:8px; color:var(--text-muted);">
+              <em>Real-time correlation data available at /api/signal-correlations</em>
+            </div>
+          </div>
         </div>
 
         <div class="modal-section" style="border-bottom:none;">
@@ -1969,6 +2018,11 @@
         generationBadgeClass(generation) {
           const normalizedGeneration = Math.max(0, Number(generation || 0));
           return `gen-${Math.min(normalizedGeneration, 5)}`;
+        },
+
+        isExploratoryQmon(qmon) {
+          // A QMON is exploratory if it has generation=0 and no parents
+          return qmon.generation === 0 && (!qmon.parentIds || qmon.parentIds.length === 0);
         },
 
         roleClass(qmon) {

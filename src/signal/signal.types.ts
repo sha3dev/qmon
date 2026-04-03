@@ -95,3 +95,33 @@ export type AssetResult = {
 
 /** Structured signal result for the dashboard API endpoint */
 export type StructuredSignalResult = Record<string, AssetResult>;
+
+/**
+ * Signal correlation metrics for predictive validation
+ */
+export type SignalCorrelationMetrics = {
+  readonly signalId: string;
+  readonly correlation: number;
+  readonly pValue: number;
+  readonly sampleSize: number;
+  readonly lastUpdate: number;
+  readonly isValid: boolean;
+};
+
+/**
+ * Historical tracking for signal-outcome pairs
+ */
+export type SignalOutcomeSample = {
+  readonly signalValue: number;
+  readonly outcomeValue: number;
+  readonly timestamp: number;
+};
+
+/**
+ * Correlation history buffer per signal
+ */
+export type SignalCorrelationHistory = {
+  readonly signalId: string;
+  readonly samples: SignalOutcomeSample[];
+  readonly maxSamples: number;
+};

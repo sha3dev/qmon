@@ -5,15 +5,18 @@
 import config from "../config.ts";
 import { generateQmonId } from "./qmon-genome.service.ts";
 import type { QmonGenomeService } from "./qmon-genome.service.ts";
-import type { MarketKey, Qmon, QmonId, QmonMetrics, QmonPopulation, QmonPosition } from "./qmon.types.ts";
+import type { MarketKey, Qmon, QmonGenome, QmonId, QmonMetrics, QmonPopulation, QmonPosition } from "./qmon.types.ts";
 
 /**
  * @section consts
  */
 
 const MIN_PARENT_TRADES = 8;
-const PARENT_POOL_RATE = 0.2;
+const PARENT_POOL_RATE = 0.4;
+const RANDOM_EXPLORER_RATE = 0.1;
 const MIN_PARENT_POOL_SIZE = 8;
+const EXPLORATORY_INJECTION_WINDOW_INTERVAL = 50;
+const EXPLORATORY_INJECTION_SIZE = 20;
 
 type EvolutionReplacement = {
   readonly childQmonId: QmonId;
@@ -145,10 +148,24 @@ export class QmonEvolutionService {
     let parentPoolSize = eligibleParents.length;
 
     if (eligibleParents.length >= MIN_PARENT_POOL_SIZE) {
-      parentPoolSize = Math.min(eligibleParents.length, Math.max(MIN_PARENT_POOL_SIZE, Math.ceil(eligibleParents.length * PARENT_POOL_RATE)));
+      // Top 40% performers + 10% random explorers
+      const topCount = Math.max(MIN_PARENT_POOL_SIZE, Math.ceil(eligibleParents.length * PARENT_POOL_RATE));
+      const randomCount = Math.ceil(Math.min(eligibleParents.length * RANDOM_EXPLORER_RATE, 5));
+      parentPoolSize = Math.min(eligibleParents.length, topCount + randomCount);
     }
 
-    return eligibleParents.slice(0, parentPoolSize);
+    const parentPool = eligibleParents.slice(0, parentPoolSize);
+
+    // Add random explorers if there's room
+    if (parentPool.length < eligibleParents.length) {
+      const remainingCandidates = eligibleParents.slice(parentPool.length);
+      const randomExplorers = remainingCandidates
+        .sort(() => Math.random() - 0.5)
+        .slice(0, Math.min(5, eligibleParents.length - parentPool.length));
+      parentPool.push(...randomExplorers);
+    }
+
+    return parentPool;
   }
 
   private pickWeightedParent(parentPool: readonly Qmon[], excludedQmonId: QmonId | null): Qmon | null {
@@ -249,10 +266,14 @@ export class QmonEvolutionService {
     const createdAt = Date.now();
     const nextGeneration = Math.max(parentAQmon.generation, parentBQmon.generation) + 1;
 
+    // ADAPTIVE MUTATION RATE: Calculate diversity and adjust
+    const populationDiversity = this.calculateGeneticDiversity([parentAQmon, parentBQmon]);
+    const adaptiveMutationRate = this.calculateAdaptiveMutationRate(populationDiversity);
+
     return {
       id: generateQmonId(),
       market,
-      genome: this.genomeService.createOffspringGenome(parentAQmon.genome, parentBQmon.genome, config.QMON_EVOLUTION_MUTATION_RATE),
+      genome: this.genomeService.createOffspringGenome(parentAQmon.genome, parentBQmon.genome, adaptiveMutationRate),
       role: "candidate",
       lifecycle: "active",
       generation: nextGeneration,
@@ -274,11 +295,126 @@ export class QmonEvolutionService {
     };
   }
 
+  private createExploratoryQmon(market: MarketKey, hydrateNewbornQmon: HydrateNewbornQmon | null, currentWindowStartMs: number | null): Qmon {
+    const createdAt = Date.now();
+
+    // Create completely random genome (no parents)
+    const randomGenome = this.genomeService.createRandomGenome();
+
+    let exploratoryQmon: Qmon = {
+      id: generateQmonId(),
+      market,
+      genome: randomGenome,
+      role: "candidate",
+      lifecycle: "active",
+      generation: 0, // Exploratory QMONs start at generation 0
+      parentIds: [], // No parents
+      createdAt,
+      position: this.createEmptyPosition(),
+      pendingOrder: null,
+      metrics: this.createEmptyMetrics(createdAt),
+      decisionHistory: [],
+      windowTradeCount: 0,
+      windowsLived: 0,
+      paperWindowPnls: [],
+      paperWindowSlippageBps: [],
+      paperWindowBaselinePnl: null,
+      currentWindowStart: null,
+      currentWindowSlippageTotalBps: 0,
+      currentWindowSlippageFillCount: 0,
+      lastCloseTimestamp: null,
+    };
+
+    // Apply hydration if provided
+    exploratoryQmon = hydrateNewbornQmon === null ? exploratoryQmon : hydrateNewbornQmon(exploratoryQmon, currentWindowStartMs);
+
+    return exploratoryQmon;
+  }
+
+  /**
+   * Calculate genetic diversity from parent genomes.
+   * Returns 0-1, where 1 = maximum diversity.
+   */
+  private calculateGeneticDiversity(parents: readonly Qmon[]): number {
+    if (parents.length < 2) return 1;
+
+    let totalDiversity = 0;
+    let comparisons = 0;
+
+    for (let i = 0; i < parents.length; i++) {
+      for (let j = i + 1; j < parents.length; j++) {
+        const parentA = parents[i];
+        const parentB = parents[j];
+        if (parentA !== undefined && parentB !== undefined) {
+          const diversity = this.computeGenomeDifference(parentA.genome, parentB.genome);
+          totalDiversity += diversity;
+          comparisons += 1;
+        }
+      }
+    }
+
+    return comparisons > 0 ? totalDiversity / comparisons : 1;
+  }
+
+  /**
+   * Compute difference between two genomes (0 = identical, 1 = completely different).
+   */
+  private computeGenomeDifference(genomeA: QmonGenome, genomeB: QmonGenome): number {
+    let differences = 0;
+    let totalComparisons = 0;
+
+    // Compare signal genes
+    const signalsA = new Set(genomeA.predictiveSignalGenes.map((g: { signalId: string; orientation: string; weightTier: number }) => `${g.signalId}-${g.orientation}-${g.weightTier}`));
+    const signalsB = new Set(genomeB.predictiveSignalGenes.map((g: { signalId: string; orientation: string; weightTier: number }) => `${g.signalId}-${g.orientation}-${g.weightTier}`));
+    const signalUnion = new Set([...signalsA, ...signalsB]);
+    signalUnion.forEach((key) => {
+      totalComparisons += 1;
+      if (!signalsA.has(key) || !signalsB.has(key)) differences += 1;
+    });
+
+    // Compare trigger genes
+    const triggersA = new Set(genomeA.triggerGenes.filter((t: { isEnabled: boolean }) => t.isEnabled).map((t: { triggerId: string }) => t.triggerId));
+    const triggersB = new Set(genomeB.triggerGenes.filter((t: { isEnabled: boolean }) => t.isEnabled).map((t: { triggerId: string }) => t.triggerId));
+    const triggerUnion = new Set([...triggersA, ...triggersB]);
+    triggerUnion.forEach((key) => {
+      totalComparisons += 1;
+      if (!triggersA.has(key) || !triggersB.has(key)) differences += 1;
+    });
+
+    // Compare thresholds
+    if (Math.abs(genomeA.minScoreBuy - genomeB.minScoreBuy) > 0.1) differences += 1;
+    if (Math.abs(genomeA.minScoreSell - genomeB.minScoreSell) > 0.1) differences += 1;
+    totalComparisons += 2;
+
+    return totalComparisons > 0 ? differences / totalComparisons : 0;
+  }
+
+  /**
+   * Calculate adaptive mutation rate based on genetic diversity.
+   * Returns 5%-15% mutation rate (inverted: low diversity = high mutation).
+   */
+  private calculateAdaptiveMutationRate(diversity: number): number {
+    const MIN_MUTATION_RATE = 0.05;
+    const MAX_MUTATION_RATE = 0.15;
+    const DIVERSITY_THRESHOLD = 0.3;
+
+    // Low diversity → high mutation (15%)
+    // High diversity → low mutation (5%)
+    if (diversity < DIVERSITY_THRESHOLD) {
+      return MAX_MUTATION_RATE;
+    }
+    return MIN_MUTATION_RATE + (MAX_MUTATION_RATE - MIN_MUTATION_RATE) * ((diversity - DIVERSITY_THRESHOLD) / (1 - DIVERSITY_THRESHOLD));
+  }
+
   /**
    * @section public:methods
    */
 
-  public evolvePopulation(population: QmonPopulation, hydrateNewbornQmon: HydrateNewbornQmon | null): EvolutionResult {
+  public evolvePopulation(
+    population: QmonPopulation,
+    hydrateNewbornQmon: HydrateNewbornQmon | null,
+    evolutionWindowCount: number | null = null,
+  ): EvolutionResult {
     const activeChampionQmonId = population.activeChampionQmonId;
     const parentPool = this.buildParentPool(population.qmons);
     const protectedParentIds = new Set(parentPool.map((parentQmon) => parentQmon.id));
@@ -290,6 +426,7 @@ export class QmonEvolutionService {
     const qmonsById = new Map(population.qmons.map((qmon) => [qmon.id, qmon]));
     let highestChildGeneration: number | null = null;
 
+    // Standard evolution: replace weak QMONs with offspring
     for (let index = 0; index < replacementCount; index += 1) {
       const deadQmon = candidateDeaths[index];
       const parentAQmon = this.pickWeightedParent(parentPool, null);
@@ -308,6 +445,40 @@ export class QmonEvolutionService {
           replacementCount: index + 1,
         });
         highestChildGeneration = highestChildGeneration === null ? childQmon.generation : Math.max(highestChildGeneration, childQmon.generation);
+      }
+    }
+
+    // EXPLORATORY INJECTION: Every 50 windows, inject 20 completely random genomes
+    // This helps escape local optima and discover strategies outside predefined families
+    const shouldInjectExplorers =
+      evolutionWindowCount !== null && evolutionWindowCount % EXPLORATORY_INJECTION_WINDOW_INTERVAL === 0;
+
+    if (shouldInjectExplorers) {
+      const currentQmons = [...qmonsById.values()];
+      const sortedByWeakness = [...currentQmons].sort((leftQmon, rightQmon) =>
+        this.compareHistoricalWeakness(leftQmon, rightQmon),
+      );
+      const weakestCount = Math.min(EXPLORATORY_INJECTION_SIZE, sortedByWeakness.length);
+
+      // Replace worst performers with exploratory QMONs
+      for (let index = 0; index < weakestCount; index += 1) {
+        const weakQmon = sortedByWeakness[index];
+        if (weakQmon !== undefined) {
+          const exploratoryQmon = this.createExploratoryQmon(
+            population.market,
+            hydrateNewbornQmon,
+            population.seatLastWindowStartMs,
+          );
+          qmonsById.delete(weakQmon.id);
+          qmonsById.set(exploratoryQmon.id, exploratoryQmon);
+          replacements.push({
+            childQmonId: exploratoryQmon.id,
+            deadQmonId: weakQmon.id,
+            parentIds: [], // No parents for exploratory QMONs
+            generation: exploratoryQmon.generation,
+            replacementCount: replacementCount + index + 1,
+          });
+        }
       }
     }
 

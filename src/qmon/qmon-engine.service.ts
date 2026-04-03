@@ -8,7 +8,9 @@ import type { DirectionRegime, RegimeResult, VolatilityRegime } from "../regime/
 
 import config from "../config.ts";
 import type { SignalEngine } from "../signal/signal-engine.service.ts";
+import { SignalCorrelationService } from "../signal/signal-correlation.service.ts";
 import type { StructuredSignalResult } from "../signal/signal.types.ts";
+import { VolatilityService } from "../signal/volatility-service.service.ts";
 import { TriggerEngine } from "../trigger/trigger-engine.service.ts";
 import type { TriggerEvent } from "../trigger/trigger.types.ts";
 import { QmonChampionService } from "./qmon-champion.service.ts";
@@ -190,6 +192,8 @@ export class QmonEngine {
   private readonly replayHistoryService: QmonReplayHistoryService | null;
   private readonly hydrationService: QmonHydrationService | null;
   private readonly validationLogService: QmonValidationLogService | null;
+  private readonly correlationService: SignalCorrelationService;
+  private readonly volatilityService: VolatilityService;
   private readonly isEvolutionEnabled: boolean;
   private familyState: QmonFamilyState;
   private lastTriggers: TriggerEvent[];
@@ -226,6 +230,8 @@ export class QmonEngine {
     this.genomeService = QmonGenomeService.createDefault();
     this.evolutionService = new QmonEvolutionService(this.genomeService);
     this.executionService = new QmonExecutionService();
+    this.correlationService = new SignalCorrelationService(100);
+    this.volatilityService = new VolatilityService(100);
     this.isEvolutionEnabled = isEvolutionEnabled;
     this.validationLogService = validationLogService ?? null;
     this.snapshots = snapshots ?? [];
@@ -1251,68 +1257,79 @@ export class QmonEngine {
   /**
    * Check if a trigger gate passes (at least one enabled trigger fired).
    */
-  private checkTriggerGate(qmon: Qmon, firedTriggers: readonly string[]): GateResult {
+  private checkTriggerGate(qmon: Qmon, firedTriggers: readonly string[]): GateResult & { hasTrigger: boolean } {
     const compiledGenome = this.getCompiledGenome(qmon);
     const enabledTriggerIds = compiledGenome.enabledTriggerIds;
+    const allowNoTrigger = qmon.genome.entryPolicy?.allowNoTrigger ?? false;
 
-    // At least one enabled trigger must have fired
+    // Check if at least one enabled trigger has fired
     const hasEnabledTrigger = enabledTriggerIds.some((id) => firedTriggers.includes(id));
 
     if (hasEnabledTrigger) {
-      return { passed: true, reason: undefined as string | undefined };
+      return { passed: true, hasTrigger: true, reason: undefined as string | undefined };
     }
+
+    // If allowNoTrigger is enabled, pass gate but without trigger (higher EV threshold applied elsewhere)
+    if (allowNoTrigger) {
+      return { passed: true, hasTrigger: false, reason: undefined as string | undefined };
+    }
+
     return {
       passed: false,
+      hasTrigger: false,
       reason: `No enabled trigger fired. Enabled: [${enabledTriggerIds.join(", ")}]`,
     };
   }
 
   /**
    * Check if time gate passes (current segment is enabled).
+   * REVISED: Now always passes but applies 30% score penalty when time segment is not enabled.
+   * This allows more trading opportunities while still penalizing suboptimal timing.
    */
-  private checkTimeGate(qmon: Qmon, timeSegment: TimeSegment): GateResult {
+  private checkTimeGate(qmon: Qmon, timeSegment: TimeSegment): GateResult & { partialPass: boolean } {
     const segmentIndex = timeSegment === "early" ? 0 : timeSegment === "mid" ? 1 : 2;
     const enabled = qmon.genome.timeWindowGenes[segmentIndex];
 
     if (enabled) {
-      return { passed: true, reason: undefined as string | undefined };
+      return { passed: true, partialPass: false, reason: undefined as string | undefined };
     }
-    return {
-      passed: false,
-      reason: `Time segment '${timeSegment}' is not enabled`,
-    };
+
+    // Time segment not enabled: partial pass with 30% score penalty applied elsewhere
+    return { passed: true, partialPass: true, reason: undefined as string | undefined };
   }
 
   /**
    * Check if regime gate passes (current regimes are enabled).
+   * REVISED: Now uses OR logic with penalty - allows trade if at least one regime is enabled,
+   * but applies 50% score penalty when only one regime matches (partial pass).
    */
-  private checkRegimeGate(qmon: Qmon, directionRegime: DirectionRegime, volatilityRegime: VolatilityRegime): GateResult {
+  private checkRegimeGate(qmon: Qmon, directionRegime: DirectionRegime, volatilityRegime: VolatilityRegime): GateResult & { partialPass: boolean } {
     const directionIndex = directionRegime === "trending-up" ? 0 : directionRegime === "trending-down" ? 1 : 2;
     const volatilityIndex = volatilityRegime === "high" ? 0 : volatilityRegime === "normal" ? 1 : 2;
 
     const directionEnabled = qmon.genome.directionRegimeGenes[directionIndex];
     const volatilityEnabled = qmon.genome.volatilityRegimeGenes[volatilityIndex];
 
+    // Both disabled: complete block
     if (!directionEnabled && !volatilityEnabled) {
       return {
         passed: false,
+        partialPass: false,
         reason: `Neither direction '${directionRegime}' nor volatility '${volatilityRegime}' are enabled`,
       };
     }
-    if (!directionEnabled) {
+
+    // Only one enabled: partial pass (50% score penalty applied elsewhere)
+    if (!directionEnabled || !volatilityEnabled) {
       return {
-        passed: false,
-        reason: `Direction regime '${directionRegime}' is not enabled`,
-      };
-    }
-    if (!volatilityEnabled) {
-      return {
-        passed: false,
-        reason: `Volatility regime '${volatilityRegime}' is not enabled`,
+        passed: true,
+        partialPass: true,
+        reason: undefined as string | undefined,
       };
     }
 
-    return { passed: true, reason: undefined as string | undefined };
+    // Both enabled: full pass
+    return { passed: true, partialPass: false, reason: undefined as string | undefined };
   }
 
   /**
@@ -1526,6 +1543,7 @@ export class QmonEngine {
     let microstructureWeightSum = 0;
     let positiveAgreementCount = 0;
     let negativeAgreementCount = 0;
+    let validSignalCount = 0;
 
     for (const compiledSignalGene of compiledGenome.compiledSignalGenes) {
       if (compiledSignalGene.signalId === "spread") {
@@ -1535,7 +1553,26 @@ export class QmonEngine {
       const normalizedSignalValue = this.getNormalizedSignalValue(signalValues, compiledSignalGene.signalId);
 
       if (normalizedSignalValue !== null) {
-        const signedSignalValue = normalizedSignalValue * compiledSignalGene.orientationMultiplier;
+        // Get correlation and filter invalid signals
+        const correlation = this.correlationService.getSignalCorrelation(compiledSignalGene.signalId);
+        const isValidCorrelation = this.correlationService.isSignalValid(compiledSignalGene.signalId);
+
+        // Skip signals with insufficient correlation data
+        if (correlation === null && !isValidCorrelation) {
+          continue;
+        }
+
+        validSignalCount += 1;
+
+        // Apply correlation weighting: genome weight × correlation magnitude
+        // Negative correlation inverts the signal direction
+        const correlationMultiplier = correlation !== null ? Math.abs(correlation) : 0.5;
+        const orientationMultiplier = correlation !== null && correlation < 0
+          ? -compiledSignalGene.orientationMultiplier
+          : compiledSignalGene.orientationMultiplier;
+
+        const effectiveWeight = compiledSignalGene.weight * correlationMultiplier;
+        const signedSignalValue = normalizedSignalValue * orientationMultiplier;
 
         if (signedSignalValue > 0.05) {
           positiveAgreementCount += 1;
@@ -1544,13 +1581,24 @@ export class QmonEngine {
         }
 
         if (compiledSignalGene.signalGroup === "predictive") {
-          predictiveContribution += signedSignalValue * compiledSignalGene.weight;
-          predictiveWeightSum += compiledSignalGene.weight;
+          predictiveContribution += signedSignalValue * effectiveWeight;
+          predictiveWeightSum += effectiveWeight;
         } else {
-          microstructureContribution += signedSignalValue * compiledSignalGene.weight;
-          microstructureWeightSum += compiledSignalGene.weight;
+          microstructureContribution += signedSignalValue * effectiveWeight;
+          microstructureWeightSum += effectiveWeight;
         }
       }
+    }
+
+    // If insufficient valid signals, return neutral
+    if (validSignalCount < 3) {
+      return {
+        directionalAlpha: 0,
+        predictiveAlpha: 0,
+        microstructureAlpha: 0,
+        signalAgreementCount: 0,
+        dominantSignalGroup: "none",
+      };
     }
 
     const predictiveAlpha = predictiveWeightSum > 0 ? predictiveContribution / predictiveWeightSum : 0;
@@ -1609,6 +1657,7 @@ export class QmonEngine {
     const slippageCostUsd = baseShareCount === null || limitPrice === null ? 0 : (predictedSlippageBps / 10_000) * baseShareCount * limitPrice;
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
     const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getCompiledGenome(qmon).enabledTriggerIds.includes(triggerId));
+    const allowNoTrigger = qmon.genome.entryPolicy?.allowNoTrigger ?? false;
     const minimumEdgeBps = Math.max(qmon.genome.entryPolicy?.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS);
     const minimumNetEvUsd = Math.max(qmon.genome.entryPolicy?.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD);
     const minimumFillQuality = Math.max(qmon.genome.entryPolicy?.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
@@ -1617,7 +1666,9 @@ export class QmonEngine {
       qmon.genome.entryPolicy?.maxSlippageBps ?? qmon.genome.maxSlippageBps,
       config.QMON_MAX_ENTRY_SLIPPAGE_BPS,
     );
-    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : NO_TRIGGER_EV_PREMIUM_USD);
+    // Apply EV premium based on trigger presence and allowNoTrigger setting
+    const noTriggerPremium = allowNoTrigger ? 0.05 : NO_TRIGGER_EV_PREMIUM_USD;
+    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : noTriggerPremium);
     let tradeabilityRejectReason: string | null = null;
 
     if (estimatedEdgeBps < minimumEdgeBps) {
@@ -3496,22 +3547,7 @@ export class QmonEngine {
     }
 
     const timeGate = this.checkTimeGate(qmon, timeSegment);
-    if (!timeGate.passed) {
-      return {
-        qmonId: qmon.id,
-        action: "HOLD",
-        score: 0,
-        directionalAlpha: 0,
-        estimatedNetEvUsd: 0,
-        tradeabilityRejectReason: "time-gate-blocked",
-        gates: {
-          trigger: triggerGate.passed,
-          time: false,
-          regime: false,
-          threshold: false,
-        },
-      };
-    }
+    // Time gate now always passes, but may apply penalty later
 
     const regimeGate = this.checkRegimeGate(qmon, directionRegime, volatilityRegime);
     if (!regimeGate.passed) {
@@ -3541,11 +3577,23 @@ export class QmonEngine {
     const entryDecision = this.buildEntryDecision(qmon, signalValues, firedTriggerIds, bestExecutablePrice);
     const thresholdPassed = entryDecision.action !== "HOLD" && entryDecision.tradeabilityAssessment.shouldAllowEntry;
 
+    // Apply score penalties for partial gate passes
+    // Regime gate: 50% penalty when only one of direction/volatility enabled
+    // Time gate: 30% penalty when time segment is not enabled
+    // Penalties are cumulative: if both apply, total penalty is 65% (0.5 * 0.7 = 0.35)
+    let directionalAlpha = entryDecision.tradeabilityAssessment.directionalAlpha;
+    if (regimeGate.partialPass) {
+      directionalAlpha *= 0.5;
+    }
+    if (timeGate.partialPass) {
+      directionalAlpha *= 0.7;
+    }
+
     return {
       qmonId: qmon.id,
       action: thresholdPassed ? entryDecision.action : "HOLD",
-      score: entryDecision.tradeabilityAssessment.directionalAlpha,
-      directionalAlpha: entryDecision.tradeabilityAssessment.directionalAlpha,
+      score: directionalAlpha,
+      directionalAlpha,
       estimatedNetEvUsd: entryDecision.tradeabilityAssessment.estimatedNetEvUsd,
       tradeabilityRejectReason: thresholdPassed ? null : entryDecision.tradeabilityAssessment.tradeabilityRejectReason,
       tradeabilityAssessment: entryDecision.tradeabilityAssessment,
@@ -3609,5 +3657,13 @@ export class QmonEngine {
       averageEvaluateAllDurationMs,
       stateSnapshotVersion: this.stateSnapshotVersion,
     };
+  }
+
+  /**
+   * Get signal correlation metrics for all tracked signals.
+   * Used by the dashboard to display which signals have predictive power.
+   */
+  public getSignalCorrelations(): Readonly<Record<string, { correlation: number; isValid: boolean; sampleSize: number; lastUpdate: number }>> {
+    return this.correlationService.getAllCorrelationMetrics();
   }
 }

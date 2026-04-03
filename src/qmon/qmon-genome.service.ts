@@ -319,6 +319,7 @@ export class QmonGenomeService {
         0.2,
         (MIN_FILL_QUALITY_OPTIONS[(variantIndex + baseIndex) % MIN_FILL_QUALITY_OPTIONS.length] ?? 0.45) - (hasTriggerBias ? 0.05 : 0),
       ),
+      allowNoTrigger: false, // Default: triggers required. Can be enabled via mutation for slow accumulation strategies.
     };
 
     return entryPolicy;
@@ -387,6 +388,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 40,
         maxSlippageBps: 75,
         minFillQuality: 0.45,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "tight" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "alpha-flip" };
@@ -411,6 +413,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 30,
         maxSlippageBps: 50,
         minFillQuality: 0.5,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
@@ -433,6 +436,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 35,
         maxSlippageBps: 60,
         minFillQuality: 0.55,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "balanced" };
       exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "microstructure-failure" };
@@ -457,6 +461,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 25,
         maxSlippageBps: 40,
         minFillQuality: 0.5,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.5, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
@@ -481,6 +486,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 45,
         maxSlippageBps: 70,
         minFillQuality: 0.45,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "balanced" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "alpha-flip" };
@@ -506,6 +512,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 25,
         maxSlippageBps: 45,
         minFillQuality: 0.5,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
@@ -527,6 +534,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 30,
         maxSlippageBps: 55,
         minFillQuality: 0.55,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 2, cooldownProfile: "tight" };
       exitPolicy = { extremeStopLossPct: 0.12, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "microstructure-failure" };
@@ -552,6 +560,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 40,
         maxSlippageBps: 80,
         minFillQuality: 0.45,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 2, maxTradesPerWindow: 2, cooldownProfile: "tight" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "alpha-flip" };
@@ -576,6 +585,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 35,
         maxSlippageBps: 50,
         minFillQuality: 0.5,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
@@ -601,6 +611,7 @@ export class QmonGenomeService {
         maxSpreadPenaltyBps: 35,
         maxSlippageBps: 45,
         minFillQuality: 0.45,
+        allowNoTrigger: false,
       };
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "balanced" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
@@ -672,6 +683,7 @@ export class QmonGenomeService {
       maxSpreadPenaltyBps,
       maxSlippageBps,
       minFillQuality,
+      allowNoTrigger: false,
     };
 
     return entryPolicy;
@@ -995,6 +1007,8 @@ export class QmonGenomeService {
       maxSpreadPenaltyBps: this.pickRandom(SPREAD_PENALTY_OPTIONS),
       maxSlippageBps: Math.max(25, Math.min(config.MAX_MAX_SLIPPAGE_BPS, entryPolicy.maxSlippageBps + (this.randomBool(0.5) ? 25 : -25))),
       minFillQuality: this.pickRandom(MIN_FILL_QUALITY_OPTIONS),
+      // 5% chance to flip allowNoTrigger during mutation
+      allowNoTrigger: this.randomBool(0.05) ? !entryPolicy.allowNoTrigger : entryPolicy.allowNoTrigger,
     };
 
     return mutatedEntryPolicy;
@@ -1231,6 +1245,31 @@ export class QmonGenomeService {
     }
 
     return initialPopulation;
+  }
+
+  /**
+   * Create a completely random genome from one of the 10 predefined families.
+   * Used for exploratory QMONs to escape local optima and discover new strategies.
+   */
+  public createRandomGenome(): QmonGenome {
+    const families: readonly QmonGenomeFamily[] = [
+      "momentum-following",
+      "mispricing-reversion",
+      "order-book-confirmation",
+      "late-window-dislocation",
+      "cross-asset-lead-lag",
+      "liquidity-vacuum-reversion",
+      "microprice-pressure-scalper",
+      "early-breakout-surge",
+      "efficiency-anomaly-reversion",
+      "time-decay-consensus",
+    ];
+
+    const randomFamily = families[Math.floor(Math.random() * families.length)];
+    if (randomFamily === undefined) {
+      throw new Error("No genome families available");
+    }
+    return this.createGenomeFamily(randomFamily);
   }
 
   public createOffspringGenome(parentAGenome: QmonGenome, parentBGenome: QmonGenome, mutationRate: number): QmonGenome {

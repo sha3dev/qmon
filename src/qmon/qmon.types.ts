@@ -59,6 +59,7 @@ export type EntryPolicy = {
   readonly maxSpreadPenaltyBps: number;
   readonly maxSlippageBps: number;
   readonly minFillQuality: number;
+  readonly allowNoTrigger: boolean; // If true, allows trades without trigger but with higher EV threshold
 };
 
 export type ExecutionSizeTier = 1 | 2 | 3;

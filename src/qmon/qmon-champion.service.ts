@@ -11,27 +11,14 @@ import type { Qmon, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSli
 const PAPER_CHAMPION_HISTORY_WINDOW = 5;
 const PAPER_CHAMPION_RISK_HISTORY_WINDOW = 10;
 const PAPER_CHAMPION_LONG_HISTORY_WINDOW = 30;
+const PAPER_CHAMPION_MEDIUM_HISTORY_WINDOW = 15;
 const CHAMPION_MIN_FITNESS_SCORE = 150;
 const CHAMPION_MIN_WIN_RATE = 0.55;
 const CHAMPION_MAX_NEGATIVE_WINDOW_RATE = 0.4;
-const CHAMPION_MAX_FEE_RATIO = 0.65;
 const CHAMPION_MAX_DRAWDOWN = 5;
 const CHAMPION_MIN_WINDOW_MEDIAN_PNL = 0.5;
-const CHAMPION_MIN_REGIME_COVERAGE = 2;
-const CHAMPION_RECENT_MEDIAN_WEIGHT = 260;
-const CHAMPION_RECENT_SUM_WEIGHT = 120;
 const CHAMPION_LONG_SUM_WEIGHT = 24;
-const CHAMPION_NET_PNL_PER_TRADE_WEIGHT = 180;
-const CHAMPION_REGIME_COVERAGE_WEIGHT = 40;
-const CHAMPION_DISCIPLINE_WEIGHT = 20;
-const CHAMPION_FEE_RATIO_PENALTY = 320;
-const CHAMPION_SLIPPAGE_RATIO_PENALTY = 180;
-const CHAMPION_AVG_SLIPPAGE_PENALTY = 8;
-const CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY = 220;
-const CHAMPION_WORST_WINDOW_PENALTY = 80;
-const CHAMPION_DRAWDOWN_PENALTY = 55;
-const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
-const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
+const CHAMPION_RECENT_MEDIAN_WEIGHT = 50;
 
 type ChampionInputs = {
   readonly championScore: number | null;
@@ -111,6 +98,11 @@ export class QmonChampionService {
     const paperLongWindowPnlSum = paperWindowPnls.reduce((totalPnl, paperWindowPnl) => totalPnl + paperWindowPnl, 0);
 
     return paperLongWindowPnlSum;
+  }
+
+  private calculateMediumWindowPnlSum(paperWindowPnls: readonly number[]): number {
+    const mediumWindowPnls = paperWindowPnls.slice(-PAPER_CHAMPION_MEDIUM_HISTORY_WINDOW);
+    return mediumWindowPnls.reduce((totalPnl, paperWindowPnl) => totalPnl + paperWindowPnl, 0);
   }
 
   private calculateNegativeWindowRateLast10(paperWindowPnls: readonly number[]): number {
@@ -196,13 +188,6 @@ export class QmonChampionService {
     return noTradeDisciplineScore;
   }
 
-  private calculateEstimatedEvBonus(qmon: Qmon): number {
-    const totalEstimatedNetEvUsd = qmon.metrics.totalEstimatedNetEvUsd ?? 0;
-    const estimatedEvBonus = Math.min(Math.max(totalEstimatedNetEvUsd, 0) * CHAMPION_ESTIMATED_EV_BONUS_WEIGHT, CHAMPION_ESTIMATED_EV_BONUS_CAP);
-
-    return estimatedEvBonus;
-  }
-
   private hasConsistentTradeState(qmon: Qmon): boolean {
     const hasOpenPosition = qmon.position.action !== null;
     const hasPositionFields = qmon.position.enteredAt !== null || qmon.position.entryPrice !== null || qmon.position.shareCount !== null;
@@ -248,20 +233,14 @@ export class QmonChampionService {
     const triggerBreakdown = this.buildTriggerBreakdown(qmon);
     const maxDrawdown = this.calculateMaxDrawdown(qmon);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
-    const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
-    const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
-    const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
-    const frictionPenalty =
-      feeRatio * CHAMPION_FEE_RATIO_PENALTY + slippageRatio * CHAMPION_SLIPPAGE_RATIO_PENALTY + recentAvgSlippageBps / CHAMPION_AVG_SLIPPAGE_PENALTY;
-    const instabilityPenalty =
-      negativeWindowRateLast10 * CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY +
-      Math.max(0, -(worstWindowPnlLast10 ?? 0)) * CHAMPION_WORST_WINDOW_PENALTY +
-      maxDrawdown * CHAMPION_DRAWDOWN_PENALTY;
-    const consistencyBonus =
-      Math.max(0, (paperWindowMedianPnl ?? 0) * CHAMPION_RECENT_MEDIAN_WEIGHT) +
-      Math.max(0, paperWindowPnlSum * CHAMPION_RECENT_SUM_WEIGHT) +
-      Math.max(0, netPnlPerTrade * CHAMPION_NET_PNL_PER_TRADE_WEIGHT);
-    const fitnessScore = qmon.metrics.totalPnl + estimatedEvBonus + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
+
+    // SIMPLIFIED FITNESS: 3 components instead of 12
+    // Focus on long-term profitability, median performance, and drawdown control
+    const fitnessScore =
+      (paperLongWindowPnlSum * 10) +      // Long-term profitability (weight: 10)
+      Math.max(0, (paperWindowMedianPnl ?? 0) * 50) -  // Median performance (weight: 50)
+      (maxDrawdown * 20);                   // Drawdown penalty (weight: -20)
+
     const championEligibilityReasons: string[] = [];
 
     if (qmon.lifecycle !== "active") {
@@ -294,15 +273,20 @@ export class QmonChampionService {
     if (negativeWindowRateLast10 > CHAMPION_MAX_NEGATIVE_WINDOW_RATE) {
       championEligibilityReasons.push("high-negative-window-rate");
     }
-    if (feeRatio > CHAMPION_MAX_FEE_RATIO) {
-      championEligibilityReasons.push("high-fee-ratio");
-    }
     if (maxDrawdown > CHAMPION_MAX_DRAWDOWN) {
       championEligibilityReasons.push("high-drawdown");
     }
-    if (positiveRegimeCount < CHAMPION_MIN_REGIME_COVERAGE && regimeBreakdown.length >= CHAMPION_MIN_REGIME_COVERAGE) {
-      championEligibilityReasons.push("weak-regime-coverage");
+
+    // OUT-OF-SAMPLE VALIDATION GATE: Must pass 2 of 3 time periods
+    const recentPositive = paperWindowPnlSum > 0;
+    const mediumPositive = this.calculateMediumWindowPnlSum(qmon.paperWindowPnls) > 0;
+    const longPositive = paperLongWindowPnlSum > 0;
+    const positivePeriodCount = [recentPositive, mediumPositive, longPositive].filter(Boolean).length;
+
+    if (positivePeriodCount < 2) {
+      championEligibilityReasons.push("fails-out-of-sample-validation");
     }
+
     if (!this.hasConsistentTradeState(qmon)) {
       championEligibilityReasons.push("inconsistent-state");
     }

@@ -568,6 +568,14 @@ export class HttpServerService {
       return context.json(qmon, 200);
     });
 
+    app.get("/api/signal-correlations", (context) => {
+      if (!this.qmonEngine) {
+        return context.json({ error: "QMON engine not initialized" }, 503);
+      }
+      const correlations = this.qmonEngine.getSignalCorrelations();
+      return context.json(correlations, 200, { "Content-Type": "application/json" });
+    });
+
     app.get("/signals.html", (context) => {
       const signalsHtml = this.readSignalsHtml();
       if (signalsHtml === null) {

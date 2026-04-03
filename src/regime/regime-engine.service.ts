@@ -9,23 +9,26 @@ import type { DirectionRegime, RegimeEvent, RegimeResult, RegimeState, Volatilit
  * @section consts
  */
 
-/** Momentum threshold above which trend is considered up. */
-const DIRECTION_UP_THRESHOLD = 0.3;
+/** Default percentile thresholds for regime classification. */
+const DIRECTION_UP_PERCENTILE = 0.7;
+const DIRECTION_DOWN_PERCENTILE = 0.3;
+const VOLATILITY_HIGH_PERCENTILE = 0.7;
+const VOLATILITY_LOW_PERCENTILE = 0.3;
 
-/** Momentum threshold below which trend is considered down. */
-const DIRECTION_DOWN_THRESHOLD = -0.3;
-
-/** Volatility ratio threshold for high regime. */
-const VOLATILITY_HIGH_THRESHOLD = 0.4;
-
-/** Volatility ratio threshold for low regime. */
-const VOLATILITY_LOW_THRESHOLD = -0.4;
+/** Minimum history size for percentile calculation. */
+const MIN_HISTORY_SIZE = 20;
+const DEFAULT_MAX_HISTORY_SIZE = 100;
 
 /** Horizon weights for momentum averaging (shorter = more weight). */
 const HORIZON_WEIGHTS: Record<string, number> = {
   "30s": 1.0,
   "2m": 0.7,
   "5m": 0.4,
+};
+
+type SignalHistory = {
+  readonly values: number[];
+  readonly maxSize: number;
 };
 
 /**
@@ -39,12 +42,20 @@ export class RegimeEngine {
   /** Previous regime states for change detection. */
   private previousStates: RegimeResult;
 
+  /** Historical signal values for percentile calculation. */
+  private momentumHistory: Map<string, SignalHistory>;
+  private volatilityHistory: Map<string, SignalHistory>;
+  private readonly maxHistorySize: number;
+
   /**
    * @section constructor
    */
 
-  public constructor() {
+  public constructor(maxHistorySize = DEFAULT_MAX_HISTORY_SIZE) {
     this.previousStates = {};
+    this.momentumHistory = new Map();
+    this.volatilityHistory = new Map();
+    this.maxHistorySize = maxHistorySize;
   }
 
   /**
@@ -52,12 +63,44 @@ export class RegimeEngine {
    */
 
   public static createDefault(): RegimeEngine {
-    return new RegimeEngine();
+    return new RegimeEngine(DEFAULT_MAX_HISTORY_SIZE);
   }
 
   /**
    * @section private:methods
    */
+
+  /**
+   * Update history buffer with new value.
+   */
+  private updateHistory(history: Map<string, SignalHistory>, key: string, value: number): void {
+    let signalHistory = history.get(key);
+
+    if (signalHistory === undefined) {
+      signalHistory = { values: [], maxSize: this.maxHistorySize };
+      history.set(key, signalHistory);
+    }
+
+    // Add new value
+    signalHistory.values.push(value);
+
+    // Trim to max size
+    if (signalHistory.values.length > signalHistory.maxSize) {
+      signalHistory.values.shift();
+    }
+  }
+
+  /**
+   * Calculate percentile of value within history.
+   */
+  private calculatePercentile(value: number, history: SignalHistory | null): number {
+    if (history === null || history.values.length < MIN_HISTORY_SIZE) {
+      return 0.5; // Default to neutral if insufficient history
+    }
+
+    const rank = history.values.filter((v) => v <= value).length;
+    return (rank - 1) / (history.values.length - 1);
+  }
 
   /**
    * Compute weighted average of horizon signal values.
@@ -79,49 +122,63 @@ export class RegimeEngine {
   }
 
   /**
-   * Classify direction regime based on momentum signal.
+   * Classify direction regime based on momentum percentile.
+   * Uses adaptive percentile thresholds instead of fixed values.
    */
-  private classifyDirection(momentum: HorizonSignalValues): { regime: DirectionRegime; strength: number } {
+  private classifyDirection(asset: string, momentum: HorizonSignalValues): { regime: DirectionRegime; strength: number } {
     const avgMomentum = this.computeHorizonAverage(momentum);
 
     if (avgMomentum === null) {
       return { regime: "flat", strength: 0 };
     }
 
-    // Strength is the distance from the nearest threshold, normalized to [0, 1]
-    if (avgMomentum >= DIRECTION_UP_THRESHOLD) {
-      const strength = Math.min(1, (avgMomentum - DIRECTION_UP_THRESHOLD) / (1 - DIRECTION_UP_THRESHOLD) + 0.5);
-      return { regime: "trending-up", strength };
+    // Update history and get percentile
+    this.updateHistory(this.momentumHistory, asset, avgMomentum);
+    const history = this.momentumHistory.get(asset) ?? null;
+    const percentile = this.calculatePercentile(avgMomentum, history);
+
+    // Classify using percentiles
+    if (percentile >= DIRECTION_UP_PERCENTILE) {
+      const strength = (percentile - DIRECTION_UP_PERCENTILE) / (1 - DIRECTION_UP_PERCENTILE);
+      return { regime: "trending-up", strength: Math.min(1, strength + 0.5) };
     }
-    if (avgMomentum <= DIRECTION_DOWN_THRESHOLD) {
-      const strength = Math.min(1, (DIRECTION_DOWN_THRESHOLD - avgMomentum) / (1 + DIRECTION_DOWN_THRESHOLD) + 0.5);
-      return { regime: "trending-down", strength };
+    if (percentile <= DIRECTION_DOWN_PERCENTILE) {
+      const strength = (DIRECTION_DOWN_PERCENTILE - percentile) / DIRECTION_DOWN_PERCENTILE;
+      return { regime: "trending-down", strength: Math.min(1, strength + 0.5) };
     }
 
-    // Flat regime - strength is higher when closer to zero
-    const strength = 1 - Math.abs(avgMomentum) / Math.max(Math.abs(DIRECTION_UP_THRESHOLD), Math.abs(DIRECTION_DOWN_THRESHOLD));
+    // Flat regime - strength based on distance from nearest threshold
+    const distanceFromNeutral = Math.abs(percentile - 0.5) * 2;
+    const strength = 1 - distanceFromNeutral;
     return { regime: "flat", strength: Math.max(0, strength) };
   }
 
   /**
-   * Classify volatility regime based on volatility regime signal.
+   * Classify volatility regime based on volatility percentile.
+   * Uses adaptive percentile thresholds instead of fixed values.
    */
-  private classifyVolatility(volRegime: number | null): { regime: VolatilityRegime; level: number } {
+  private classifyVolatility(asset: string, volRegime: number | null): { regime: VolatilityRegime; level: number } {
     if (volRegime === null) {
       return { regime: "normal", level: 0.5 };
     }
 
-    // Map [-1, 1] to [0, 1] for level
-    const level = (volRegime + 1) / 2;
+    // Map [-1, 1] to [0, 1] for level calculation
+    const normalizedVol = (volRegime + 1) / 2;
 
-    if (volRegime >= VOLATILITY_HIGH_THRESHOLD) {
-      return { regime: "high", level };
+    // Update history and get percentile
+    this.updateHistory(this.volatilityHistory, asset, normalizedVol);
+    const history = this.volatilityHistory.get(asset) ?? null;
+    const percentile = this.calculatePercentile(normalizedVol, history);
+
+    // Classify using percentiles
+    if (percentile >= VOLATILITY_HIGH_PERCENTILE) {
+      return { regime: "high", level: percentile };
     }
-    if (volRegime <= VOLATILITY_LOW_THRESHOLD) {
-      return { regime: "low", level };
+    if (percentile <= VOLATILITY_LOW_PERCENTILE) {
+      return { regime: "low", level: percentile };
     }
 
-    return { regime: "normal", level };
+    return { regime: "normal", level: percentile };
   }
 
   /**
@@ -188,11 +245,11 @@ export class RegimeEngine {
     for (const [asset, assetResult] of Object.entries(current)) {
       const signals: AssetSignals = assetResult.signals;
 
-      // Classify direction regime from momentum
-      const { regime: direction, strength: directionStrength } = this.classifyDirection(signals.momentum);
+      // Classify direction regime from momentum using percentiles
+      const { regime: direction, strength: directionStrength } = this.classifyDirection(asset, signals.momentum);
 
-      // Classify volatility regime from volatilityRegime signal
-      const { regime: volatility, level: volatilityLevel } = this.classifyVolatility(signals.volatilityRegime);
+      // Classify volatility regime from volatilityRegime signal using percentiles
+      const { regime: volatility, level: volatilityLevel } = this.classifyVolatility(asset, signals.volatilityRegime);
 
       const state: RegimeState = {
         direction,
