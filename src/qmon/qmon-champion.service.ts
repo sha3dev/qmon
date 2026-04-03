@@ -75,6 +75,12 @@ export class QmonChampionService {
     return recentPaperWindowPnls;
   }
 
+  private getRecentActiveChampionWindowPnls(paperWindowPnls: readonly number[]): readonly number[] {
+    const recentActivePaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls).filter((paperWindowPnl) => paperWindowPnl !== 0);
+
+    return recentActivePaperWindowPnls;
+  }
+
   private getRecentChampionWindowSlippage(paperWindowSlippageBps: readonly number[]): readonly number[] {
     const recentPaperWindowSlippageBps = paperWindowSlippageBps.slice(-PAPER_CHAMPION_HISTORY_WINDOW);
 
@@ -82,7 +88,7 @@ export class QmonChampionService {
   }
 
   private calculatePaperWindowMedianPnl(paperWindowPnls: readonly number[]): number | null {
-    const recentPaperWindowPnls = this.getRecentChampionWindowPnls(paperWindowPnls);
+    const recentPaperWindowPnls = this.getRecentActiveChampionWindowPnls(paperWindowPnls);
     let paperWindowMedianPnl: number | null = null;
 
     if (recentPaperWindowPnls.length > 0) {

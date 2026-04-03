@@ -174,7 +174,7 @@ test("QmonChampionService uses persisted drawdown and remains evaluable after de
   assert.equal(refreshedQmon.metrics.isChampionEligible, true);
 });
 
-test("QmonChampionService counts zero-trade windows in champion median checks", () => {
+test("QmonChampionService ignores zero-trade windows in champion median checks", () => {
   const championService = new QmonChampionService();
   const qmon = createChampionCandidate("SPARSE", 0.7, 0.2);
   const refreshedQmon = championService.refreshMetrics({
@@ -182,7 +182,7 @@ test("QmonChampionService counts zero-trade windows in champion median checks", 
     paperWindowPnls: [0, 0, 0.2, 0.3, 0.4, 0.5],
   });
 
-  assert.equal(refreshedQmon.metrics.paperWindowMedianPnl, 0.3);
+  assert.equal(refreshedQmon.metrics.paperWindowMedianPnl, 0.35);
   assert.equal(refreshedQmon.metrics.isChampionEligible, false);
   assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("non-positive-median"), true);
 });

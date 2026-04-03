@@ -116,14 +116,14 @@ test("QmonGenomeService initial population preserves coherent strategic families
 
   const momentumFamily = families.get("momentum-shift|strong-momentum") ?? [];
   const reversionFamily = families.get("mispricing|reversion-extreme") ?? [];
-  const orderBookFamily = families.get("book-pressure|liquidity-shift") ?? [];
-  const lateWindowFamily = families.get("extreme-distance|time-decay") ?? [];
+  const orderBookFamily = families.get("breakout|consensus-flip") ?? [];
+  const lateWindowFamily = families.get("extreme-distance|mispricing") ?? [];
   const crossAssetFamily = families.get("consensus-flip|strong-momentum") ?? [];
   const liquidityVacuumFamily = families.get("liquidity-shift|reversion-extreme") ?? [];
-  const micropriceScalperFamily = families.get("book-pressure|strong-imbalance") ?? [];
+  const micropriceScalperFamily = families.get("acceleration-spike|consensus-flip") ?? [];
   const breakoutFamily = families.get("acceleration-spike|breakout") ?? [];
   const efficiencyFamily = families.get("efficiency-anomaly|mispricing") ?? [];
-  const timeDecayFamily = families.get("consensus-flip|time-decay") ?? [];
+  const timeDecayFamily = families.get("consensus-flip|extreme-distance") ?? [];
 
   assert.equal(momentumFamily.length >= 16, true);
   assert.equal(reversionFamily.length >= 16, true);
@@ -159,9 +159,9 @@ test("QmonGenomeService initial population preserves coherent strategic families
   assert.equal(
     orderBookFamily.every(
       (genome) =>
-        hasMicrostructureSignal(genome, "imbalance", "aligned") &&
         hasMicrostructureSignal(genome, "microprice", "aligned") &&
         hasMicrostructureSignal(genome, "bookDepth", "aligned") &&
+        hasPredictiveSignal(genome, "velocity", "aligned") &&
         genome.entryPolicy.minConfirmations === 3,
     ),
     true,

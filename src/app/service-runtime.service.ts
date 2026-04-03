@@ -20,10 +20,12 @@ import {
   QmonLiveExecutionService,
   QmonLiveStatePersistenceService,
   QmonPersistenceService,
+  type QmonPopulation,
   QmonValidationLogService,
 } from "../qmon/index.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
-import type { RuntimeExecutionStatus } from "./app-runtime.types.ts";
+import type { StructuredSignalResult } from "../signal/signal.types.ts";
+import type { ExecutionMode, RuntimeExecutionStatus } from "./app-runtime.types.ts";
 
 /**
  * @section consts
@@ -47,9 +49,11 @@ export class ServiceRuntime {
   private readonly qmonPersistence: QmonPersistenceService;
   private readonly signalEngine: SignalEngine;
   private readonly qmonLiveExecutionService: QmonLiveExecutionService | null;
+  private readonly runtimeExecutionModeState: { mode: ExecutionMode };
   private readonly buffer: Snapshot[];
   private lastPersistAt: number;
   private snapshotQueue: Promise<void>;
+  private isRealEmergencyHaltActive: boolean;
 
   /**
    * @section constructor
@@ -62,6 +66,7 @@ export class ServiceRuntime {
     qmonPersistence: QmonPersistenceService,
     signalEngine: SignalEngine,
     qmonLiveExecutionService: QmonLiveExecutionService | null = null,
+    runtimeExecutionModeState: { mode: ExecutionMode } = { mode: config.QMON_EXECUTION_MODE },
   ) {
     this.httpServerService = httpServerService;
     this.snapshotService = snapshotService;
@@ -69,9 +74,11 @@ export class ServiceRuntime {
     this.qmonPersistence = qmonPersistence;
     this.signalEngine = signalEngine;
     this.qmonLiveExecutionService = qmonLiveExecutionService;
+    this.runtimeExecutionModeState = runtimeExecutionModeState;
     this.buffer = [];
     this.lastPersistAt = 0;
     this.snapshotQueue = Promise.resolve();
+    this.isRealEmergencyHaltActive = false;
   }
 
   /**
@@ -173,6 +180,9 @@ export class ServiceRuntime {
     }
 
     // Create HTTP server service with QMON engine
+    const runtimeExecutionModeState: { mode: ExecutionMode } = {
+      mode: config.QMON_EXECUTION_MODE,
+    };
     const serviceRuntimeStatusProvider = (): RuntimeExecutionStatus => {
       const familyState = qmonEngine.getFamilyState();
       const allMarkets = familyState.populations.map((population) => population.market);
@@ -202,7 +212,7 @@ export class ServiceRuntime {
         })),
       };
       const runtimeExecutionStatus =
-        qmonLiveExecutionService !== null
+        qmonLiveExecutionService !== null && runtimeExecutionModeState.mode === "real"
           ? qmonLiveExecutionService.getStatus(familyState.populations)
           : paperRuntimeExecutionStatus;
 
@@ -210,7 +220,15 @@ export class ServiceRuntime {
     };
     const httpServerService = HttpServerService.createDefault(qmonEngine, signalEngine, qmonValidationLogService, serviceRuntimeStatusProvider);
 
-    return new ServiceRuntime(httpServerService, snapshotService, qmonEngine, qmonPersistence, signalEngine, qmonLiveExecutionService);
+    return new ServiceRuntime(
+      httpServerService,
+      snapshotService,
+      qmonEngine,
+      qmonPersistence,
+      signalEngine,
+      qmonLiveExecutionService,
+      runtimeExecutionModeState,
+    );
   }
 
   /**
@@ -254,13 +272,16 @@ export class ServiceRuntime {
 
     if (lastStructuredSignals) {
       this.qmonEngine.evaluateAll(lastStructuredSignals, lastRegimes, this.buffer, {
-        executionMode: config.QMON_EXECUTION_MODE,
+        executionMode: this.runtimeExecutionModeState.mode,
+        shouldBlockEntries: this.isRealEmergencyHaltActive,
       });
 
-      if (this.qmonLiveExecutionService !== null) {
+      if (this.qmonLiveExecutionService !== null && this.runtimeExecutionModeState.mode === "real") {
         this.qmonLiveExecutionService.queueSync(this.qmonEngine, lastStructuredSignals);
         await this.qmonLiveExecutionService.flush();
       }
+
+      this.applyRealEmergencyHalt(lastStructuredSignals);
     }
 
     await this.persistFamilyState(shouldPersist);
@@ -281,6 +302,82 @@ export class ServiceRuntime {
       } else {
         logger.error("failed to persist QMON state");
       }
+    }
+  }
+
+  /** Compute one population's real session PnL including the currently open seat mark when available. */
+  private getPopulationRealSessionPnl(population: QmonPopulation, latestStructuredSignals: StructuredSignalResult): number {
+    const seatAction = population.seatPosition.action;
+    const seatEntryPrice = population.seatPosition.entryPrice;
+    const seatShareCount = population.seatPosition.shareCount;
+    const [asset, window] = population.market.split("-");
+    const windowSignals = asset !== undefined && window !== undefined ? (latestStructuredSignals[asset]?.windows?.[window] ?? null) : null;
+    let seatOpenPnl = 0;
+
+    if (seatAction !== null && seatEntryPrice !== null && seatShareCount !== null) {
+      const seatMarkPrice = seatAction === "BUY_UP" ? (windowSignals?.prices?.upPrice ?? null) : (windowSignals?.prices?.downPrice ?? null);
+
+      if (seatMarkPrice !== null) {
+        seatOpenPnl = seatShareCount * (seatMarkPrice - seatEntryPrice);
+      }
+    }
+
+    return population.marketConsolidatedPnl + seatOpenPnl;
+  }
+
+  /** Compute total real session PnL across every market seat. */
+  private getRealSessionPnl(latestStructuredSignals: StructuredSignalResult): number {
+    let realSessionPnl = 0;
+
+    for (const population of this.qmonEngine.getFamilyState().populations) {
+      realSessionPnl += this.getPopulationRealSessionPnl(population, latestStructuredSignals);
+    }
+
+    return realSessionPnl;
+  }
+
+  /** Check whether any real market still has an open venue position or in-flight live order. */
+  private hasActiveRealRisk(): boolean {
+    let hasActiveRisk = false;
+
+    for (const population of this.qmonEngine.getFamilyState().populations) {
+      const executionRuntime = population.executionRuntime ?? null;
+
+      if (
+        population.seatPosition.action !== null ||
+        population.seatPendingOrder !== null ||
+        executionRuntime?.pendingIntent !== null ||
+        executionRuntime?.orderId !== null ||
+        (executionRuntime?.pendingVenueOrders.length ?? 0) > 0 ||
+        executionRuntime?.confirmedVenueSeat !== null
+      ) {
+        hasActiveRisk = true;
+      }
+    }
+
+    return hasActiveRisk;
+  }
+
+  /** Trip the real emergency breaker once session loss breaches the configured max drawdown. */
+  private applyRealEmergencyHalt(latestStructuredSignals: StructuredSignalResult): void {
+    const realSessionPnl = this.getRealSessionPnl(latestStructuredSignals);
+    const maxSessionLossUsd = config.QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD;
+    const shouldTriggerEmergencyHalt =
+      this.runtimeExecutionModeState.mode === "real" &&
+      !this.isRealEmergencyHaltActive &&
+      realSessionPnl <= -maxSessionLossUsd;
+
+    if (shouldTriggerEmergencyHalt) {
+      this.isRealEmergencyHaltActive = true;
+      logger.error(
+        `QMON real emergency halt triggered at sessionPnL=${realSessionPnl.toFixed(4)} maxLoss=${maxSessionLossUsd.toFixed(4)}; blocking new live entries`,
+      );
+    }
+
+    if (this.isRealEmergencyHaltActive && this.runtimeExecutionModeState.mode === "real" && !this.hasActiveRealRisk()) {
+      this.runtimeExecutionModeState.mode = "paper";
+      this.qmonEngine.applyExecutionRoutes("paper", Date.now());
+      logger.error("QMON real emergency halt fully disarmed live routing after flattening all seats; runtime switched to paper mode");
     }
   }
 

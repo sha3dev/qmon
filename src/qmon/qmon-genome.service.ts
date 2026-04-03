@@ -122,17 +122,30 @@ type QmonGenomeFamily =
   | "efficiency-anomaly-reversion"
   | "time-decay-consensus";
 
+const INITIAL_FAMILY_PRIMARY_TRIGGERS: Record<QmonGenomeFamily, string> = {
+  "momentum-following": "momentum-shift",
+  "mispricing-reversion": "mispricing",
+  "order-book-confirmation": "consensus-flip",
+  "late-window-dislocation": "extreme-distance",
+  "cross-asset-lead-lag": "strong-momentum",
+  "liquidity-vacuum-reversion": "liquidity-shift",
+  "microprice-pressure-scalper": "acceleration-spike",
+  "early-breakout-surge": "breakout",
+  "efficiency-anomaly-reversion": "efficiency-anomaly",
+  "time-decay-consensus": "consensus-flip",
+} as const;
+
 const INITIAL_FAMILY_SECONDARY_TRIGGERS: Record<QmonGenomeFamily, readonly string[]> = {
   "momentum-following": ["strong-momentum", "momentum-shift", "acceleration-spike", "breakout"],
-  "mispricing-reversion": ["reversion-extreme", "mispricing", "efficiency-anomaly", "extreme-distance"],
-  "order-book-confirmation": ["liquidity-shift", "book-pressure", "consensus-flip", "efficiency-anomaly"],
-  "late-window-dislocation": ["extreme-distance", "time-decay", "efficiency-anomaly", "liquidity-shift"],
+  "mispricing-reversion": ["reversion-extreme", "mispricing", "efficiency-anomaly", "liquidity-shift"],
+  "order-book-confirmation": ["breakout", "momentum-shift", "efficiency-anomaly", "consensus-flip"],
+  "late-window-dislocation": ["mispricing", "extreme-distance", "reversion-extreme", "efficiency-anomaly"],
   "cross-asset-lead-lag": ["consensus-flip", "strong-momentum", "breakout", "acceleration-spike"],
   "liquidity-vacuum-reversion": ["liquidity-shift", "reversion-extreme", "mispricing", "extreme-distance"],
-  "microprice-pressure-scalper": ["strong-imbalance", "book-pressure", "acceleration-spike", "reversion-extreme"],
+  "microprice-pressure-scalper": ["consensus-flip", "acceleration-spike", "breakout", "strong-momentum"],
   "early-breakout-surge": ["acceleration-spike", "breakout", "strong-momentum", "momentum-shift"],
   "efficiency-anomaly-reversion": ["efficiency-anomaly", "mispricing", "reversion-extreme", "time-decay"],
-  "time-decay-consensus": ["time-decay", "consensus-flip", "extreme-distance", "strong-imbalance"],
+  "time-decay-consensus": ["extreme-distance", "mispricing", "efficiency-anomaly", "time-decay"],
 } as const;
 
 /**
@@ -405,14 +418,14 @@ export class QmonGenomeService {
     } else if (family === "order-book-confirmation") {
       predictiveSignalGenes = [
         { signalId: "edge", orientation: "aligned", weightTier: 2 },
+        { signalId: "velocity", orientation: "aligned", weightTier: 2 },
         { signalId: "distance", orientation: "aligned", weightTier: 1 },
       ];
       microstructureSignalGenes = [
-        { signalId: "imbalance", orientation: "aligned", weightTier: 3 },
         { signalId: "microprice", orientation: "aligned", weightTier: 2 },
         { signalId: "bookDepth", orientation: "aligned", weightTier: 2 },
       ];
-      triggerGenes = this.generateTriggerGenesForFamily("book-pressure", "liquidity-shift");
+      triggerGenes = this.generateTriggerGenesForFamily("consensus-flip", "extreme-distance");
       entryPolicy = {
         minEdgeBps: 20,
         minNetEvUsd: 0.05,
@@ -435,7 +448,7 @@ export class QmonGenomeService {
         { signalId: "staleness", orientation: "inverse", weightTier: 1 },
         { signalId: "tokenPressure", orientation: "aligned", weightTier: 1 },
       ];
-      triggerGenes = this.generateTriggerGenesForFamily("time-decay", "extreme-distance");
+      triggerGenes = this.generateTriggerGenesForFamily("extreme-distance", "mispricing");
       timeWindowGenes = [false, true, true];
       entryPolicy = {
         minEdgeBps: 50,
@@ -504,7 +517,7 @@ export class QmonGenomeService {
         { signalId: "imbalance", orientation: "aligned", weightTier: 3 },
         { signalId: "spread", orientation: "inverse", weightTier: 1 },
       ];
-      triggerGenes = this.generateTriggerGenesForFamily("book-pressure", "strong-imbalance");
+      triggerGenes = this.generateTriggerGenesForFamily("acceleration-spike", "consensus-flip");
       directionRegimeGenes = [true, true, true];
       volatilityRegimeGenes = [true, true, false];
       entryPolicy = {
@@ -567,7 +580,7 @@ export class QmonGenomeService {
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "patient" };
       exitPolicy = { extremeStopLossPct: 0.4, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
       scoreThresholds = { minScoreBuy: 0.5, minScoreSell: 0.5 };
-    } else {
+    } else if (family === "time-decay-consensus") {
       predictiveSignalGenes = [
         { signalId: "edge", orientation: "aligned", weightTier: 2 },
         { signalId: "crossAssetMomentum", orientation: "aligned", weightTier: 1 },
@@ -577,7 +590,7 @@ export class QmonGenomeService {
         { signalId: "spread", orientation: "inverse", weightTier: 1 },
         { signalId: "staleness", orientation: "inverse", weightTier: 1 },
       ];
-      triggerGenes = this.generateTriggerGenesForFamily("time-decay", "consensus-flip");
+      triggerGenes = this.generateTriggerGenesForFamily("consensus-flip", "extreme-distance");
       timeWindowGenes = [false, true, true];
       directionRegimeGenes = [true, true, true];
       volatilityRegimeGenes = [true, true, true];
@@ -592,6 +605,8 @@ export class QmonGenomeService {
       executionPolicy = { sizeTier: 1, maxTradesPerWindow: 1, cooldownProfile: "balanced" };
       exitPolicy = { extremeStopLossPct: 0.3, extremeTakeProfitPct: 0.5, thesisInvalidationPolicy: "hybrid" };
       scoreThresholds = { minScoreBuy: 0.45, minScoreSell: 0.45 };
+    } else {
+      throw new Error(`unsupported genome family: ${family}`);
     }
 
     return {
@@ -787,15 +802,19 @@ export class QmonGenomeService {
     return microstructureSignalGenes;
   }
 
-  private createInitialPopulationTriggerGenes(baseGenome: QmonGenome, family: QmonGenomeFamily, variantIndex: number): readonly TriggerGene[] {
-    const baseTriggerIds = baseGenome.triggerGenes.filter((triggerGene) => triggerGene.isEnabled).map((triggerGene) => triggerGene.triggerId);
-    const primaryTriggerId = baseTriggerIds[0] ?? "mispricing";
-    const fallbackSecondaryTriggerId = baseTriggerIds[1] ?? null;
+  private createInitialPopulationTriggerGenes(family: QmonGenomeFamily, variantIndex: number): readonly TriggerGene[] {
+    const primaryTriggerId = INITIAL_FAMILY_PRIMARY_TRIGGERS[family];
     const secondaryTriggerOptions = INITIAL_FAMILY_SECONDARY_TRIGGERS[family];
+    const fallbackSecondaryTriggerId = secondaryTriggerOptions.find(
+      (secondaryTriggerId) => secondaryTriggerId !== primaryTriggerId,
+    ) ?? null;
+    const variantSecondaryTriggerOptions = secondaryTriggerOptions.filter(
+      (secondaryTriggerId) => secondaryTriggerId !== primaryTriggerId && secondaryTriggerId !== fallbackSecondaryTriggerId,
+    );
     const selectedSecondaryTriggerId =
-      variantIndex % 2 === 0
+      variantIndex % 5 !== 4
         ? fallbackSecondaryTriggerId
-        : (secondaryTriggerOptions[(Math.floor(variantIndex / 2) + variantIndex) % secondaryTriggerOptions.length] ?? fallbackSecondaryTriggerId);
+        : (variantSecondaryTriggerOptions[Math.floor(variantIndex / 5) % variantSecondaryTriggerOptions.length] ?? fallbackSecondaryTriggerId);
     const triggerGenes = this.generateTriggerGenesForFamily(
       primaryTriggerId,
       selectedSecondaryTriggerId !== primaryTriggerId ? selectedSecondaryTriggerId : fallbackSecondaryTriggerId,
@@ -808,7 +827,7 @@ export class QmonGenomeService {
     const variantGenome = this.cloneGenome(baseGenome);
     const predictiveSignalGenes = this.createInitialPopulationPredictiveSignalGenes(baseGenome, family, baseIndex, variantIndex);
     const microstructureSignalGenes = this.createInitialPopulationMicrostructureSignalGenes(baseGenome, family, baseIndex, variantIndex);
-    const triggerGenes = this.createInitialPopulationTriggerGenes(variantGenome, family, variantIndex);
+    const triggerGenes = this.createInitialPopulationTriggerGenes(family, variantIndex);
     const rawExchangeWeights = [
       (variantGenome.exchangeWeights[0] ?? 0.25) + variantIndex * 0.01,
       (variantGenome.exchangeWeights[1] ?? 0.25) + baseIndex * 0.01,

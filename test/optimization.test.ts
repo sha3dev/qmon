@@ -291,3 +291,122 @@ test("ServiceRuntime persists critical mutations immediately even without checkp
     Date.now = originalDateNow;
   }
 });
+
+test("ServiceRuntime switches runtime to paper after the real emergency loss cap is breached and all seats are flat", () => {
+  let appliedExecutionMode: "paper" | "real" | null = null;
+  const runtimeExecutionModeState: { mode: "paper" | "real" } = {
+    mode: "real",
+  };
+  const fakeQmonEngine = {
+    applyExecutionRoutes: (executionMode: "paper" | "real") => {
+      appliedExecutionMode = executionMode;
+    },
+    getFamilyState: () => ({
+      populations: [
+        {
+          market: "eth-5m",
+          marketConsolidatedPnl: -10.5,
+          seatPosition: {
+            action: null,
+            entryPrice: null,
+            shareCount: null,
+          },
+          seatPendingOrder: null,
+          executionRuntime: {
+            pendingIntent: null,
+            orderId: null,
+            confirmedVenueSeat: null,
+            pendingVenueOrders: [],
+          },
+        },
+      ],
+    }),
+  };
+  const serviceRuntime = new ServiceRuntime(
+    {} as never,
+    {} as never,
+    fakeQmonEngine as never,
+    {} as never,
+    {} as never,
+    null,
+    runtimeExecutionModeState,
+  );
+
+  (serviceRuntime as unknown as { applyRealEmergencyHalt(latestStructuredSignals: unknown): void }).applyRealEmergencyHalt({
+    eth: {
+      windows: {
+        "5m": {
+          prices: {
+            upPrice: 0.5,
+            downPrice: 0.5,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(runtimeExecutionModeState.mode, "paper");
+  assert.equal(appliedExecutionMode, "paper");
+});
+
+test("ServiceRuntime keeps live routing armed after an emergency halt trigger while a venue seat is still open", () => {
+  let appliedExecutionMode: "paper" | "real" | null = null;
+  const runtimeExecutionModeState: { mode: "paper" | "real" } = {
+    mode: "real",
+  };
+  const fakeQmonEngine = {
+    applyExecutionRoutes: (executionMode: "paper" | "real") => {
+      appliedExecutionMode = executionMode;
+    },
+    getFamilyState: () => ({
+      populations: [
+        {
+          market: "eth-5m",
+          marketConsolidatedPnl: -9.8,
+          seatPosition: {
+            action: "BUY_UP",
+            entryPrice: 0.5,
+            shareCount: 10,
+          },
+          seatPendingOrder: null,
+          executionRuntime: {
+            pendingIntent: null,
+            orderId: null,
+            confirmedVenueSeat: {
+              action: "BUY_UP",
+              entryPrice: 0.5,
+              enteredAt: 1,
+              shareCount: 10,
+            },
+            pendingVenueOrders: [],
+          },
+        },
+      ],
+    }),
+  };
+  const serviceRuntime = new ServiceRuntime(
+    {} as never,
+    {} as never,
+    fakeQmonEngine as never,
+    {} as never,
+    {} as never,
+    null,
+    runtimeExecutionModeState,
+  );
+
+  (serviceRuntime as unknown as { applyRealEmergencyHalt(latestStructuredSignals: unknown): void }).applyRealEmergencyHalt({
+    eth: {
+      windows: {
+        "5m": {
+          prices: {
+            upPrice: 0.45,
+            downPrice: 0.55,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(runtimeExecutionModeState.mode, "real");
+  assert.equal(appliedExecutionMode, null);
+});
