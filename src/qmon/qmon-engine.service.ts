@@ -1579,14 +1579,6 @@ export class QmonEngine {
 
     // No minimum signal requirement in paper mode
     // QMONs can trade even with limited signal data
-      return {
-        directionalAlpha: 0,
-        predictiveAlpha: 0,
-        microstructureAlpha: 0,
-        signalAgreementCount: 0,
-        dominantSignalGroup: "none",
-      };
-    }
 
     const predictiveAlpha = predictiveWeightSum > 0 ? predictiveContribution / predictiveWeightSum : 0;
     const microstructureAlpha = microstructureWeightSum > 0 ? microstructureContribution / microstructureWeightSum : 0;
