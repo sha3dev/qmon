@@ -153,6 +153,7 @@ type CompiledQmonGenome = {
 
 type EvaluationOptions = {
   readonly shouldBlockEntries: boolean;
+  readonly shouldBlockSeatEntries: boolean;
   readonly shouldSkipEvolution: boolean;
   readonly executionMode: "paper" | "real";
 };
@@ -2435,6 +2436,7 @@ export class QmonEngine {
     let updatedPopulation = population;
     const resolvedEvaluationOptions: EvaluationOptions = {
       shouldBlockEntries: evaluationOptions?.shouldBlockEntries ?? false,
+      shouldBlockSeatEntries: evaluationOptions?.shouldBlockSeatEntries ?? evaluationOptions?.shouldBlockEntries ?? false,
       shouldSkipEvolution: evaluationOptions?.shouldSkipEvolution ?? false,
       executionMode: evaluationOptions?.executionMode ?? "paper",
     };
@@ -2504,7 +2506,7 @@ export class QmonEngine {
       return updatedPopulation;
     }
 
-    if (resolvedEvaluationOptions.shouldBlockEntries || this.shouldSkipEntry(isMarketClosed)) {
+    if (resolvedEvaluationOptions.shouldBlockSeatEntries || this.shouldSkipEntry(isMarketClosed)) {
       return updatedPopulation;
     }
 
@@ -2764,6 +2766,7 @@ export class QmonEngine {
     const population = this.getPopulation(market);
     const resolvedEvaluationOptions: EvaluationOptions = {
       shouldBlockEntries: evaluationOptions?.shouldBlockEntries ?? false,
+      shouldBlockSeatEntries: evaluationOptions?.shouldBlockSeatEntries ?? evaluationOptions?.shouldBlockEntries ?? false,
       shouldSkipEvolution: evaluationOptions?.shouldSkipEvolution ?? false,
       executionMode: evaluationOptions?.executionMode ?? "paper",
     };

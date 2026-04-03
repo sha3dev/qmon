@@ -273,7 +273,8 @@ export class ServiceRuntime {
     if (lastStructuredSignals) {
       this.qmonEngine.evaluateAll(lastStructuredSignals, lastRegimes, this.buffer, {
         executionMode: this.runtimeExecutionModeState.mode,
-        shouldBlockEntries: this.isRealEmergencyHaltActive,
+        shouldBlockEntries: false,
+        shouldBlockSeatEntries: this.isRealEmergencyHaltActive,
       });
 
       if (this.qmonLiveExecutionService !== null && this.runtimeExecutionModeState.mode === "real") {
