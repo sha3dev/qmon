@@ -276,6 +276,7 @@ export class ServiceRuntime {
         shouldBlockEntries: false,
         shouldBlockSeatEntries: this.isRealEmergencyHaltActive,
       });
+      this.applyRealWalkForwardRouteGuard();
 
       if (this.qmonLiveExecutionService !== null && this.runtimeExecutionModeState.mode === "real") {
         this.qmonLiveExecutionService.queueSync(this.qmonEngine, lastStructuredSignals);
@@ -379,6 +380,25 @@ export class ServiceRuntime {
       this.runtimeExecutionModeState.mode = "paper";
       this.qmonEngine.applyExecutionRoutes("paper", Date.now());
       logger.error("QMON real emergency halt fully disarmed live routing after flattening all seats; runtime switched to paper mode");
+    }
+  }
+
+  /** Degrade the global runtime to paper when every market fails the walk-forward gate and no live unwind is pending. */
+  private applyRealWalkForwardRouteGuard(): void {
+    let hasRealMarketRoute = false;
+
+    if (this.runtimeExecutionModeState.mode === "real") {
+      for (const population of this.qmonEngine.getFamilyState().populations) {
+        if (population.executionRuntime?.route === "real") {
+          hasRealMarketRoute = true;
+        }
+      }
+
+      if (!hasRealMarketRoute && !this.hasActiveRealRisk()) {
+        this.runtimeExecutionModeState.mode = "paper";
+        this.qmonEngine.applyExecutionRoutes("paper", Date.now());
+        logger.error("QMON walk-forward gate disarmed real routing for every market; runtime switched to paper mode");
+      }
     }
   }
 

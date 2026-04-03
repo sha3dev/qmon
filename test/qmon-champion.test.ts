@@ -501,3 +501,72 @@ test("QmonChampionService selects the best eligible champion by the new score pr
 
   assert.equal(finalizedPopulation.activeChampionQmonId, "STEADY01");
 });
+
+test("QmonChampionService selects a conservative fallback champion when strict eligibility leaves no seat owner", () => {
+  const championService = new QmonChampionService();
+  const fallbackQmon = championService.refreshMetrics({
+    ...createChampionCandidate("FALLBACK", 0.7, 0.2),
+    metrics: {
+      ...createChampionCandidate("FALLBACK", 0.7, 0.2).metrics,
+      totalTrades: 4,
+      totalPnl: 2,
+      peakTotalPnl: 2,
+      winRate: 0.75,
+      winCount: 3,
+    },
+    paperWindowPnls: [0.3, 0.4],
+  });
+  const weakQmon = championService.refreshMetrics({
+    ...createChampionCandidate("WEAKSEAT", 0.4, 1.2),
+    metrics: {
+      ...createChampionCandidate("WEAKSEAT", 0.4, 1.2).metrics,
+      totalTrades: 4,
+      totalPnl: -1,
+      peakTotalPnl: 0,
+      winRate: 0.25,
+      winCount: 1,
+    },
+    paperWindowPnls: [-0.2, -0.3],
+  });
+  const finalizedPopulation = championService.finalizePopulation(
+    {
+      market: MARKET_KEY,
+      qmons: [fallbackQmon, weakQmon],
+      createdAt: 1,
+      lastUpdated: 1,
+      activeChampionQmonId: null,
+      marketPaperSessionPnl: 0,
+      marketConsolidatedPnl: 0,
+      seatPosition: {
+        action: null,
+        enteredAt: null,
+        entryScore: null,
+        entryPrice: null,
+        peakReturnPct: null,
+        shareCount: null,
+        priceToBeat: null,
+        marketStartMs: null,
+        marketEndMs: null,
+      },
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: null,
+      seatLastWindowStartMs: 1,
+      seatLastSettledWindowStartMs: null,
+    },
+    [fallbackQmon, weakQmon],
+    {
+      action: null,
+      enteredAt: null,
+      entryScore: null,
+      entryPrice: null,
+      peakReturnPct: null,
+      shareCount: null,
+      priceToBeat: null,
+      marketStartMs: null,
+      marketEndMs: null,
+    },
+  );
+
+  assert.equal(fallbackQmon.metrics.isChampionEligible, false);
+  assert.equal(finalizedPopulation.activeChampionQmonId, "FALLBACK");
+});

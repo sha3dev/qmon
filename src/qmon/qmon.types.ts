@@ -302,6 +302,7 @@ export type QmonPopulation = {
   readonly seatLastWindowStartMs: number | null;
   readonly seatLastSettledWindowStartMs: number | null;
   readonly executionRuntime?: QmonExecutionRuntime;
+  readonly realWalkForwardGate?: QmonRealWalkForwardGate;
 };
 
 export type QmonExecutionRuntime = {
@@ -316,6 +317,18 @@ export type QmonExecutionRuntime = {
   readonly lastReconciledAt: number | null;
   readonly lastError: string | null;
   readonly isHalted: boolean;
+};
+
+export type QmonRealWalkForwardGate = {
+  readonly isEnabled: boolean;
+  readonly isPassed: boolean;
+  readonly championQmonId: QmonId | null;
+  readonly rejectReason: string | null;
+  readonly netPnlUsd: number;
+  readonly maxDrawdownUsd: number;
+  readonly tradeCount: number;
+  readonly feeRatio: number;
+  readonly recentAvgSlippageBps: number;
 };
 
 export type QmonFamilyState = {

@@ -383,6 +383,57 @@ test("QmonEngine blocks entries when directional edge and distance contradict th
   assert.equal(blockedQmon.decisionHistory.length, 0);
 });
 
+test("QmonEngine blocks new entries when no enabled trigger fired", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), [], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine allows BUY_DOWN entries when downside outcome EV is positive after fees", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.9, 0.1)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(-0.9, 0.9, 0.1, marketStartMs, marketEndMs, 99_000, -0.2, -0.2),
+      createRegimes(),
+      ["consensus-flip"],
+      entrySnapshots,
+    );
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(-0.9, 0.9, 0.1, marketStartMs, marketEndMs, 99_000, -0.2, -0.2),
+      createRegimes(),
+      ["consensus-flip"],
+      entrySnapshots,
+    );
+  });
+
+  const openedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+  const entryDecision = mustValue(openedQmon.decisionHistory[0]);
+
+  assert.equal(openedQmon.position.action, "BUY_DOWN");
+  assert.equal(openedQmon.pendingOrder, null);
+  assert.equal((entryDecision.estimatedNetEvUsd ?? 0) > 0, true);
+  assert.equal(entryDecision.executionPrice, 0.1);
+});
+
 test("QmonEngine settles the champion seat without mutating the champion paper position", () => {
   const championQmon = createQmon("champion");
   const population = createPopulation([championQmon], championQmon.id);
@@ -735,6 +786,112 @@ test("QmonEngine keeps real-routed seat entries pending instead of filling them 
   assert.equal(queuedSeatQmon.pendingOrder?.kind, "entry");
   assert.equal(queuedSeatQmon.position.action, null);
   assert.equal(queuedSeatQmon.metrics.totalPnl, 0);
+});
+
+test("QmonEngine downgrades an under-sampled champion market to paper when real walk-forward is required", () => {
+  const championService = new QmonChampionService();
+  const championQmon = championService.refreshMetrics({
+    ...createQmon("champion"),
+    paperWindowPnls: [0.6, 0.7, 0.8, 0.9, 0.6],
+    paperWindowSlippageBps: [10, 10, 10, 10, 10],
+    metrics: {
+      ...createQmon("champion").metrics,
+      totalTrades: 3,
+      totalPnl: 2.4,
+      peakTotalPnl: 2.4,
+      recentAvgSlippageBps: 10,
+      totalFeesPaid: 0.2,
+      winRate: 0.67,
+      winCount: 2,
+      maxDrawdown: 0.5,
+      grossAlphaCapture: 2,
+      feeRatio: 0.08,
+      regimeBreakdown: [
+        {
+          regime: "regime:flat|normal",
+          tradeCount: 3,
+          totalPnl: 2.4,
+          estimatedNetEvUsd: 1,
+        },
+        {
+          regime: "regime:trending-up|normal",
+          tradeCount: 1,
+          totalPnl: 0.4,
+          estimatedNetEvUsd: 0.2,
+        },
+      ],
+    },
+  });
+  const qmonEngine = new QmonEngine(
+    ["btc"],
+    ["5m"],
+    createFamilyState(createPopulation([championQmon], championQmon.id)),
+    undefined,
+    undefined,
+    undefined,
+    false,
+    false,
+  );
+
+  qmonEngine.applyExecutionRoutes("real", 2);
+
+  const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+
+  assert.equal(population.executionRuntime?.route, "paper");
+  assert.equal(population.realWalkForwardGate?.isPassed, false);
+  assert.equal(population.realWalkForwardGate?.rejectReason, "walk-forward-insufficient-trades");
+});
+
+test("QmonEngine arms real routing when the champion passes the walk-forward gate", () => {
+  const championService = new QmonChampionService();
+  const championQmon = championService.refreshMetrics({
+    ...createQmon("champion"),
+    paperWindowPnls: [0.8, 0.7, 0.9, 0.6, 0.8, 0.7],
+    paperWindowSlippageBps: [12, 11, 12, 13, 10, 12],
+    metrics: {
+      ...createQmon("champion").metrics,
+      totalTrades: 14,
+      totalPnl: 4.2,
+      peakTotalPnl: 4.2,
+      totalFeesPaid: 0.35,
+      winRate: 0.64,
+      winCount: 9,
+      maxDrawdown: 1.2,
+      grossAlphaCapture: 4,
+      regimeBreakdown: [
+        {
+          regime: "regime:flat|normal",
+          tradeCount: 7,
+          totalPnl: 2.2,
+          estimatedNetEvUsd: 1.5,
+        },
+        {
+          regime: "regime:trending-up|normal",
+          tradeCount: 7,
+          totalPnl: 2,
+          estimatedNetEvUsd: 1.2,
+        },
+      ],
+    },
+  });
+  const qmonEngine = new QmonEngine(
+    ["btc"],
+    ["5m"],
+    createFamilyState(createPopulation([championQmon], championQmon.id)),
+    undefined,
+    undefined,
+    undefined,
+    false,
+    false,
+  );
+
+  qmonEngine.applyExecutionRoutes("real", 2);
+
+  const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+
+  assert.equal(population.executionRuntime?.route, "real");
+  assert.equal(population.realWalkForwardGate?.isPassed, true);
+  assert.equal(population.realWalkForwardGate?.rejectReason, null);
 });
 
 test("QmonEngine reports cache hits and avoids global metric refresh churn on repeated ticks", () => {

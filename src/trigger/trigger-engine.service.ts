@@ -271,55 +271,70 @@ export class TriggerEngine {
    * Trigger 11 (NEW): Strong sustained momentum (state-based).
    * Fires when momentum signal is strongly positive or negative, regardless of transition.
    */
-  private checkStrongMomentum(asset: string, current: AssetResult, now: number): TriggerEvent | null {
+  private checkStrongMomentum(asset: string, current: AssetResult, previous: AssetResult | null, now: number): TriggerEvent | null {
     const maxMomentum = this.computeMaxAbsoluteHorizon(current.signals.momentum);
+    const previousMaxMomentum = previous !== null ? this.computeMaxAbsoluteHorizon(previous.signals.momentum) : 0;
     const canFire = this.canFireStateTrigger("strong-momentum", asset, null, now);
+    let stateTrigger: TriggerEvent | null = null;
 
-    if (!canFire || maxMomentum < STRONG_MOMENTUM_THRESHOLD) {
-      return null;
+    if (maxMomentum >= STRONG_MOMENTUM_THRESHOLD) {
+      if (canFire && previousMaxMomentum >= STRONG_MOMENTUM_THRESHOLD) {
+        const direction = current.signals.momentum["30s"] ?? current.signals.momentum["2m"] ?? current.signals.momentum["5m"] ?? 0;
+        const directionLabel = direction > 0 ? "bullish" : "bearish";
+
+        stateTrigger = this.buildEvent("strong-momentum", "Strong Momentum", `Strong ${directionLabel} momentum detected`, "warning", asset, null, now);
+      }
+
+      this.markStateTriggerFired("strong-momentum", asset, null, now);
     }
 
-    const direction = current.signals.momentum["30s"] ?? current.signals.momentum["2m"] ?? current.signals.momentum["5m"] ?? 0;
-    const directionLabel = direction > 0 ? "bullish" : "bearish";
-
-    this.markStateTriggerFired("strong-momentum", asset, null, now);
-    return this.buildEvent("strong-momentum", "Strong Momentum", `Strong ${directionLabel} momentum detected`, "warning", asset, null, now);
+    return stateTrigger;
   }
 
   /**
    * Trigger 12 (NEW): Strong order book imbalance (state-based).
    * Fires when order book is significantly skewed to one side.
    */
-  private checkStrongImbalance(asset: string, current: AssetResult, now: number): TriggerEvent | null {
+  private checkStrongImbalance(asset: string, current: AssetResult, previous: AssetResult | null, now: number): TriggerEvent | null {
     const imbalance = current.signals.imbalance;
+    const previousImbalance = previous?.signals.imbalance ?? null;
     const canFire = this.canFireStateTrigger("strong-imbalance", asset, null, now);
+    let stateTrigger: TriggerEvent | null = null;
 
-    if (!canFire || imbalance === null || Math.abs(imbalance) < STRONG_IMBALANCE_THRESHOLD) {
-      return null;
+    if (imbalance !== null && Math.abs(imbalance) >= STRONG_IMBALANCE_THRESHOLD) {
+      if (canFire && previousImbalance !== null && Math.abs(previousImbalance) >= STRONG_IMBALANCE_THRESHOLD) {
+        const direction = imbalance > 0 ? "buy" : "sell";
+
+        stateTrigger = this.buildEvent("strong-imbalance", "Strong Imbalance", `Strong ${direction} pressure in order book`, "warning", asset, null, now);
+      }
+
+      this.markStateTriggerFired("strong-imbalance", asset, null, now);
     }
 
-    const direction = imbalance > 0 ? "buy" : "sell";
-
-    this.markStateTriggerFired("strong-imbalance", asset, null, now);
-    return this.buildEvent("strong-imbalance", "Strong Imbalance", `Strong ${direction} pressure in order book`, "warning", asset, null, now);
+    return stateTrigger;
   }
 
   /**
    * Trigger 13 (NEW): Extreme price distance from strike (state-based).
    * Fires when price is far from strike, indicating clear directional bias.
    */
-  private checkExtremeDistance(asset: string, window: string, current: WindowResult, now: number): TriggerEvent | null {
+  private checkExtremeDistance(asset: string, window: string, current: WindowResult, previous: WindowResult | null, now: number): TriggerEvent | null {
     const distance = current.signals.distance;
+    const previousDistance = previous?.signals.distance ?? null;
     const canFire = this.canFireStateTrigger("extreme-distance", asset, window, now);
+    let stateTrigger: TriggerEvent | null = null;
 
-    if (!canFire || distance === null || Math.abs(distance) < EXTREME_DISTANCE_THRESHOLD) {
-      return null;
+    if (distance !== null && Math.abs(distance) >= EXTREME_DISTANCE_THRESHOLD) {
+      if (canFire && previousDistance !== null && Math.abs(previousDistance) >= EXTREME_DISTANCE_THRESHOLD) {
+        const direction = distance > 0 ? "above" : "below";
+
+        stateTrigger = this.buildEvent("extreme-distance", "Extreme Distance", `Price strongly ${direction} strike`, "critical", asset, window, now);
+      }
+
+      this.markStateTriggerFired("extreme-distance", asset, window, now);
     }
 
-    const direction = distance > 0 ? "above" : "below";
-
-    this.markStateTriggerFired("extreme-distance", asset, window, now);
-    return this.buildEvent("extreme-distance", "Extreme Distance", `Price strongly ${direction} strike`, "critical", asset, window, now);
+    return stateTrigger;
   }
 
   /* ── Collectors ───────────────────────────────────────────────── */
@@ -336,8 +351,8 @@ export class TriggerEngine {
     ];
     // NEW state-based triggers (fire on strong conditions, not just transitions)
     const stateChecks = [
-      this.checkStrongMomentum(asset, current, now),
-      this.checkStrongImbalance(asset, current, now),
+      this.checkStrongMomentum(asset, current, previous, now),
+      this.checkStrongImbalance(asset, current, previous, now),
     ];
 
     for (const trigger of [...transitionChecks, ...stateChecks]) {
@@ -366,7 +381,7 @@ export class TriggerEngine {
     ];
     // NEW state-based trigger
     const stateChecks = [
-      this.checkExtremeDistance(asset, window, current, now),
+      this.checkExtremeDistance(asset, window, current, previous, now),
     ];
 
     for (const trigger of [...transitionChecks, ...stateChecks]) {

@@ -37,6 +37,7 @@ import type {
   QmonPendingOrder,
   QmonPopulation,
   QmonPosition,
+  QmonRealWalkForwardGate,
   QmonSignalId,
   RegimePerformanceSlice,
   TimeSegment,
@@ -332,6 +333,80 @@ export class QmonEngine {
   }
 
   /**
+   * Build the conservative real-routing validation state for the population champion.
+   */
+  private buildRealWalkForwardGate(population: QmonPopulation): QmonRealWalkForwardGate {
+    const championQmon =
+      population.activeChampionQmonId === null ? null : (population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null);
+    const netPnlUsd = championQmon?.metrics.paperLongWindowPnlSum ?? 0;
+    const maxDrawdownUsd = championQmon?.metrics.maxDrawdown ?? 0;
+    const tradeCount = championQmon?.metrics.totalTrades ?? 0;
+    const feeRatio = championQmon?.metrics.feeRatio ?? 1;
+    const recentAvgSlippageBps = championQmon?.metrics.recentAvgSlippageBps ?? Number.POSITIVE_INFINITY;
+    let rejectReason: string | null = null;
+
+    if (!config.QMON_REAL_REQUIRE_WALK_FORWARD) {
+      rejectReason = null;
+    } else if (championQmon === null) {
+      rejectReason = "no-active-champion";
+    } else if (tradeCount < config.QMON_REAL_MIN_WF_TRADES) {
+      rejectReason = "walk-forward-insufficient-trades";
+    } else if (netPnlUsd < config.QMON_REAL_MIN_WF_NET_PNL_USD) {
+      rejectReason = "walk-forward-net-pnl-too-low";
+    } else if (maxDrawdownUsd > config.QMON_REAL_MAX_WF_DRAWDOWN_USD) {
+      rejectReason = "walk-forward-drawdown-too-high";
+    } else if (feeRatio > config.QMON_REAL_MAX_WF_FEE_RATIO) {
+      rejectReason = "walk-forward-fee-ratio-too-high";
+    } else if (recentAvgSlippageBps > config.QMON_REAL_MAX_WF_SLIPPAGE_BPS) {
+      rejectReason = "walk-forward-slippage-too-high";
+    } else if ((championQmon.metrics.paperWindowPnlSum ?? 0) <= 0 || (championQmon.metrics.negativeWindowRateLast10 ?? 1) > 0.4) {
+      rejectReason = "walk-forward-rolling-deterioration";
+    } else if (!(championQmon.metrics.isChampionEligible && (championQmon.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0)) {
+      rejectReason = "champion-not-production-ready";
+    }
+
+    return {
+      isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
+      isPassed: rejectReason === null,
+      championQmonId: championQmon?.id ?? null,
+      rejectReason,
+      netPnlUsd,
+      maxDrawdownUsd,
+      tradeCount,
+      feeRatio,
+      recentAvgSlippageBps,
+    };
+  }
+
+  /**
+   * Keep real routing active only while the market is validated or still has a live exit/recovery risk to unwind.
+   */
+  private resolvePopulationExecutionRoute(
+    population: QmonPopulation,
+    routeOverride: QmonExecutionRoute | undefined,
+    realWalkForwardGate: QmonRealWalkForwardGate,
+  ): QmonExecutionRoute {
+    const requestedRoute = routeOverride ?? population.executionRuntime?.route ?? "paper";
+    const executionRuntime = population.executionRuntime ?? this.createDefaultExecutionRuntime(requestedRoute);
+    const hasExitRisk =
+      population.seatPosition.action !== null ||
+      population.seatPendingOrder?.kind === "exit" ||
+      executionRuntime.pendingIntent?.kind === "exit" ||
+      executionRuntime.orderId !== null ||
+      executionRuntime.confirmedVenueSeat !== null ||
+      executionRuntime.pendingVenueOrders.length > 0 ||
+      executionRuntime.isHalted ||
+      executionRuntime.lastError !== null;
+    let resolvedRoute = requestedRoute;
+
+    if (requestedRoute === "real" && !realWalkForwardGate.isPassed && !hasExitRisk) {
+      resolvedRoute = "paper";
+    }
+
+    return resolvedRoute;
+  }
+
+  /**
    * Derive the public execution state from the canonical runtime block.
    */
   private resolveExecutionRuntimeState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
@@ -360,7 +435,8 @@ export class QmonEngine {
    * Keep each population aligned with the canonical execution runtime model.
    */
   private normalizePopulationExecutionRuntime(population: QmonPopulation, routeOverride?: QmonExecutionRoute): QmonPopulation {
-    const route = routeOverride ?? population.executionRuntime?.route ?? "paper";
+    const realWalkForwardGate = this.buildRealWalkForwardGate(population);
+    const route = this.resolvePopulationExecutionRoute(population, routeOverride, realWalkForwardGate);
     const currentExecutionRuntime = population.executionRuntime ?? this.createDefaultExecutionRuntime(route);
     const normalizedExecutionRuntime: QmonExecutionRuntime = {
       route,
@@ -378,6 +454,7 @@ export class QmonEngine {
 
     return {
       ...population,
+      realWalkForwardGate,
       executionRuntime: {
         ...normalizedExecutionRuntime,
         executionState: this.resolveExecutionRuntimeState(normalizedExecutionRuntime),
@@ -413,10 +490,10 @@ export class QmonEngine {
   /**
    * Check whether a market routes the seat through real execution.
    */
-  private isRealExecutionMarket(market: MarketKey, evaluationOptions: EvaluationOptions): boolean {
+  private isRealExecutionMarket(population: QmonPopulation, evaluationOptions: EvaluationOptions): boolean {
     let isRealMarket = false;
 
-    if (evaluationOptions.executionMode === "real") {
+    if (evaluationOptions.executionMode === "real" && population?.executionRuntime?.route === "real") {
       isRealMarket = true;
     }
 
@@ -643,6 +720,17 @@ export class QmonEngine {
       seatLastCloseTimestamp: null,
       seatLastWindowStartMs: null,
       seatLastSettledWindowStartMs: null,
+      realWalkForwardGate: {
+        isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
+        isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
+        championQmonId: null,
+        rejectReason: config.QMON_REAL_REQUIRE_WALK_FORWARD ? "no-active-champion" : null,
+        netPnlUsd: 0,
+        maxDrawdownUsd: 0,
+        tradeCount: 0,
+        feeRatio: 1,
+        recentAvgSlippageBps: Number.POSITIVE_INFINITY,
+      },
       executionRuntime: this.createDefaultExecutionRuntime("paper"),
     };
   }
@@ -667,6 +755,17 @@ export class QmonEngine {
           seatLastCloseTimestamp: null,
           seatLastWindowStartMs: null,
           seatLastSettledWindowStartMs: null,
+          realWalkForwardGate: {
+            isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
+            isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
+            championQmonId: null,
+            rejectReason: config.QMON_REAL_REQUIRE_WALK_FORWARD ? "no-active-champion" : null,
+            netPnlUsd: 0,
+            maxDrawdownUsd: 0,
+            tradeCount: 0,
+            feeRatio: 1,
+            recentAvgSlippageBps: Number.POSITIVE_INFINITY,
+          },
           executionRuntime: this.createDefaultExecutionRuntime("paper"),
         },
       ],
@@ -1090,6 +1189,17 @@ export class QmonEngine {
         const val = value as number | null;
         result[key] = val;
       }
+
+      result.upPrice = windowData.prices.upPrice;
+      result.downPrice = windowData.prices.downPrice;
+    }
+
+    if (asset && window && snapshots !== undefined && snapshots.length > 0) {
+      const upBookBestBidAsk = this.executionService.getBookBestBidAsk(this.executionService.getTokenBook(asset, window, "BUY_UP", snapshots));
+      const downBookBestBidAsk = this.executionService.getBookBestBidAsk(this.executionService.getTokenBook(asset, window, "BUY_DOWN", snapshots));
+
+      result.upAsk = upBookBestBidAsk?.askPrice ?? this.getScalarSignalValue(result, "upPrice");
+      result.downAsk = downBookBestBidAsk?.askPrice ?? this.getScalarSignalValue(result, "downPrice");
     }
 
     // Apply exchange weights if QMON is provided and SignalEngine is available
@@ -1488,11 +1598,13 @@ export class QmonEngine {
     const edgeSignalValue = this.getScalarSignalValue(signalValues, "edge") ?? 0;
     const distanceSignalValue = this.getScalarSignalValue(signalValues, "distance") ?? 0;
     const directionalProbEdge = directionalAlphaResult.directionalAlpha * 0.12;
+    const marketUpProbability = action === "BUY_UP" ? (limitPrice ?? 0.5) : Math.max(0.01, Math.min(0.99, 1 - (limitPrice ?? 0.5)));
+    const targetUpProbability = Math.max(0.01, Math.min(0.99, marketUpProbability + directionalProbEdge));
+    const targetOutcomeProbability = action === "BUY_UP" ? targetUpProbability : 1 - targetUpProbability;
     const impliedProbability = limitPrice ?? 0.5;
-    const targetProbability = Math.max(0.01, Math.min(0.99, impliedProbability + directionalProbEdge));
-    const estimatedEdgeBps = (targetProbability - impliedProbability) * 10_000 * directionMultiplier;
+    const estimatedEdgeBps = (targetOutcomeProbability - impliedProbability) * 10_000;
     const baseShareCount = this.executionService.computeShareCount(limitPrice);
-    const grossEvUsd = baseShareCount === null ? 0 : baseShareCount * ((targetProbability - impliedProbability) * (limitPrice ?? 0.5));
+    const grossEvUsd = baseShareCount === null ? 0 : baseShareCount * (targetOutcomeProbability - impliedProbability);
     const estimatedFeeUsd = baseShareCount === null ? 0 : this.executionService.calculateTakerFeeUsd(baseShareCount, limitPrice);
     const slippageCostUsd = baseShareCount === null || limitPrice === null ? 0 : (predictedSlippageBps / 10_000) * baseShareCount * limitPrice;
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
@@ -1585,6 +1697,21 @@ export class QmonEngine {
       action,
       tradeabilityAssessment,
     };
+  }
+
+  /**
+   * Resolve the executable token price for the selected action from current market prices.
+   */
+  private getLimitPriceForAction(signalValues: Record<string, number | null | Record<string, number | null>>, action: TradingAction): number | null {
+    let limitPrice: number | null = null;
+
+    if (action === "BUY_UP") {
+      limitPrice = this.getScalarSignalValue(signalValues, "upAsk") ?? this.getScalarSignalValue(signalValues, "upPrice");
+    } else if (action === "BUY_DOWN") {
+      limitPrice = this.getScalarSignalValue(signalValues, "downAsk") ?? this.getScalarSignalValue(signalValues, "downPrice");
+    }
+
+    return limitPrice;
   }
 
   /**
@@ -2318,7 +2445,7 @@ export class QmonEngine {
   /**
    * Keep the seat out of fresh entries when the champion is no longer operationally ready.
    */
-  private isSeatChampionReady(championQmon: Qmon | null): boolean {
+  private isSeatChampionReady(population: QmonPopulation, championQmon: Qmon | null): boolean {
     let isReady = championQmon !== null;
     const currentChampionQmon = championQmon;
 
@@ -2336,6 +2463,10 @@ export class QmonEngine {
 
     if (isReady) {
       isReady = (currentChampionQmon?.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0;
+    }
+
+    if (isReady && config.QMON_REAL_REQUIRE_WALK_FORWARD && population.executionRuntime?.route === "real") {
+      isReady = population.realWalkForwardGate?.isPassed ?? false;
     }
 
     return isReady;
@@ -2440,8 +2571,8 @@ export class QmonEngine {
       shouldSkipEvolution: evaluationOptions?.shouldSkipEvolution ?? false,
       executionMode: evaluationOptions?.executionMode ?? "paper",
     };
-    const isChampionReady = this.isSeatChampionReady(championQmon);
-    const isRealExecutionMarket = this.isRealExecutionMarket(market, resolvedEvaluationOptions);
+    const isChampionReady = this.isSeatChampionReady(population, championQmon);
+    const isRealExecutionMarket = this.isRealExecutionMarket(updatedPopulation, resolvedEvaluationOptions);
 
     if (championQmon === null || championQmon.lifecycle !== "active") {
       return updatedPopulation;
@@ -2926,6 +3057,7 @@ export class QmonEngine {
       marketPaperSessionPnl: population.marketPaperSessionPnl + this.getPaperSessionPnlDelta(population, updatedQmons),
       lastUpdated: now,
     };
+    updatedPopulation = this.normalizePopulationExecutionRuntime(updatedPopulation, resolvedEvaluationOptions.executionMode);
 
     const activeChampionQmon =
       updatedPopulation.activeChampionQmonId !== null
@@ -3338,6 +3470,23 @@ export class QmonEngine {
     timeSegment: TimeSegment,
   ): EvaluationResult {
     const triggerGate = this.checkTriggerGate(qmon, firedTriggerIds);
+    if (!triggerGate.passed) {
+      return {
+        qmonId: qmon.id,
+        action: "HOLD",
+        score: 0,
+        directionalAlpha: 0,
+        estimatedNetEvUsd: 0,
+        tradeabilityRejectReason: "trigger-gate-blocked",
+        gates: {
+          trigger: false,
+          time: false,
+          regime: false,
+          threshold: false,
+        },
+      };
+    }
+
     const timeGate = this.checkTimeGate(qmon, timeSegment);
     if (!timeGate.passed) {
       return {
@@ -3374,10 +3523,13 @@ export class QmonEngine {
       };
     }
 
-    const bestExecutablePrice =
-      this.getScalarSignalValue(signalValues, "edge") !== null
-        ? 0.5 + Math.max(-0.35, Math.min(0.35, this.getScalarSignalValue(signalValues, "edge") ?? 0))
-        : 0.5;
+    const selectedAction =
+      this.computeDirectionalAlpha(qmon, signalValues).directionalAlpha >= (qmon.genome.minScoreBuy ?? 0.25)
+        ? "BUY_UP"
+        : this.computeDirectionalAlpha(qmon, signalValues).directionalAlpha <= -(qmon.genome.minScoreSell ?? 0.25)
+          ? "BUY_DOWN"
+          : "HOLD";
+    const bestExecutablePrice = this.getLimitPriceForAction(signalValues, selectedAction);
     const entryDecision = this.buildEntryDecision(qmon, signalValues, firedTriggerIds, bestExecutablePrice);
     const thresholdPassed = entryDecision.action !== "HOLD" && entryDecision.tradeabilityAssessment.shouldAllowEntry;
 

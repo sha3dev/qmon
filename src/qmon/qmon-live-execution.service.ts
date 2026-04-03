@@ -207,13 +207,14 @@ export class QmonLiveExecutionService {
     const marketRoutes: MarketExecutionRoute[] = [];
 
     for (const population of populations) {
-      const hasRealRouting = this.mode === "real";
-      const executionRuntime = this.getExecutionRuntime(population, hasRealRouting ? "real" : "paper");
+      const route = this.mode === "real" ? (population.executionRuntime?.route ?? "paper") : "paper";
+      const hasRealRouting = route === "real";
+      const executionRuntime = this.getExecutionRuntime(population, route);
       const confirmedLiveSeat = hasRealRouting ? this.buildConfirmedLiveSeatSummary(executionRuntime.confirmedVenueSeat) : null;
       const pendingIntentKey = hasRealRouting && executionRuntime.pendingIntent !== null ? this.buildPendingIntentKey(executionRuntime.pendingIntent) : null;
       const marketExecutionRoute: MarketExecutionRoute = {
         market: population.market,
-        route: hasRealRouting ? "real" : "paper",
+        route,
         executionState: hasRealRouting ? executionRuntime.executionState : "paper",
         isHalted: hasRealRouting ? executionRuntime.isHalted : false,
         hasPendingIntent: hasRealRouting ? executionRuntime.pendingIntent !== null : false,
@@ -510,9 +511,9 @@ export class QmonLiveExecutionService {
     const pendingVenueOrders = await this.listActiveOrdersPendingConfirmation();
 
     for (const population of qmonEngine.getFamilyState().populations) {
-      const market = population.market;
-
-      await this.syncMarket(qmonEngine, population, latestSignals, pendingVenueOrders);
+      if ((population.executionRuntime?.route ?? "paper") === "real") {
+        await this.syncMarket(qmonEngine, population, latestSignals, pendingVenueOrders);
+      }
     }
   }
 
@@ -838,7 +839,7 @@ export class QmonLiveExecutionService {
   }
 
   private shouldClearConfirmedExitDust(population: QmonPopulation | null, pendingOrder: QmonPendingOrder, market: PolymarketMarket): boolean {
-    const seatShareCount = population?.seatPosition.shareCount ?? null;
+    const seatShareCount = population?.seatPosition.shareCount ?? population?.executionRuntime?.confirmedVenueSeat?.shareCount ?? null;
     let shouldClearDust = false;
 
     if (pendingOrder.kind === "exit" && seatShareCount !== null && seatShareCount > 0) {
@@ -1048,6 +1049,8 @@ export class QmonLiveExecutionService {
         };
       } else {
         const postedOrderId = typeof postedOrder.id === "string" && postedOrder.id.trim().length > 0 ? postedOrder.id : null;
+        const postedOrderSize = typeof postedOrder.size === "number" ? postedOrder.size : size;
+        const postedOrderPrice = typeof postedOrder.price === "number" ? postedOrder.price : price;
 
         if (postedOrderId === null) {
           liveOrderAttemptResult = {
@@ -1062,7 +1065,7 @@ export class QmonLiveExecutionService {
         this.logLiveExecutionEvent(
           "live-order-posted",
           marketKey,
-          `posted ${op} ${direction} ${postedOrder.size.toFixed(2)} @ ${postedOrder.price.toFixed(4)} id=${postedOrderId}`,
+          `posted ${op} ${direction} ${postedOrderSize.toFixed(2)} @ ${postedOrderPrice.toFixed(4)} id=${postedOrderId}`,
         );
         const confirmation = await this.orderService.waitForOrderConfirmation({
           order: postedOrder,
@@ -1071,10 +1074,13 @@ export class QmonLiveExecutionService {
         });
 
         if (confirmation.ok && confirmation.status === "confirmed") {
+          const confirmedOrderSize = typeof confirmation.size === "number" ? confirmation.size : postedOrderSize;
+          const confirmedOrderPrice = typeof confirmation.price === "number" ? confirmation.price : postedOrderPrice;
+
           this.logLiveExecutionEvent(
             "live-order-confirmed",
             marketKey,
-            `confirmed ${op} ${direction} ${confirmation.size.toFixed(2)} @ ${confirmation.price.toFixed(4)} id=${postedOrderId}`,
+            `confirmed ${op} ${direction} ${confirmedOrderSize.toFixed(2)} @ ${confirmedOrderPrice.toFixed(4)} id=${postedOrderId}`,
           );
         }
 

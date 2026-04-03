@@ -231,9 +231,12 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
 
   const response = await fetch(`http://127.0.0.1:${address.port}/api/qmons`);
   const json = await response.json();
+  const firstPopulation = json.populations?.[0];
   const firstQmon = json.populations?.[0]?.qmons?.[0];
 
   assert.equal(response.status, 200);
+  assert.ok(firstPopulation);
+  assert.ok("realWalkForwardGate" in firstPopulation);
   assert.ok(firstQmon);
   assert.ok("stopLossPct" in firstQmon.genome);
   assert.ok("takeProfitPct" in firstQmon.genome);

@@ -250,6 +250,7 @@ export class HttpServerService {
       seatLastCloseTimestamp: population.seatLastCloseTimestamp,
       seatLastWindowStartMs: population.seatLastWindowStartMs,
       seatLastSettledWindowStartMs: population.seatLastSettledWindowStartMs,
+      realWalkForwardGate: population.realWalkForwardGate ?? null,
       executionRuntime: population.executionRuntime ?? null,
       qmons: qmons.map((qmon) => this.buildQmonSummary(qmon as Record<string, unknown>)),
     };

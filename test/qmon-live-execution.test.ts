@@ -74,8 +74,8 @@ function createPopulation(
     executionRuntime:
       executionRuntime ??
       {
-        route: "paper",
-        executionState: "paper",
+        route: "real",
+        executionState: "real-armed",
         pendingIntent: null,
         orderId: null,
         submittedAt: null,
@@ -464,6 +464,82 @@ test("QmonLiveExecutionService routes all markets through real execution when re
   ]);
   assert.equal(status.marketRoutes.find((route) => route.market === "eth-5m")?.route, "real");
   assert.equal(status.marketRoutes.find((route) => route.market === "btc-5m")?.route, "real");
+});
+
+test("QmonLiveExecutionService skips markets downgraded to paper by the walk-forward gate", async () => {
+  let postCount = 0;
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 42,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => {
+      postCount += 1;
+
+      return {
+        id: "order-1",
+        date: new Date(),
+      };
+    },
+    waitForOrderConfirmation: async () => ({
+      id: "order-1",
+      ok: true,
+      status: "confirmed" as const,
+      latency: 1,
+      date: new Date(),
+      market: createMockMarket("eth-updown-5m"),
+      size: 5,
+      price: 0.38,
+      op: "buy" as const,
+      direction: "up" as const,
+    }),
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const engine = createMockEngine([
+    createPopulation(
+      "eth-5m",
+      createPendingOrder("eth-5m", "entry", "BUY_UP"),
+      null,
+      {
+        route: "paper",
+        executionState: "paper",
+        pendingIntent: null,
+        orderId: null,
+        submittedAt: null,
+        confirmedVenueSeat: null,
+        pendingVenueOrders: [],
+        recoveryStartedAt: null,
+        lastReconciledAt: null,
+        lastError: null,
+        isHalted: false,
+      },
+    ),
+  ]);
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const status = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(postCount, 0);
+  assert.equal(status.marketRoutes[0]?.route, "paper");
+  assert.equal(status.marketRoutes[0]?.executionState, "paper");
 });
 
 test("QmonLiveExecutionService logs posted and confirmed real orders at warn level", async () => {
