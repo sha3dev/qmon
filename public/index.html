@@ -440,24 +440,25 @@
 
     /* Card header */
     .qmon-head {
-      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+      display: flex; flex-direction: column; gap: 7px;
       padding: 12px 14px; background: rgba(34,38,54,0.96);
       border-bottom: 1px solid var(--border);
     }
     .qmon-id { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
-    .qmon-market { font-size: 9px; color: var(--text-muted); }
-    .qmon-head-id { display:flex; align-items:flex-start; gap:10px; min-width:0; flex:1; }
-    .qmon-badge-row {
-      display:flex; gap:4px; align-items:center; flex-wrap:wrap;
-      min-width:72px; max-width:96px;
+    .qmon-market {
+      font-size: 9px; color: var(--text-muted);
+      white-space: nowrap;
     }
-    .qmon-title-block { min-width:0; flex:1; }
-    .qmon-title-row {
-      display:flex; align-items:baseline; gap:8px;
+    .qmon-head-top {
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
       min-width:0;
     }
+    .qmon-head-id { display:flex; align-items:center; gap:6px; min-width:0; flex:1; }
+    .qmon-title-row {
+      display:flex; align-items:baseline; gap:8px; min-width:0;
+    }
     .qmon-strategy-line {
-      margin-top: 4px; font-size: 9px; color: var(--text-secondary);
+      font-size: 9px; color: var(--text-secondary);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
     }
     .qmon-mode {
@@ -852,23 +853,21 @@
         <div class="qmon-card" :class="{ 'has-position': hasAnyPosition(qmon), 'preset-strategy': isPresetQmon(qmon) }" @click="openModal(qmon)">
           <!-- Header -->
           <div class="qmon-head">
-            <div class="qmon-head-id">
-              <div class="qmon-badge-row">
+            <div class="qmon-head-top">
+              <div class="qmon-head-id">
                 <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
                 <span class="strategy-badge" :class="{ preset: isPresetQmon(qmon) }" x-text="strategyKindLabel(qmon)"></span>
                 <template x-if="isExploratoryQmon(qmon)">
                   <span class="explorer-badge">EXP</span>
                 </template>
-              </div>
-              <div class="qmon-title-block">
                 <div class="qmon-title-row">
                   <span class="qmon-id" x-text="qmon.id"></span>
                   <span class="qmon-market" x-text="qmon.market"></span>
                 </div>
-                <div class="qmon-strategy-line" x-text="strategyDisplayName(qmon)"></div>
               </div>
+              <span class="qmon-mode" :class="'mode-' + roleClass(qmon)" x-text="roleLabel(qmon)"></span>
             </div>
-            <span class="qmon-mode" :class="'mode-' + roleClass(qmon)" x-text="roleLabel(qmon)"></span>
+            <div class="qmon-strategy-line" x-text="strategyDisplayName(qmon)"></div>
           </div>
 
           <!-- Body -->
