@@ -228,6 +228,32 @@ test("HttpServerService serves structured signals without using the removed lega
   });
 });
 
+test("HttpServerService computes signals from t-1 snapshots and reserves the newest snapshot for fills", () => {
+  const signalSnapshotLengths: number[] = [];
+  const latestSignalTimestamps: number[] = [];
+  const fakeSignalEngine = {
+    calculateStructured: (snapshots: readonly { generated_at: number }[]) => {
+      signalSnapshotLengths.push(snapshots.length);
+      latestSignalTimestamps.push(snapshots[snapshots.length - 1]?.generated_at ?? 0);
+
+      return {};
+    },
+  };
+  const fakeTriggerEngine = {
+    evaluate: () => [],
+  };
+  const fakeRegimeEngine = {
+    evaluate: () => ({ states: {}, events: [] }),
+  };
+  const httpServerService = new HttpServerService(fakeSignalEngine as never, fakeTriggerEngine as never, fakeRegimeEngine as never);
+
+  httpServerService.updateSignals([{ generated_at: 10 }]);
+  httpServerService.updateSignals([{ generated_at: 10 }, { generated_at: 20 }]);
+
+  assert.deepEqual(signalSnapshotLengths, [0, 1]);
+  assert.deepEqual(latestSignalTimestamps, [0, 10]);
+});
+
 test("ServiceRuntime persists immediately for critical mutations and batches non-critical ones", async () => {
   let saveCount = 0;
   const fakeQmonEngine = {

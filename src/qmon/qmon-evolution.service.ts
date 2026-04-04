@@ -34,6 +34,12 @@ type EvolutionResult = {
 
 type HydrateNewbornQmon = (newbornQmon: Qmon, currentWindowStartMs: number | null) => Qmon;
 
+type ParentPerformanceGuidance = {
+  readonly triggerIds: readonly string[];
+  readonly directionRegimeGenes: readonly [boolean, boolean, boolean] | null;
+  readonly volatilityRegimeGenes: readonly [boolean, boolean, boolean] | null;
+};
+
 /**
  * @section class
  */
@@ -227,6 +233,10 @@ export class QmonEvolutionService {
       totalTrades: 0,
       totalPnl: 0,
       peakTotalPnl: 0,
+      observedTicks: 0,
+      positionHoldTicks: 0,
+      marketExposureRatio: 0,
+      tradesPerWindow: 0,
       championScore: null,
       fitnessScore: null,
       paperWindowMedianPnl: null,
@@ -262,6 +272,104 @@ export class QmonEvolutionService {
     };
   }
 
+  private collectProfitableTriggerIds(parentQmons: readonly Qmon[]): readonly string[] {
+    const triggerPnlById = new Map<string, number>();
+
+    for (const parentQmon of parentQmons) {
+      for (const triggerSlice of parentQmon.metrics.triggerBreakdown ?? []) {
+        if (triggerSlice.tradeCount > 0 && triggerSlice.totalPnl > 0 && !triggerSlice.triggerId.startsWith("regime:")) {
+          triggerPnlById.set(triggerSlice.triggerId, (triggerPnlById.get(triggerSlice.triggerId) ?? 0) + triggerSlice.totalPnl);
+        }
+      }
+    }
+
+    const triggerIds = [...triggerPnlById.entries()]
+      .sort((leftEntry, rightEntry) => rightEntry[1] - leftEntry[1])
+      .slice(0, 2)
+      .map((triggerEntry) => triggerEntry[0]);
+
+    return triggerIds;
+  }
+
+  private collectProfitableRegimeGenes(parentQmons: readonly Qmon[]): {
+    readonly directionRegimeGenes: readonly [boolean, boolean, boolean] | null;
+    readonly volatilityRegimeGenes: readonly [boolean, boolean, boolean] | null;
+  } {
+    const directionGenes: [boolean, boolean, boolean] = [false, false, false];
+    const volatilityGenes: [boolean, boolean, boolean] = [false, false, false];
+    let hasPositiveRegime = false;
+
+    for (const parentQmon of parentQmons) {
+      for (const regimeSlice of parentQmon.metrics.regimeBreakdown ?? []) {
+        if (regimeSlice.tradeCount > 0 && regimeSlice.totalPnl > 0) {
+          const regimeParts = regimeSlice.regime.replace("regime:", "").split("|");
+          const directionRegime = regimeParts[0] ?? "";
+          const volatilityRegime = regimeParts[1] ?? "";
+
+          hasPositiveRegime = true;
+
+          if (directionRegime === "trending-up") {
+            directionGenes[0] = true;
+          } else if (directionRegime === "trending-down") {
+            directionGenes[1] = true;
+          } else if (directionRegime === "flat") {
+            directionGenes[2] = true;
+          }
+
+          if (volatilityRegime === "high") {
+            volatilityGenes[0] = true;
+          } else if (volatilityRegime === "normal") {
+            volatilityGenes[1] = true;
+          } else if (volatilityRegime === "low") {
+            volatilityGenes[2] = true;
+          }
+        }
+      }
+    }
+
+    return {
+      directionRegimeGenes: hasPositiveRegime ? directionGenes : null,
+      volatilityRegimeGenes: hasPositiveRegime ? volatilityGenes : null,
+    };
+  }
+
+  private buildParentPerformanceGuidance(parentAQmon: Qmon, parentBQmon: Qmon): ParentPerformanceGuidance {
+    const parentQmons = [parentAQmon, parentBQmon];
+    const regimeGenes = this.collectProfitableRegimeGenes(parentQmons);
+    const parentPerformanceGuidance: ParentPerformanceGuidance = {
+      triggerIds: this.collectProfitableTriggerIds(parentQmons),
+      directionRegimeGenes: regimeGenes.directionRegimeGenes,
+      volatilityRegimeGenes: regimeGenes.volatilityRegimeGenes,
+    };
+
+    return parentPerformanceGuidance;
+  }
+
+  private applyTriggerGuidance(triggerGenes: readonly QmonGenome["triggerGenes"][number][], triggerIds: readonly string[]): readonly QmonGenome["triggerGenes"][number][] {
+    let guidedTriggerGenes = triggerGenes.map((triggerGene) => ({ ...triggerGene }));
+
+    if (triggerIds.length > 0) {
+      guidedTriggerGenes = guidedTriggerGenes.map((triggerGene) => ({
+        ...triggerGene,
+        isEnabled: triggerIds.includes(triggerGene.triggerId),
+      }));
+    }
+
+    return guidedTriggerGenes;
+  }
+
+  private applyParentPerformanceGuidance(offspringGenome: QmonGenome, parentPerformanceGuidance: ParentPerformanceGuidance): QmonGenome {
+    const guidedGenome: QmonGenome = {
+      ...offspringGenome,
+      triggerGenes: this.applyTriggerGuidance(offspringGenome.triggerGenes, parentPerformanceGuidance.triggerIds),
+      timeWindowGenes: offspringGenome.timeWindowGenes,
+      directionRegimeGenes: parentPerformanceGuidance.directionRegimeGenes ?? offspringGenome.directionRegimeGenes,
+      volatilityRegimeGenes: parentPerformanceGuidance.volatilityRegimeGenes ?? offspringGenome.volatilityRegimeGenes,
+    };
+
+    return guidedGenome;
+  }
+
   private createChildQmon(market: MarketKey, parentAQmon: Qmon, parentBQmon: Qmon): Qmon {
     const createdAt = Date.now();
     const nextGeneration = Math.max(parentAQmon.generation, parentBQmon.generation) + 1;
@@ -278,7 +386,10 @@ export class QmonEvolutionService {
       strategyDescription: `Adaptive genome-born QMON produced from parents ${parentAQmon.id} and ${parentBQmon.id}.`,
       presetStrategyId: null,
       presetFamily: null,
-      genome: this.genomeService.createOffspringGenome(parentAQmon.genome, parentBQmon.genome, adaptiveMutationRate),
+      genome: this.applyParentPerformanceGuidance(
+        this.genomeService.createOffspringGenome(parentAQmon.genome, parentBQmon.genome, adaptiveMutationRate),
+        this.buildParentPerformanceGuidance(parentAQmon, parentBQmon),
+      ),
       role: "candidate",
       lifecycle: "active",
       generation: nextGeneration,

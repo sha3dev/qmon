@@ -350,6 +350,39 @@ test("QmonEngine keeps paper entry pending until the simulated wait elapses", ()
   assert.equal(filledQmon.decisionHistory.length, 1);
 });
 
+test("QmonEngine tracks exposure ticks and trades-per-window metrics", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+
+  const queuedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(queuedQmon.metrics.observedTicks, 1);
+  assert.equal(queuedQmon.metrics.positionHoldTicks, 0);
+  assert.equal(queuedQmon.metrics.marketExposureRatio, 0);
+  assert.equal(queuedQmon.metrics.tradesPerWindow, 0);
+
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+  withMockNow(4_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), [], entrySnapshots);
+  });
+
+  const openQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(openQmon.position.action, "BUY_UP");
+  assert.equal(openQmon.metrics.observedTicks, 3);
+  assert.equal(openQmon.metrics.positionHoldTicks, 1);
+  assert.equal(openQmon.metrics.marketExposureRatio, 1 / 3);
+  assert.equal(openQmon.metrics.tradesPerWindow, 1);
+});
+
 test("QmonEngine uses minimum entry shares when configured to disable EV size scaling", () => {
   const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;
@@ -988,6 +1021,7 @@ test("QmonEngine arms real routing when the champion passes the walk-forward gat
   const championService = new QmonChampionService();
   const championQmon = championService.refreshMetrics({
     ...createQmon("champion"),
+    windowsLived: 20,
     paperWindowPnls: [0.8, 0.7, 0.9, 0.6, 0.8, 0.7],
     paperWindowSlippageBps: [12, 11, 12, 13, 10, 12],
     metrics: {
@@ -1055,7 +1089,7 @@ test("QmonEngine reports cache hits and avoids global metric refresh churn on re
   );
   const marketStartMs = 100;
   const marketEndMs = 10_000;
-  const snapshots = [createSnapshot(0.1, 0.9)];
+  const snapshots = [createSnapshot(0.1, 0.9), createSnapshot(0.1, 0.9)];
 
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);

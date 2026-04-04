@@ -34,7 +34,7 @@ const PRESET_SIGNAL_AGREEMENT_FLOOR = 3;
 const PRESET_FAMILY_IDS = [
   "late-threshold-sprint",
   "early-breakout-ramp",
-  "midline-momentum-cross",
+  "sma-crossover-follow",
   "spread-compression-burst",
   "spread-shock-fade",
   "microprice-pressure-follow",
@@ -42,9 +42,9 @@ const PRESET_FAMILY_IDS = [
   "book-depth-wall-ride",
   "liquidity-vacuum-snapback",
   "stale-oracle-catchup",
-  "cross-asset-lag-follow",
+  "momentum-lookback-pulse",
   "edge-distance-confluence",
-  "mean-reversion-band",
+  "bollinger-zscore-reversion",
   "time-decay-consensus-drift",
   "high-price-continuation",
   "low-price-capitulation-rebound",
@@ -57,7 +57,7 @@ const PRESET_FAMILY_IDS = [
 const PRESET_TRIGGER_IDS_BY_FAMILY: Record<PresetFamilyId, readonly string[]> = {
   "late-threshold-sprint": ["extreme-distance", "strong-momentum"],
   "early-breakout-ramp": ["breakout", "acceleration-spike"],
-  "midline-momentum-cross": ["momentum-shift", "consensus-flip"],
+  "sma-crossover-follow": ["momentum-shift", "consensus-flip"],
   "spread-compression-burst": ["breakout", "book-pressure"],
   "spread-shock-fade": ["liquidity-shift", "reversion-extreme"],
   "microprice-pressure-follow": ["book-pressure", "consensus-flip"],
@@ -65,9 +65,9 @@ const PRESET_TRIGGER_IDS_BY_FAMILY: Record<PresetFamilyId, readonly string[]> = 
   "book-depth-wall-ride": ["book-pressure", "consensus-flip"],
   "liquidity-vacuum-snapback": ["liquidity-shift", "mispricing"],
   "stale-oracle-catchup": ["efficiency-anomaly", "time-decay"],
-  "cross-asset-lag-follow": ["strong-momentum", "consensus-flip"],
+  "momentum-lookback-pulse": ["strong-momentum", "consensus-flip"],
   "edge-distance-confluence": ["mispricing", "consensus-flip"],
-  "mean-reversion-band": ["reversion-extreme", "mispricing"],
+  "bollinger-zscore-reversion": ["reversion-extreme", "mispricing"],
   "time-decay-consensus-drift": ["time-decay", "consensus-flip"],
   "high-price-continuation": ["strong-momentum", "breakout"],
   "low-price-capitulation-rebound": ["reversion-extreme", "extreme-distance"],
@@ -80,7 +80,7 @@ const PRESET_TRIGGER_IDS_BY_FAMILY: Record<PresetFamilyId, readonly string[]> = 
 const PRESET_FAMILY_LABELS: Record<PresetFamilyId, string> = {
   "late-threshold-sprint": "Late Threshold Sprint",
   "early-breakout-ramp": "Early Breakout Ramp",
-  "midline-momentum-cross": "Midline Momentum Cross",
+  "sma-crossover-follow": "SMA Crossover Follow",
   "spread-compression-burst": "Spread Compression Burst",
   "spread-shock-fade": "Spread Shock Fade",
   "microprice-pressure-follow": "Microprice Pressure Follow",
@@ -88,9 +88,9 @@ const PRESET_FAMILY_LABELS: Record<PresetFamilyId, string> = {
   "book-depth-wall-ride": "Book Depth Wall Ride",
   "liquidity-vacuum-snapback": "Liquidity Vacuum Snapback",
   "stale-oracle-catchup": "Stale Oracle Catchup",
-  "cross-asset-lag-follow": "Cross Asset Lag Follow",
+  "momentum-lookback-pulse": "Momentum Lookback Pulse",
   "edge-distance-confluence": "Edge Distance Confluence",
-  "mean-reversion-band": "Mean Reversion Band",
+  "bollinger-zscore-reversion": "Bollinger ZScore Reversion",
   "time-decay-consensus-drift": "Time Decay Consensus Drift",
   "high-price-continuation": "High Price Continuation",
   "low-price-capitulation-rebound": "Low Price Capitulation Rebound",
@@ -225,8 +225,8 @@ export class QmonPresetStrategyService {
         ? "late-window 0.8-0.95 continuation after one token starts trending to resolution"
         : presetFamily === "early-breakout-ramp"
           ? "early-window breakout acceleration before the order book thickens"
-          : presetFamily === "midline-momentum-cross"
-            ? "mid-window momentum crossing through fair-price territory"
+          : presetFamily === "sma-crossover-follow"
+            ? "short-vs-long SMA proxy crossovers with trend confirmation"
             : presetFamily === "spread-compression-burst"
               ? "tight-spread breakouts confirmed by book pressure"
               : presetFamily === "spread-shock-fade"
@@ -241,12 +241,12 @@ export class QmonPresetStrategyService {
                         ? "vacuum reversion when depth disappears and distance is stretched"
                         : presetFamily === "stale-oracle-catchup"
                           ? "catch-up moves when staleness resolves and cross-asset drift agrees"
-                          : presetFamily === "cross-asset-lag-follow"
-                            ? "lead-lag continuation from cross-asset momentum plus local velocity"
+                          : presetFamily === "momentum-lookback-pulse"
+                            ? "fast-vs-slow momentum lookback continuation with local velocity confirmation"
                             : presetFamily === "edge-distance-confluence"
                               ? "aligned edge and distance with low spread tax"
-                              : presetFamily === "mean-reversion-band"
-                                ? "snapback from stretched mean-reversion bands"
+                              : presetFamily === "bollinger-zscore-reversion"
+                                ? "Bollinger-style band stretch and z-score snapback"
                                 : presetFamily === "time-decay-consensus-drift"
                                   ? "late consensus drift where time decay and pressure agree"
                                   : presetFamily === "high-price-continuation"
@@ -283,7 +283,7 @@ export class QmonPresetStrategyService {
       timeWindowGenes = variantIndex % 3 === 0 ? [false, true, true] : [false, false, true];
     } else if (presetFamily === "early-breakout-ramp" || presetFamily === "volatility-expansion-break") {
       timeWindowGenes = variantIndex % 3 === 0 ? [true, true, false] : [true, false, false];
-    } else if (presetFamily === "midline-momentum-cross" || presetFamily === "calm-range-drift") {
+    } else if (presetFamily === "sma-crossover-follow" || presetFamily === "calm-range-drift") {
       timeWindowGenes = [false, true, false];
     }
 
@@ -295,7 +295,7 @@ export class QmonPresetStrategyService {
 
     if (
       presetFamily === "early-breakout-ramp" ||
-      presetFamily === "cross-asset-lag-follow" ||
+      presetFamily === "momentum-lookback-pulse" ||
       presetFamily === "high-price-continuation" ||
       presetFamily === "volatility-expansion-break"
     ) {
@@ -303,7 +303,7 @@ export class QmonPresetStrategyService {
     } else if (
       presetFamily === "spread-shock-fade" ||
       presetFamily === "liquidity-vacuum-snapback" ||
-      presetFamily === "mean-reversion-band" ||
+      presetFamily === "bollinger-zscore-reversion" ||
       presetFamily === "low-price-capitulation-rebound" ||
       presetFamily === "token-pressure-reversal"
     ) {
@@ -323,7 +323,7 @@ export class QmonPresetStrategyService {
       presetFamily === "imbalance-flip-chase"
     ) {
       volatilityRegimeGenes = [true, true, false];
-    } else if (presetFamily === "calm-range-drift" || presetFamily === "mean-reversion-band") {
+    } else if (presetFamily === "calm-range-drift" || presetFamily === "bollinger-zscore-reversion") {
       volatilityRegimeGenes = [false, true, true];
     } else if (variantIndex % 5 === 4) {
       volatilityRegimeGenes = [false, true, false];
@@ -361,7 +361,7 @@ export class QmonPresetStrategyService {
       presetFamily === "microprice-pressure-follow" || presetFamily === "imbalance-flip-chase" || presetFamily === "book-depth-wall-ride"
         ? "microstructure-failure"
         : presetFamily === "early-breakout-ramp" ||
-            presetFamily === "cross-asset-lag-follow" ||
+            presetFamily === "momentum-lookback-pulse" ||
             presetFamily === "high-price-continuation" ||
             presetFamily === "volatility-expansion-break"
           ? "alpha-flip"
@@ -376,14 +376,17 @@ export class QmonPresetStrategyService {
   }
 
   private createPresetPredictiveSignalGenes(presetFamily: PresetFamilyId, variantIndex: number): readonly PredictiveSignalGene[] {
-    const orientation = presetFamily === "spread-shock-fade" || presetFamily === "mean-reversion-band" || presetFamily === "liquidity-vacuum-snapback" ? "inverse" : "aligned";
+    const orientation =
+      presetFamily === "spread-shock-fade" || presetFamily === "bollinger-zscore-reversion" || presetFamily === "liquidity-vacuum-snapback"
+        ? "inverse"
+        : "aligned";
     const predictiveSignalGenes: readonly PredictiveSignalGene[] =
-      presetFamily === "cross-asset-lag-follow"
+      presetFamily === "momentum-lookback-pulse"
         ? [
             { signalId: "crossAssetMomentum", orientation: "aligned", weightTier: 3 },
             { signalId: "momentum", orientation: "aligned", weightTier: 2 },
           ]
-        : presetFamily === "mean-reversion-band" || presetFamily === "low-price-capitulation-rebound"
+        : presetFamily === "bollinger-zscore-reversion" || presetFamily === "low-price-capitulation-rebound"
           ? [
               { signalId: "meanReversion", orientation: "inverse", weightTier: 3 },
               { signalId: "distance", orientation: "inverse", weightTier: 2 },
@@ -579,10 +582,11 @@ export class QmonPresetStrategyService {
     return directionalAlpha;
   }
 
-  private evaluateMidlineMomentumCross(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
-    const midlineBias = (context.upPrice - 0.5) * 1.6 + context.momentum * 0.7 + context.velocity * 0.3;
-    const distanceFilter = Math.abs(context.distance) >= presetStrategyDefinition.distanceThreshold ? context.distance * 0.2 : 0;
-    const directionalAlpha = this.clampAlpha((midlineBias + distanceFilter) * presetStrategyDefinition.alphaScale);
+  private evaluateSmaCrossoverFollow(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
+    const shortSmaProxy = context.upPrice + context.momentum * 0.08 + context.velocity * 0.05;
+    const longSmaProxy = 0.5 + context.distance * 0.06;
+    const crossoverAlpha = (shortSmaProxy - longSmaProxy) * 4 + context.momentum * 0.35;
+    const directionalAlpha = this.clampAlpha(crossoverAlpha * presetStrategyDefinition.alphaScale);
 
     return directionalAlpha;
   }
@@ -644,9 +648,10 @@ export class QmonPresetStrategyService {
     return directionalAlpha;
   }
 
-  private evaluateCrossAssetLagFollow(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
-    const lagAlpha = context.crossAssetMomentum * 0.55 + context.momentum * 0.3 + context.velocity * 0.2 + context.tokenPressure * 0.1;
-    const directionalAlpha = this.clampAlpha(lagAlpha * presetStrategyDefinition.alphaScale);
+  private evaluateMomentumLookbackPulse(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
+    const fastLookbackAlpha = context.momentum * 0.55 + context.velocity * 0.35;
+    const slowLookbackAlpha = context.crossAssetMomentum * 0.35 + context.edge * 0.15;
+    const directionalAlpha = this.clampAlpha((fastLookbackAlpha + slowLookbackAlpha + context.tokenPressure * 0.1) * presetStrategyDefinition.alphaScale);
 
     return directionalAlpha;
   }
@@ -659,9 +664,10 @@ export class QmonPresetStrategyService {
     return directionalAlpha;
   }
 
-  private evaluateMeanReversionBand(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
-    const stretchedBand = Math.abs(context.distance) >= presetStrategyDefinition.distanceThreshold ? -context.distance * 0.4 : 0;
-    const directionalAlpha = this.clampAlpha((stretchedBand - context.meanReversion * 0.45 - context.velocity * 0.1) * presetStrategyDefinition.alphaScale);
+  private evaluateBollingerZscoreReversion(presetStrategyDefinition: QmonPresetStrategyDefinition, context: PresetSignalContext): number {
+    const zScoreProxy = Math.abs(context.distance) >= presetStrategyDefinition.distanceThreshold ? context.distance * 0.65 + context.meanReversion * 0.45 : 0;
+    const bandWidthBias = context.spread <= presetStrategyDefinition.spreadLimit ? 0.1 : -0.15;
+    const directionalAlpha = this.clampAlpha((-zScoreProxy - context.velocity * 0.1 + bandWidthBias) * presetStrategyDefinition.alphaScale);
 
     return directionalAlpha;
   }
@@ -725,8 +731,8 @@ export class QmonPresetStrategyService {
       directionalAlpha = this.evaluateLateThresholdSprint(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "early-breakout-ramp") {
       directionalAlpha = this.evaluateEarlyBreakoutRamp(presetStrategyDefinition, context);
-    } else if (presetStrategyDefinition.presetFamily === "midline-momentum-cross") {
-      directionalAlpha = this.evaluateMidlineMomentumCross(presetStrategyDefinition, context);
+    } else if (presetStrategyDefinition.presetFamily === "sma-crossover-follow") {
+      directionalAlpha = this.evaluateSmaCrossoverFollow(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "spread-compression-burst") {
       directionalAlpha = this.evaluateSpreadCompressionBurst(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "spread-shock-fade") {
@@ -741,12 +747,12 @@ export class QmonPresetStrategyService {
       directionalAlpha = this.evaluateLiquidityVacuumSnapback(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "stale-oracle-catchup") {
       directionalAlpha = this.evaluateStaleOracleCatchup(presetStrategyDefinition, context);
-    } else if (presetStrategyDefinition.presetFamily === "cross-asset-lag-follow") {
-      directionalAlpha = this.evaluateCrossAssetLagFollow(presetStrategyDefinition, context);
+    } else if (presetStrategyDefinition.presetFamily === "momentum-lookback-pulse") {
+      directionalAlpha = this.evaluateMomentumLookbackPulse(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "edge-distance-confluence") {
       directionalAlpha = this.evaluateEdgeDistanceConfluence(presetStrategyDefinition, context);
-    } else if (presetStrategyDefinition.presetFamily === "mean-reversion-band") {
-      directionalAlpha = this.evaluateMeanReversionBand(presetStrategyDefinition, context);
+    } else if (presetStrategyDefinition.presetFamily === "bollinger-zscore-reversion") {
+      directionalAlpha = this.evaluateBollingerZscoreReversion(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "time-decay-consensus-drift") {
       directionalAlpha = this.evaluateTimeDecayConsensusDrift(presetStrategyDefinition, context);
     } else if (presetStrategyDefinition.presetFamily === "high-price-continuation") {

@@ -229,6 +229,9 @@ export class HttpServerService {
         fitnessScore: qmonMetrics.fitnessScore ?? null,
         totalEstimatedNetEvUsd: qmonMetrics.totalEstimatedNetEvUsd ?? 0,
         feeRatio: qmonMetrics.feeRatio ?? null,
+        marketExposureRatio: qmonMetrics.marketExposureRatio ?? 0,
+        positionHoldTicks: qmonMetrics.positionHoldTicks ?? 0,
+        tradesPerWindow: qmonMetrics.tradesPerWindow ?? 0,
         isChampionEligible: qmonMetrics.isChampionEligible ?? false,
       },
       paperWindowBaselinePnl: qmon.paperWindowBaselinePnl,
@@ -313,6 +316,16 @@ export class HttpServerService {
   }
 
   /**
+   * Use t-1 snapshots for signals so the newest snapshot remains reserved for fills.
+   */
+  private getLaggedSignalSnapshots(snapshots: readonly Record<string, unknown>[]): readonly { generated_at: number }[] {
+    const laggedSnapshots = snapshots.length > 1 ? snapshots.slice(0, -1) : [];
+    const typedLaggedSnapshots = laggedSnapshots as readonly { generated_at: number }[];
+
+    return typedLaggedSnapshots;
+  }
+
+  /**
    * Build the operator-facing dashboard payload from canonical runtime state.
    */
   private buildDashboardPayload(diagnosticsOverview: unknown): QmonDashboardPayload {
@@ -355,7 +368,7 @@ export class HttpServerService {
    * snapshot buffer is refreshed so the API endpoint serves fresh data.
    */
   public updateSignals(snapshots: readonly Record<string, unknown>[]): void {
-    const typed = snapshots as readonly { generated_at: number }[];
+    const typed = this.getLaggedSignalSnapshots(snapshots);
     this.lastStructuredResult = this.signalEngine.calculateStructured(typed);
     this.lastTriggers = this.triggerEngine.evaluate(this.lastStructuredResult);
     const regimeResult = this.regimeEngine.evaluate(this.lastStructuredResult);

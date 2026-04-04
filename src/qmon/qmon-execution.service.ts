@@ -369,7 +369,7 @@ export class QmonExecutionService {
     const checkDelayMs = this.getPaperOrderCheckDelayMs(pendingOrder, fillResult);
     let hasReachedCheckTime = false;
 
-    if (orderAgeMs >= checkDelayMs) {
+    if (timestamp > pendingOrder.createdAt && orderAgeMs >= checkDelayMs) {
       hasReachedCheckTime = true;
     }
 

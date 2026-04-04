@@ -31,6 +31,11 @@ const CHAMPION_AVG_SLIPPAGE_PENALTY = 8;
 const CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY = 220;
 const CHAMPION_WORST_WINDOW_PENALTY = 80;
 const CHAMPION_DRAWDOWN_PENALTY = 55;
+const CHAMPION_EXPOSURE_RATIO_PENALTY = 120;
+const CHAMPION_TRADES_PER_WINDOW_PENALTY = 90;
+const CHAMPION_MAX_EXPOSURE_RATIO = 0.8;
+const CHAMPION_MAX_TRADES_PER_WINDOW = 1.5;
+const CHAMPION_MIN_NET_PNL_PER_TRADE = 0.1;
 const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
 const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
 
@@ -46,6 +51,8 @@ type ChampionInputs = {
   readonly netPnlPerTrade: number;
   readonly feeRatio: number;
   readonly slippageRatio: number;
+  readonly marketExposureRatio: number;
+  readonly tradesPerWindow: number;
   readonly grossAlphaCapture: number;
   readonly noTradeDisciplineScore: number;
   readonly regimeBreakdown: readonly RegimePerformanceSlice[];
@@ -253,6 +260,8 @@ export class QmonChampionService {
     const regimeBreakdown = this.buildRegimeBreakdown(qmon);
     const triggerBreakdown = this.buildTriggerBreakdown(qmon);
     const maxDrawdown = this.calculateMaxDrawdown(qmon);
+    const marketExposureRatio = qmon.metrics.marketExposureRatio ?? 0;
+    const tradesPerWindow = qmon.metrics.tradesPerWindow ?? (qmon.windowsLived > 0 ? qmon.metrics.totalTrades / qmon.windowsLived : qmon.metrics.totalTrades);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
@@ -262,7 +271,9 @@ export class QmonChampionService {
     const instabilityPenalty =
       negativeWindowRateLast10 * CHAMPION_NEGATIVE_WINDOW_RATE_PENALTY +
       Math.max(0, -(worstWindowPnlLast10 ?? 0)) * CHAMPION_WORST_WINDOW_PENALTY +
-      maxDrawdown * CHAMPION_DRAWDOWN_PENALTY;
+      maxDrawdown * CHAMPION_DRAWDOWN_PENALTY +
+      Math.max(0, marketExposureRatio - 0.45) * CHAMPION_EXPOSURE_RATIO_PENALTY +
+      Math.max(0, tradesPerWindow - 1) * CHAMPION_TRADES_PER_WINDOW_PENALTY;
     const consistencyBonus =
       Math.max(0, (paperWindowMedianPnl ?? 0) * CHAMPION_RECENT_MEDIAN_WEIGHT) +
       Math.max(0, paperWindowPnlSum * CHAMPION_RECENT_SUM_WEIGHT) +
@@ -310,6 +321,12 @@ export class QmonChampionService {
     if (positiveRegimeCount < CHAMPION_MIN_REGIME_COVERAGE && regimeBreakdown.length >= CHAMPION_MIN_REGIME_COVERAGE) {
       championEligibilityReasons.push("weak-regime-coverage");
     }
+    if (marketExposureRatio > CHAMPION_MAX_EXPOSURE_RATIO && netPnlPerTrade < CHAMPION_MIN_NET_PNL_PER_TRADE) {
+      championEligibilityReasons.push("overexposed-without-edge");
+    }
+    if (tradesPerWindow > CHAMPION_MAX_TRADES_PER_WINDOW && netPnlPerTrade < CHAMPION_MIN_NET_PNL_PER_TRADE) {
+      championEligibilityReasons.push("overtrading-without-edge");
+    }
 
     // OUT-OF-SAMPLE VALIDATION GATE: Must pass 2 of 3 time periods
     const recentPositive = paperWindowPnlSum > 0;
@@ -345,6 +362,8 @@ export class QmonChampionService {
       netPnlPerTrade,
       feeRatio,
       slippageRatio,
+      marketExposureRatio,
+      tradesPerWindow,
       grossAlphaCapture,
       noTradeDisciplineScore,
       regimeBreakdown,

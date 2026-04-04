@@ -377,6 +377,30 @@ test("QmonChampionService computes fee ratio from lifetime pnl and fees", () => 
   assert.equal(Number((refreshedQmon.metrics.feeRatio ?? 0).toFixed(3)), 0.413);
 });
 
+test("QmonChampionService blocks overexposed overtrading candidates without enough edge per trade", () => {
+  const championService = new QmonChampionService();
+  const refreshedQmon = championService.refreshMetrics({
+    ...createChampionCandidate("OVERTRADE", 0.58, 0.2),
+    windowsLived: 4,
+    metrics: {
+      ...createChampionCandidate("OVERTRADE", 0.58, 0.2).metrics,
+      totalTrades: 8,
+      totalPnl: 0.4,
+      winRate: 0.58,
+      winCount: 5,
+      observedTicks: 100,
+      positionHoldTicks: 95,
+      marketExposureRatio: 0.95,
+      tradesPerWindow: 2,
+    },
+    paperWindowPnls: [0.1, 0.1, 0.1, 0.05, 0.05],
+  });
+
+  assert.equal(refreshedQmon.metrics.isChampionEligible, false);
+  assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("overexposed-without-edge"), true);
+  assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("overtrading-without-edge"), true);
+});
+
 test("QmonChampionService rejects candidates with strong lifetime pnl but recent deterioration", () => {
   const championService = new QmonChampionService();
   const deterioratingQmon = championService.refreshMetrics({

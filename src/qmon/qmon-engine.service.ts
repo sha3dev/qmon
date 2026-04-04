@@ -288,7 +288,7 @@ export class QmonEngine {
    */
   private createEmptyFamilyState(): QmonFamilyState {
     return {
-      strategySchemaVersion: 1,
+      strategySchemaVersion: 2,
       populations: [],
       globalGeneration: 0,
       createdAt: Date.now(),
@@ -314,7 +314,25 @@ export class QmonEngine {
   private refreshQmonMetrics(qmon: Qmon): Qmon {
     this.metricsRefreshCount += 1;
 
-    return this.championService.refreshMetrics(qmon);
+    const refreshedQmon = this.championService.refreshMetrics(qmon);
+    const observedTicks = refreshedQmon.metrics.observedTicks ?? 0;
+    const positionHoldTicks = refreshedQmon.metrics.positionHoldTicks ?? 0;
+    const marketExposureRatio = observedTicks > 0 ? positionHoldTicks / observedTicks : 0;
+    const openTradeCount = refreshedQmon.position.action !== null ? 1 : 0;
+    const lifetimeTradeCount = refreshedQmon.metrics.totalTrades + openTradeCount;
+    const tradesPerWindow = refreshedQmon.windowsLived > 0 ? lifetimeTradeCount / refreshedQmon.windowsLived : lifetimeTradeCount;
+    const refreshedQmonWithExposure: Qmon = {
+      ...refreshedQmon,
+      metrics: {
+        ...refreshedQmon.metrics,
+        observedTicks,
+        positionHoldTicks,
+        marketExposureRatio,
+        tradesPerWindow,
+      },
+    };
+
+    return refreshedQmonWithExposure;
   }
 
   /**
@@ -844,6 +862,10 @@ export class QmonEngine {
       totalTrades: 0,
       totalPnl: 0,
       peakTotalPnl: 0,
+      observedTicks: 0,
+      positionHoldTicks: 0,
+      marketExposureRatio: 0,
+      tradesPerWindow: 0,
       championScore: null,
       fitnessScore: null,
       paperWindowMedianPnl: null,
@@ -1012,7 +1034,7 @@ export class QmonEngine {
             replayBuffer.splice(0, replayBuffer.length - 700);
           }
 
-          const structuredSignals = this.signalEngine.calculateStructured(replayBuffer);
+          const structuredSignals = this.signalEngine.calculateStructured(this.getLaggedSignalSnapshots(replayBuffer));
           const replayTriggers = replayTriggerEngine.evaluate(structuredSignals);
           const replayRegimes = replayRegimeEngine.evaluate(structuredSignals).states;
 
@@ -2575,6 +2597,41 @@ export class QmonEngine {
   }
 
   /**
+   * Derive signal snapshots from t-1 and leave the newest snapshot for fills.
+   */
+  private getLaggedSignalSnapshots(snapshots: readonly Snapshot[]): readonly Snapshot[] {
+    const laggedSnapshots = snapshots.length > 1 ? snapshots.slice(0, -1) : [];
+
+    return laggedSnapshots;
+  }
+
+  /**
+   * Track how often one QMON is evaluated and how often it is actually in market.
+   */
+  private trackExposureMetrics(qmon: Qmon): Qmon {
+    const observedTicks = (qmon.metrics.observedTicks ?? 0) + 1;
+    const positionHoldTicks = (qmon.metrics.positionHoldTicks ?? 0) + (qmon.position.action !== null ? 1 : 0);
+    const marketExposureRatio = observedTicks > 0 ? positionHoldTicks / observedTicks : 0;
+    const openTradeCount = qmon.position.action !== null ? 1 : 0;
+    const lifetimeTradeCount = qmon.metrics.totalTrades + openTradeCount;
+    const tradesPerWindow = qmon.windowsLived > 0 ? lifetimeTradeCount / qmon.windowsLived : lifetimeTradeCount;
+    const updatedQmon: Qmon = {
+      ...qmon,
+      metrics: {
+        ...qmon.metrics,
+        observedTicks,
+        positionHoldTicks,
+        marketExposureRatio,
+        tradesPerWindow,
+      },
+    };
+
+    this.markStateMutation(false);
+
+    return updatedQmon;
+  }
+
+  /**
    * Check if QMON has reached the maximum trades per window limit.
    */
   private hasReachedTradeLimit(qmon: Qmon): { shouldSkip: boolean; qmon: Qmon } {
@@ -3174,6 +3231,7 @@ export class QmonEngine {
 
     const results: EvaluationResult[] = [];
     const updatedQmons: Qmon[] = [];
+    const signalSnapshots = snapshots === undefined ? undefined : this.getLaggedSignalSnapshots(snapshots);
 
     const now = Date.now();
     const marketEndTime = windowData?.prices.marketEndMs ?? null;
@@ -3191,14 +3249,16 @@ export class QmonEngine {
         isNewWindow = true;
       }
 
-      // Get market signals with this QMON's exchange weights applied
-      const marketSignals = this.getMarketSignals(market, signals, qmon, snapshots);
-
       // Retired QMONs stay archived and do not participate in evaluation.
       if (qmon.lifecycle !== "active") {
         updatedQmons.push(qmon);
         continue;
       }
+
+      qmon = this.trackExposureMetrics(qmon);
+
+      // Get market signals with this QMON's exchange weights applied from t-1 snapshots.
+      const marketSignals = this.getMarketSignals(market, signals, qmon, signalSnapshots);
 
       const pendingOrderProcessing = this.processPendingOrder(qmon, asset, window, now, market, results, snapshots);
       qmon = pendingOrderProcessing.qmon;
@@ -3314,7 +3374,7 @@ export class QmonEngine {
     updatedPopulation = this.evaluateChampionSeat(
       updatedPopulation,
       activeChampionQmon,
-      this.getMarketSignals(market, signals, activeChampionQmon ?? undefined, snapshots),
+      this.getMarketSignals(market, signals, activeChampionQmon ?? undefined, signalSnapshots),
       firedTriggerIds,
       regime?.direction ?? "flat",
       regime?.volatility ?? "normal",

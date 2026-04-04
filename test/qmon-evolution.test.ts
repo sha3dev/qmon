@@ -378,3 +378,73 @@ test("QmonEvolutionService never uses preset QMONs as parents and never replaces
     2,
   );
 });
+
+test("QmonEvolutionService biases offspring trigger and regime genes toward profitable parent breakdowns", () => {
+  const genomeService = QmonGenomeService.createDefault();
+  const evolutionService = new QmonEvolutionService(genomeService);
+  const parentGenome = {
+    ...genomeService.generateSeededGenome("balanced"),
+    triggerGenes: genomeService.generateSeededGenome("balanced").triggerGenes.map((triggerGene) => ({
+      ...triggerGene,
+      isEnabled: triggerGene.triggerId === "consensus-flip",
+    })),
+    directionRegimeGenes: [true, true, true] as const,
+    volatilityRegimeGenes: [true, true, true] as const,
+  };
+  const firstParent = createQmon(parentGenome, {
+    id: "PARENT_A",
+    totalPnl: 9,
+    championScore: 200,
+    paperLongWindowPnlSum: 6,
+    negativeWindowRateLast10: 0,
+    windowsLived: 12,
+    totalTrades: 14,
+    paperWindowPnls: Array(10).fill(0.6),
+  });
+  const secondParent = createQmon(parentGenome, {
+    id: "PARENT_B",
+    totalPnl: 8,
+    championScore: 190,
+    paperLongWindowPnlSum: 5,
+    negativeWindowRateLast10: 0,
+    windowsLived: 12,
+    totalTrades: 14,
+    paperWindowPnls: Array(10).fill(0.5),
+  });
+  const guidedFirstParent = {
+    ...firstParent,
+    metrics: {
+      ...firstParent.metrics,
+      regimeBreakdown: [{ regime: "regime:flat|normal", tradeCount: 12, totalPnl: 7, estimatedNetEvUsd: 5 }],
+      triggerBreakdown: [{ triggerId: "mispricing", tradeCount: 12, totalPnl: 7, estimatedNetEvUsd: 5 }],
+    },
+  };
+  const guidedSecondParent = {
+    ...secondParent,
+    metrics: {
+      ...secondParent.metrics,
+      regimeBreakdown: [{ regime: "regime:flat|normal", tradeCount: 11, totalPnl: 6, estimatedNetEvUsd: 4 }],
+      triggerBreakdown: [{ triggerId: "mispricing", tradeCount: 11, totalPnl: 6, estimatedNetEvUsd: 4 }],
+    },
+  };
+  const weakQmon = createQmon(parentGenome, {
+    id: "WEAK_GUIDE",
+    totalPnl: -5,
+    championScore: null,
+    paperLongWindowPnlSum: -3,
+    negativeWindowRateLast10: 0.9,
+    windowsLived: 12,
+    totalTrades: 4,
+    paperWindowPnls: Array(10).fill(-0.2),
+  });
+
+  const evolutionResult = withMockRandom(() =>
+    evolutionService.evolvePopulation(createPopulation([guidedFirstParent, guidedSecondParent, weakQmon]), (newbornQmon) => newbornQmon),
+  );
+  const childQmon = evolutionResult.population.qmons.find((qmon) => qmon.id !== "PARENT_A" && qmon.id !== "PARENT_B");
+
+  assert.ok(childQmon);
+  assert.equal(childQmon.genome.triggerGenes.some((triggerGene) => triggerGene.triggerId === "mispricing" && triggerGene.isEnabled), true);
+  assert.deepEqual(childQmon.genome.directionRegimeGenes, [false, false, true]);
+  assert.deepEqual(childQmon.genome.volatilityRegimeGenes, [false, true, false]);
+});

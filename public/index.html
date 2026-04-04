@@ -914,6 +914,18 @@
                 <div class="metric-card-label">ENTRY</div>
                 <div class="metric-card-value" :class="scoreClass(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)" x-text="formatNullableScore(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)"></div>
               </div>
+              <div class="metric-card">
+                <div class="metric-card-label">EXP</div>
+                <div class="metric-card-value" x-text="formatPercent(qmon.metrics.marketExposureRatio || 0)"></div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-card-label">HLD</div>
+                <div class="metric-card-value" x-text="qmon.metrics.positionHoldTicks || 0"></div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-card-label">TPW</div>
+                <div class="metric-card-value" x-text="formatNullableScore(qmon.metrics.tradesPerWindow || 0)"></div>
+              </div>
             </div>
 
             <!-- Gen info -->
@@ -1015,6 +1027,18 @@
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Total Trades</span>
             <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" :class="countClass(selectedQmon.metrics.totalTrades)" x-text="selectedQmon.metrics.totalTrades"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Market Exposure</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatPercent(selectedQmon.metrics.marketExposureRatio || 0)"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Hold Ticks</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="selectedQmon.metrics.positionHoldTicks || 0"></span>
+          </div>
+          <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Trades / Window</span>
+            <span class="modal-val" style="font-size:11px; color:var(--text-primary); font-weight:600;" x-text="formatNullableScore(selectedQmon.metrics.tradesPerWindow || 0)"></span>
           </div>
           <div class="modal-row" style="display:flex; justify-content:space-between; margin-bottom:6px;">
             <span class="modal-key" style="font-size:11px; color:var(--text-muted);">Estimated Net EV</span>

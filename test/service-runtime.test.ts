@@ -252,6 +252,9 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.ok("worstWindowPnlLast10" in firstQmon.metrics);
   assert.ok("championScore" in firstQmon.metrics);
   assert.ok("recentAvgSlippageBps" in firstQmon.metrics);
+  assert.ok("marketExposureRatio" in firstQmon.metrics);
+  assert.ok("positionHoldTicks" in firstQmon.metrics);
+  assert.ok("tradesPerWindow" in firstQmon.metrics);
   assert.ok("totalFeesPaid" in firstQmon.metrics);
   assert.ok("isChampionEligible" in firstQmon.metrics);
   assert.ok("championEligibilityReasons" in firstQmon.metrics);

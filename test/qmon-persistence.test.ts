@@ -206,7 +206,7 @@ test("QmonPersistenceService round-trips the family state through a single atomi
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.grossAlphaCapture, 1.25);
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.regimeBreakdown?.[0]?.regime, "regime:flat|normal");
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.triggerBreakdown?.[0]?.triggerId, "consensus-flip");
-    assert.equal(loadedState.strategySchemaVersion, 1);
+    assert.equal(loadedState.strategySchemaVersion, 2);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

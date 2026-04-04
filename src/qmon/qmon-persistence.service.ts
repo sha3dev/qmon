@@ -30,7 +30,7 @@ import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMark
 
 const FAMILY_STATE_FILENAME = "family-state.json";
 const FAMILY_STATE_BACKUP_DIRNAME = "family-state-backups";
-const FAMILY_STATE_SCHEMA_VERSION = 1;
+const FAMILY_STATE_SCHEMA_VERSION = 2;
 
 /**
  * @section class
@@ -298,6 +298,10 @@ export class QmonPersistenceService {
     const normalizedMetrics: QmonMetrics = {
       ...metrics,
       peakTotalPnl: metrics.peakTotalPnl ?? Math.max(metrics.totalPnl + metrics.maxDrawdown, metrics.totalPnl, 0),
+      observedTicks: metrics.observedTicks ?? 0,
+      positionHoldTicks: metrics.positionHoldTicks ?? 0,
+      marketExposureRatio: metrics.marketExposureRatio ?? 0,
+      tradesPerWindow: metrics.tradesPerWindow ?? 0,
       fitnessScore: metrics.fitnessScore ?? null,
       grossAlphaCapture: metrics.grossAlphaCapture ?? 0,
       netPnlPerTrade: metrics.netPnlPerTrade ?? 0,

@@ -43,6 +43,9 @@ test("QmonPresetStrategyService exposes 400 uniquely named preset strategies wit
   assert.equal(strategyNames.size, presetStrategyDefinitions.length);
   assert.equal(strategyDescriptions.size, presetStrategyDefinitions.length);
   assert.equal(strategySignatures.size, presetStrategyDefinitions.length);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "sma-crossover-follow"), true);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "momentum-lookback-pulse"), true);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "bollinger-zscore-reversion"), true);
 });
 
 test("QmonPresetStrategyService builds compatibility genomes without losing strategy metadata lookup", () => {
