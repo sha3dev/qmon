@@ -383,7 +383,7 @@ export class ServiceRuntime {
     }
   }
 
-  /** Degrade the global runtime to paper when every market fails the walk-forward gate and no live unwind is pending. */
+  /** Report when every market is currently walk-forward blocked without disabling future real re-arming. */
   private applyRealWalkForwardRouteGuard(): void {
     let hasRealMarketRoute = false;
 
@@ -395,9 +395,7 @@ export class ServiceRuntime {
       }
 
       if (!hasRealMarketRoute && !this.hasActiveRealRisk()) {
-        this.runtimeExecutionModeState.mode = "paper";
-        this.qmonEngine.applyExecutionRoutes("paper", Date.now());
-        logger.error("QMON walk-forward gate disarmed real routing for every market; runtime switched to paper mode");
+        logger.warn("QMON walk-forward gate currently blocks real routing for every market; waiting for a validated champion to re-arm per market");
       }
     }
   }
