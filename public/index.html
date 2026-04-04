@@ -439,20 +439,30 @@
 
     /* Card header */
     .qmon-head {
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
       padding: 12px 14px; background: rgba(34,38,54,0.96);
       border-bottom: 1px solid var(--border);
     }
     .qmon-id { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
-    .qmon-market { font-size: 9px; color: var(--text-muted); margin-left: 6px; }
-    .qmon-head-id { display:flex; align-items:center; gap:8px; }
+    .qmon-market { font-size: 9px; color: var(--text-muted); }
+    .qmon-head-id { display:flex; align-items:flex-start; gap:10px; min-width:0; flex:1; }
+    .qmon-badge-row {
+      display:flex; gap:4px; align-items:center; flex-wrap:wrap;
+      min-width:72px; max-width:96px;
+    }
+    .qmon-title-block { min-width:0; flex:1; }
+    .qmon-title-row {
+      display:flex; align-items:baseline; gap:8px;
+      min-width:0;
+    }
     .qmon-strategy-line {
       margin-top: 4px; font-size: 9px; color: var(--text-secondary);
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
     }
     .qmon-mode {
+      flex: 0 0 auto;
       font-size: 8px; padding: 3px 8px; border-radius: 3px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 0.5px;
+      text-transform: uppercase; letter-spacing: 0.5px; text-align: center;
     }
     .mode-champion { background: var(--green-faint); color: var(--green-mid); border: 1px solid var(--green-mid); }
     .mode-candidate { background: var(--accent-dim); color: var(--accent); }
@@ -531,7 +541,9 @@
     .gen-badge.gen-4 { background: rgba(255,152,0,0.14); color: var(--orange); border-color: rgba(255,152,0,0.28); }
     .gen-badge.gen-5 { background: rgba(255,23,68,0.14); color: var(--red-mid); border-color: rgba(239,83,80,0.28); }
     .strategy-badge {
-      font-size: 7px; padding: 2px 6px; border-radius: 3px; font-weight: 700;
+      display:inline-flex; align-items:center; justify-content:center;
+      min-width:22px; min-height:20px; padding: 3px 8px; border-radius: 3px;
+      font-size: 8px; font-weight: 700; line-height:1;
       text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid rgba(124,77,255,0.28);
       background: rgba(124,77,255,0.14); color: var(--accent);
     }
@@ -685,11 +697,11 @@
         </div>
         <div class="market-pnl-grid">
           <div class="market-pnl-metric">
-            <span class="market-pnl-metric-label">Paper</span>
+            <span class="market-pnl-metric-label">PAPR</span>
             <span class="market-pnl-metric-value" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
           </div>
           <div class="market-pnl-metric">
-            <span class="market-pnl-metric-label">Real</span>
+            <span class="market-pnl-metric-label">REAL</span>
             <span class="market-pnl-metric-value" :class="pnlClass(totalRealMarketPnl)" x-text="formatPnl(totalRealMarketPnl)"></span>
           </div>
         </div>
@@ -705,11 +717,11 @@
           </div>
           <div class="market-pnl-grid">
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label">Paper</span>
+              <span class="market-pnl-metric-label">PAPR</span>
               <span class="market-pnl-metric-value" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
             </div>
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label">Real</span>
+              <span class="market-pnl-metric-label">REAL</span>
               <span class="market-pnl-metric-value" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
             </div>
           </div>
@@ -725,12 +737,12 @@
         </div>
         <div class="health-metric-grid">
           <div class="health-metric">
-            <div class="health-metric-label">Paper Fill Rate</div>
+            <div class="health-metric-label">P Fill</div>
             <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.paperFillRate || 0)"></div>
             <div class="health-metric-note">Model pending orders filled</div>
           </div>
           <div class="health-metric">
-            <div class="health-metric-label">Real Fill Rate</div>
+            <div class="health-metric-label">R Fill</div>
             <div class="health-metric-value" x-text="formatPct(currentDiagnosticsOverview?.totals?.realFillRate || 0)"></div>
             <div class="health-metric-note" x-text="'Seat trades ' + formatCount(currentDiagnosticsOverview?.totals?.seatTradeCount || 0)"></div>
           </div>
@@ -741,10 +753,10 @@
     <!-- Filters bar - BUTTONS -->
     <div class="filters-bar">
       <div class="filter-section">
-        <input type="text" class="filter-input" x-model="searchQuery" placeholder="Search ID or market...">
+        <input type="text" class="filter-input" x-model="searchQuery" placeholder="ID / MKT / STR...">
       </div>
       <div class="filter-section">
-        <span class="filter-section-title">MARKET</span>
+        <span class="filter-section-title">MKT</span>
         <div class="filter-chips">
           <button class="filter-chip" :class="{ active: filterMarket === '' }" @click="filterMarket = ''">ALL</button>
           <template x-for="m in availableMarkets" :key="m">
@@ -753,23 +765,23 @@
         </div>
       </div>
       <div class="filter-section">
-        <span class="filter-section-title">ROLE</span>
+        <span class="filter-section-title">R</span>
         <div class="filter-chips">
           <button class="filter-chip" :class="{ active: filterRole === '' }" @click="filterRole = ''">ALL</button>
-          <button class="filter-chip" :class="{ active: filterRole === 'champion' }" @click="filterRole = 'champion'">CHAMPION</button>
-          <button class="filter-chip" :class="{ active: filterRole === 'candidate' }" @click="filterRole = 'candidate'">CANDIDATE</button>
+          <button class="filter-chip" :class="{ active: filterRole === 'champion' }" @click="filterRole = 'champion'">CH</button>
+          <button class="filter-chip" :class="{ active: filterRole === 'candidate' }" @click="filterRole = 'candidate'">CA</button>
         </div>
       </div>
       <div class="filter-section">
-        <span class="filter-section-title">STRATEGY</span>
+        <span class="filter-section-title">S</span>
         <div class="filter-chips">
           <button class="filter-chip" :class="{ active: filterStrategy === '' }" @click="filterStrategy = ''">ALL</button>
-          <button class="filter-chip" :class="{ active: filterStrategy === 'preset' }" @click="filterStrategy = 'preset'">PRESET</button>
-          <button class="filter-chip" :class="{ active: filterStrategy === 'genetic' }" @click="filterStrategy = 'genetic'">GENETIC</button>
+          <button class="filter-chip" :class="{ active: filterStrategy === 'preset' }" @click="filterStrategy = 'preset'">P</button>
+          <button class="filter-chip" :class="{ active: filterStrategy === 'genetic' }" @click="filterStrategy = 'genetic'">G</button>
         </div>
       </div>
       <div class="filter-section">
-        <button class="filter-chip" :class="{ active: filterPosition }" @click="filterPosition = !filterPosition">HAS POSITION</button>
+        <button class="filter-chip" :class="{ active: filterPosition }" @click="filterPosition = !filterPosition">POS</button>
       </div>
       <span style="font-size:9px; color:var(--text-muted); margin-left:auto;" x-text="filteredQmons.length + ' QMONs'"></span>
     </div>
@@ -816,16 +828,18 @@
           <!-- Header -->
           <div class="qmon-head">
             <div class="qmon-head-id">
-              <div style="display:flex; gap:4px; align-items:center;">
+              <div class="qmon-badge-row">
                 <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
                 <span class="strategy-badge" :class="{ preset: isPresetQmon(qmon) }" x-text="strategyKindLabel(qmon)"></span>
                 <template x-if="isExploratoryQmon(qmon)">
-                  <span style="font-size:7px; padding:2px 5px; background:rgba(124,77,255,0.2); color:var(--accent); font-weight:700; border-radius:3px; text-transform:uppercase; letter-spacing:0.5px;">EXP</span>
+                  <span class="explorer-badge">EXP</span>
                 </template>
               </div>
-              <div>
-                <span class="qmon-id" x-text="qmon.id"></span>
-                <span class="qmon-market" x-text="qmon.market"></span>
+              <div class="qmon-title-block">
+                <div class="qmon-title-row">
+                  <span class="qmon-id" x-text="qmon.id"></span>
+                  <span class="qmon-market" x-text="qmon.market"></span>
+                </div>
                 <div class="qmon-strategy-line" x-text="strategyDisplayName(qmon)"></div>
               </div>
             </div>
@@ -836,15 +850,15 @@
           <div class="qmon-body">
             <!-- PnL -->
             <div class="pnl-section">
-              <div class="pnl-label">PAPER / REAL</div>
+              <div class="pnl-label">P / R</div>
               <div class="selection-summary performance-grid">
                 <span class="performance-metric">
-                  <span class="performance-metric-label">Paper</span>
+                  <span class="performance-metric-label">PAPR</span>
                   <span class="performance-metric-value" :class="pnlClass(getPaperDisplayPnl(qmon))" x-text="formatPnl(getPaperDisplayPnl(qmon))"></span>
-                  <span class="performance-metric-note" :class="windowPnlClass(qmon)" x-text="'Window ' + formatPnl(getPaperWindowDisplayPnl(qmon))"></span>
+                  <span class="performance-metric-note" :class="windowPnlClass(qmon)" x-text="'W ' + formatPnl(getPaperWindowDisplayPnl(qmon))"></span>
                 </span>
                 <span class="performance-metric" style="align-items:flex-end; text-align:right;">
-                  <span class="performance-metric-label">Real</span>
+                  <span class="performance-metric-label">REAL</span>
                   <span class="performance-metric-value" :class="pnlClass(getRealDisplayPnl(qmon) || 0)" x-text="formatNullablePnl(getRealDisplayPnl(qmon))"></span>
                   <span class="performance-metric-note" :class="getRealStateClass(qmon)" x-text="getRealStateLabel(qmon)"></span>
                 </span>
@@ -853,19 +867,19 @@
 
             <div class="metric-grid">
               <div class="metric-card">
-                <div class="metric-card-label">Fitness</div>
+                <div class="metric-card-label">FIT</div>
                 <div class="metric-card-value" :class="pnlClass(qmon.metrics.fitnessScore || 0)" x-text="formatNullableScore(qmon.metrics.fitnessScore)"></div>
               </div>
               <div class="metric-card">
-                <div class="metric-card-label">Est. EV</div>
+                <div class="metric-card-label">EV</div>
                 <div class="metric-card-value" :class="pnlClass(qmon.metrics.totalEstimatedNetEvUsd || 0)" x-text="formatPnl(qmon.metrics.totalEstimatedNetEvUsd || 0)"></div>
               </div>
               <div class="metric-card">
-                <div class="metric-card-label">Fee Ratio</div>
+                <div class="metric-card-label">FEE</div>
                 <div class="metric-card-value" :class="costRateClass(qmon.metrics.feeRatio)" x-text="formatRatio(qmon.metrics.feeRatio)"></div>
               </div>
               <div class="metric-card">
-                <div class="metric-card-label">Paper Entry</div>
+                <div class="metric-card-label">ENTRY</div>
                 <div class="metric-card-value" :class="scoreClass(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)" x-text="formatNullableScore(getPaperPosition(qmon).directionalAlpha ?? getPaperPosition(qmon).entryScore)"></div>
               </div>
             </div>
@@ -2067,14 +2081,14 @@
 
         roleLabel(qmon) {
           if (qmon.lifecycle === 'retired') {
-            return 'RETIRED';
+            return 'RT';
           }
 
           if (qmon.role !== 'champion' && qmon.metrics?.isChampionEligible !== true) {
-            return 'NOT READY';
+            return 'NR';
           }
 
-          return qmon.role === 'champion' ? 'CHAMPION' : 'CANDIDATE';
+          return qmon.role === 'champion' ? 'CH' : 'CA';
         },
 
         roleLabelShort(role, lifecycle) {
@@ -2099,7 +2113,7 @@
         },
 
         strategyKindLabel(qmon) {
-          return this.isPresetQmon(qmon) ? 'PRESET' : 'GENETIC';
+          return this.isPresetQmon(qmon) ? 'P' : 'G';
         },
 
         strategyDisplayName(qmon) {
@@ -3120,3 +3134,11 @@
   </script>
 </body>
 </html>
+    .explorer-badge {
+      display:inline-flex; align-items:center; justify-content:center;
+      min-width:22px; min-height:20px; padding: 3px 8px; border-radius: 3px;
+      font-size: 8px; font-weight: 700; line-height:1;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      background: rgba(124,77,255,0.2); color: var(--accent);
+      border: 1px solid rgba(124,77,255,0.28);
+    }

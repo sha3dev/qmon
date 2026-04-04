@@ -359,8 +359,7 @@ test("ServiceRuntime serves the operator-first dashboard labels", async () => {
   assert.equal(html.includes("SYSTEM ALERTS"), false);
   assert.equal(html.includes("CPNL LOG"), true);
   assert.equal(html.includes("STRATEGY"), true);
-  assert.equal(html.includes("PRESET"), true);
-  assert.equal(html.includes("GENETIC"), true);
+  assert.equal(html.includes("P / R"), true);
   assert.equal(html.includes("Markets Without Champion"), false);
 
   await new Promise((resolve, reject) => {
