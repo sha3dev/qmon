@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -206,6 +206,22 @@ test("QmonPersistenceService round-trips the family state through a single atomi
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.grossAlphaCapture, 1.25);
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.regimeBreakdown?.[0]?.regime, "regime:flat|normal");
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.triggerBreakdown?.[0]?.triggerId, "consensus-flip");
+    assert.equal(loadedState.strategySchemaVersion, 1);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("QmonPersistenceService rejects legacy family-state files without the strategy schema version", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "qmon-persistence-"));
+  const persistenceService = new QmonPersistenceService(tempDir);
+
+  try {
+    await writeFile(join(tempDir, "family-state.json"), JSON.stringify(createFamilyState(), null, 2));
+
+    const loadedState = await persistenceService.load();
+
+    assert.equal(loadedState, null);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

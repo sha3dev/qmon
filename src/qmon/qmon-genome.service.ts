@@ -319,7 +319,8 @@ export class QmonGenomeService {
         0.2,
         (MIN_FILL_QUALITY_OPTIONS[(variantIndex + baseIndex) % MIN_FILL_QUALITY_OPTIONS.length] ?? 0.45) - (hasTriggerBias ? 0.05 : 0),
       ),
-      allowNoTrigger: false, // Default: triggers required. Can be enabled via mutation for slow accumulation strategies.
+      // Hard trigger gating is always required; this flag is kept false for persistence compatibility.
+      allowNoTrigger: false,
     };
 
     return entryPolicy;
@@ -1007,8 +1008,8 @@ export class QmonGenomeService {
       maxSpreadPenaltyBps: this.pickRandom(SPREAD_PENALTY_OPTIONS),
       maxSlippageBps: Math.max(25, Math.min(config.MAX_MAX_SLIPPAGE_BPS, entryPolicy.maxSlippageBps + (this.randomBool(0.5) ? 25 : -25))),
       minFillQuality: this.pickRandom(MIN_FILL_QUALITY_OPTIONS),
-      // 5% chance to flip allowNoTrigger during mutation
-      allowNoTrigger: this.randomBool(0.05) ? !entryPolicy.allowNoTrigger : entryPolicy.allowNoTrigger,
+      // Trigger-less entries are permanently disabled because the runtime now enforces a hard trigger gate.
+      allowNoTrigger: false,
     };
 
     return mutatedEntryPolicy;

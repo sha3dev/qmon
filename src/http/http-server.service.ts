@@ -214,6 +214,11 @@ export class HttpServerService {
     const qmonSummary = {
       id: qmon.id,
       market: qmon.market,
+      strategyKind: qmon.strategyKind ?? "genetic",
+      strategyName: qmon.strategyName ?? "Genetic Bootstrap Strategy",
+      strategyDescription: qmon.strategyDescription ?? "Genome-born QMON evaluated through the genetic paper/champion loop.",
+      presetStrategyId: qmon.presetStrategyId ?? null,
+      presetFamily: qmon.presetFamily ?? null,
       role: qmon.role,
       lifecycle: qmon.lifecycle,
       generation: qmon.generation,

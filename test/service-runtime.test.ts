@@ -238,6 +238,11 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.ok(firstPopulation);
   assert.ok("realWalkForwardGate" in firstPopulation);
   assert.ok(firstQmon);
+  assert.ok("strategyKind" in firstQmon);
+  assert.ok("strategyName" in firstQmon);
+  assert.ok("strategyDescription" in firstQmon);
+  assert.ok("presetStrategyId" in firstQmon);
+  assert.ok("presetFamily" in firstQmon);
   assert.ok("stopLossPct" in firstQmon.genome);
   assert.ok("takeProfitPct" in firstQmon.genome);
   assert.ok("paperWindowMedianPnl" in firstQmon.metrics);
@@ -353,6 +358,9 @@ test("ServiceRuntime serves the operator-first dashboard labels", async () => {
   assert.equal(html.includes("LIVE ACTIVITY"), false);
   assert.equal(html.includes("SYSTEM ALERTS"), false);
   assert.equal(html.includes("CPNL LOG"), true);
+  assert.equal(html.includes("STRATEGY"), true);
+  assert.equal(html.includes("PRESET"), true);
+  assert.equal(html.includes("GENETIC"), true);
   assert.equal(html.includes("Markets Without Champion"), false);
 
   await new Promise((resolve, reject) => {

@@ -19,6 +19,7 @@ import type { QmonFillResult } from "./qmon-execution.service.ts";
 import { QmonExecutionService } from "./qmon-execution.service.ts";
 import { QmonGenomeService, generateQmonId } from "./qmon-genome.service.ts";
 import { QmonHydrationService } from "./qmon-hydration.service.ts";
+import { QmonPresetStrategyService } from "./qmon-preset-strategy.service.ts";
 import { QmonReplayHistoryService } from "./qmon-replay-history.service.ts";
 import type { QmonValidationLogService } from "./qmon-validation-log.service.ts";
 import type {
@@ -39,7 +40,9 @@ import type {
   QmonPendingOrder,
   QmonPopulation,
   QmonPosition,
+  QmonPresetStrategyDefinition,
   QmonRealWalkForwardGate,
+  QmonStrategyKind,
   QmonSignalId,
   RegimePerformanceSlice,
   TimeSegment,
@@ -62,6 +65,7 @@ const _DEFAULT_POPULATION_SIZE = 200;
  * Maximum decision history to keep per QMON.
  */
 const MAX_DECISION_HISTORY = 20;
+const MIN_VALID_SIGNAL_COUNT = 2;
 
 /**
  * Minimum shares allowed by Polymarket for a buy order.
@@ -187,6 +191,7 @@ export class QmonEngine {
   private readonly signalEngine: SignalEngine | null;
   private readonly championService: QmonChampionService;
   private readonly genomeService: QmonGenomeService;
+  private readonly presetStrategyService: QmonPresetStrategyService;
   private readonly evolutionService: QmonEvolutionService;
   private readonly executionService: QmonExecutionService;
   private readonly replayHistoryService: QmonReplayHistoryService | null;
@@ -228,6 +233,7 @@ export class QmonEngine {
     this.signalEngine = signalEngine ?? null;
     this.championService = new QmonChampionService();
     this.genomeService = QmonGenomeService.createDefault();
+    this.presetStrategyService = QmonPresetStrategyService.createDefault();
     this.evolutionService = new QmonEvolutionService(this.genomeService);
     this.executionService = new QmonExecutionService();
     this.correlationService = new SignalCorrelationService(100);
@@ -282,6 +288,7 @@ export class QmonEngine {
    */
   private createEmptyFamilyState(): QmonFamilyState {
     return {
+      strategySchemaVersion: 1,
       populations: [],
       globalGeneration: 0,
       createdAt: Date.now(),
@@ -308,6 +315,125 @@ export class QmonEngine {
     this.metricsRefreshCount += 1;
 
     return this.championService.refreshMetrics(qmon);
+  }
+
+  /**
+   * Resolve the canonical strategy kind for legacy and new QMON objects.
+   */
+  private getQmonStrategyKind(qmon: Qmon): QmonStrategyKind {
+    const strategyKind = qmon.strategyKind ?? "genetic";
+
+    return strategyKind;
+  }
+
+  /**
+   * Load the immutable preset definition attached to a preset QMON.
+   */
+  private getPresetStrategyDefinition(qmon: Qmon): QmonPresetStrategyDefinition | null {
+    const presetStrategyDefinition =
+      this.getQmonStrategyKind(qmon) === "preset" ? this.presetStrategyService.getPresetStrategyDefinition(qmon.presetStrategyId ?? null) : null;
+
+    return presetStrategyDefinition;
+  }
+
+  /**
+   * Resolve the strategy entry policy used by the current QMON.
+   */
+  private getQmonEntryPolicy(qmon: Qmon): QmonGenome["entryPolicy"] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const entryPolicy = presetStrategyDefinition?.entryPolicy ?? qmon.genome.entryPolicy;
+
+    return entryPolicy;
+  }
+
+  /**
+   * Resolve the strategy execution policy used by the current QMON.
+   */
+  private getQmonExecutionPolicy(qmon: Qmon): QmonGenome["executionPolicy"] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const executionPolicy = presetStrategyDefinition?.executionPolicy ?? qmon.genome.executionPolicy;
+
+    return executionPolicy;
+  }
+
+  /**
+   * Resolve the strategy exit policy used by the current QMON.
+   */
+  private getQmonExitPolicy(qmon: Qmon): QmonGenome["exitPolicy"] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const exitPolicy = presetStrategyDefinition?.exitPolicy ?? qmon.genome.exitPolicy;
+
+    return exitPolicy;
+  }
+
+  /**
+   * Resolve the buy score threshold from either a genome or a preset strategy.
+   */
+  private getQmonMinScoreBuy(qmon: Qmon): number {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const minScoreBuy = presetStrategyDefinition?.minScoreBuy ?? qmon.genome.minScoreBuy;
+
+    return minScoreBuy;
+  }
+
+  /**
+   * Resolve the sell score threshold from either a genome or a preset strategy.
+   */
+  private getQmonMinScoreSell(qmon: Qmon): number {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const minScoreSell = presetStrategyDefinition?.minScoreSell ?? qmon.genome.minScoreSell;
+
+    return minScoreSell;
+  }
+
+  /**
+   * Resolve the strict minimum number of valid directional signals.
+   */
+  private getQmonMinSignalCount(qmon: Qmon): number {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const minSignalCount = presetStrategyDefinition?.minSignalCount ?? MIN_VALID_SIGNAL_COUNT;
+
+    return minSignalCount;
+  }
+
+  /**
+   * Resolve the strategy time gates from preset metadata or the genome.
+   */
+  private getQmonTimeWindowGenes(qmon: Qmon): readonly [boolean, boolean, boolean] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const timeWindowGenes = presetStrategyDefinition?.timeWindowGenes ?? qmon.genome.timeWindowGenes;
+
+    return timeWindowGenes;
+  }
+
+  /**
+   * Resolve the strategy direction regime gates.
+   */
+  private getQmonDirectionRegimeGenes(qmon: Qmon): readonly [boolean, boolean, boolean] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const directionRegimeGenes = presetStrategyDefinition?.directionRegimeGenes ?? qmon.genome.directionRegimeGenes;
+
+    return directionRegimeGenes;
+  }
+
+  /**
+   * Resolve the strategy volatility regime gates.
+   */
+  private getQmonVolatilityRegimeGenes(qmon: Qmon): readonly [boolean, boolean, boolean] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const volatilityRegimeGenes = presetStrategyDefinition?.volatilityRegimeGenes ?? qmon.genome.volatilityRegimeGenes;
+
+    return volatilityRegimeGenes;
+  }
+
+  /**
+   * Resolve the strict trigger set from preset metadata or compiled genome data.
+   */
+  private getQmonEnabledTriggerIds(qmon: Qmon): readonly string[] {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    const enabledTriggerIds = presetStrategyDefinition?.triggerIds ?? this.getCompiledGenome(qmon).enabledTriggerIds;
+
+    return enabledTriggerIds;
   }
 
   /**
@@ -616,6 +742,14 @@ export class QmonEngine {
     return {
       id: generateQmonId(),
       market,
+      strategyKind: "genetic",
+      strategyName: parentIds.length > 0 ? "Genetic Offspring Strategy" : "Genetic Bootstrap Strategy",
+      strategyDescription:
+        parentIds.length > 0
+          ? "Adaptive genome-born QMON produced by crossover and mutation from surviving genetic parents."
+          : "Bootstrap genome-born QMON seeded from one of the canonical genetic families and then evaluated through paper evolution.",
+      presetStrategyId: null,
+      presetFamily: null,
       genome,
       role: "candidate",
       lifecycle: "active",
@@ -636,6 +770,43 @@ export class QmonEngine {
       currentWindowSlippageFillCount: 0,
       lastCloseTimestamp: null,
     };
+  }
+
+  /**
+   * Create one immutable preset QMON from a fixed strategy definition.
+   */
+  private createPresetQmon(market: MarketKey, presetStrategyDefinition: QmonPresetStrategyDefinition): Qmon {
+    const now = Date.now();
+    const presetQmon: Qmon = {
+      id: generateQmonId(),
+      market,
+      strategyKind: "preset",
+      strategyName: presetStrategyDefinition.strategyName,
+      strategyDescription: presetStrategyDefinition.strategyDescription,
+      presetStrategyId: presetStrategyDefinition.presetStrategyId,
+      presetFamily: presetStrategyDefinition.presetFamily,
+      genome: this.presetStrategyService.createCompatibilityGenome(presetStrategyDefinition),
+      role: "candidate",
+      lifecycle: "active",
+      generation: 0,
+      parentIds: [],
+      createdAt: now,
+      position: this.createEmptyPosition(),
+      pendingOrder: null,
+      metrics: this.createEmptyMetrics(now),
+      decisionHistory: [],
+      windowTradeCount: 0,
+      windowsLived: 0,
+      paperWindowPnls: [],
+      paperWindowSlippageBps: [],
+      paperWindowBaselinePnl: null,
+      currentWindowStart: null,
+      currentWindowSlippageTotalBps: 0,
+      currentWindowSlippageFillCount: 0,
+      lastCloseTimestamp: null,
+    };
+
+    return presetQmon;
   }
 
   /**
@@ -1258,20 +1429,11 @@ export class QmonEngine {
    * Check if a trigger gate passes (at least one enabled trigger fired).
    */
   private checkTriggerGate(qmon: Qmon, firedTriggers: readonly string[]): GateResult & { hasTrigger: boolean } {
-    const compiledGenome = this.getCompiledGenome(qmon);
-    const enabledTriggerIds = compiledGenome.enabledTriggerIds;
-    const allowNoTrigger = qmon.genome.entryPolicy?.allowNoTrigger ?? false;
-
-    // Check if at least one enabled trigger has fired
+    const enabledTriggerIds = this.getQmonEnabledTriggerIds(qmon);
     const hasEnabledTrigger = enabledTriggerIds.some((id) => firedTriggers.includes(id));
 
     if (hasEnabledTrigger) {
       return { passed: true, hasTrigger: true, reason: undefined as string | undefined };
-    }
-
-    // If allowNoTrigger is enabled, pass gate but without trigger (higher EV threshold applied elsewhere)
-    if (allowNoTrigger) {
-      return { passed: true, hasTrigger: false, reason: undefined as string | undefined };
     }
 
     return {
@@ -1283,53 +1445,53 @@ export class QmonEngine {
 
   /**
    * Check if time gate passes (current segment is enabled).
-   * REVISED: Now always passes but applies 30% score penalty when time segment is not enabled.
-   * This allows more trading opportunities while still penalizing suboptimal timing.
    */
-  private checkTimeGate(qmon: Qmon, timeSegment: TimeSegment): GateResult & { partialPass: boolean } {
+  private checkTimeGate(qmon: Qmon, timeSegment: TimeSegment): GateResult {
     const segmentIndex = timeSegment === "early" ? 0 : timeSegment === "mid" ? 1 : 2;
-    const enabled = qmon.genome.timeWindowGenes[segmentIndex];
+    const enabled = this.getQmonTimeWindowGenes(qmon)[segmentIndex];
 
     if (enabled) {
-      return { passed: true, partialPass: false, reason: undefined as string | undefined };
+      return { passed: true, reason: undefined as string | undefined };
     }
 
-    // Time segment not enabled: partial pass with 30% score penalty applied elsewhere
-    return { passed: true, partialPass: true, reason: undefined as string | undefined };
+    return {
+      passed: false,
+      reason: `Time segment '${timeSegment}' is not enabled`,
+    };
   }
 
   /**
    * Check if regime gate passes (current regimes are enabled).
-   * REVISED: Now uses OR logic with penalty - allows trade if at least one regime is enabled,
-   * but applies 50% score penalty when only one regime matches (partial pass).
    */
-  private checkRegimeGate(qmon: Qmon, directionRegime: DirectionRegime, volatilityRegime: VolatilityRegime): GateResult & { partialPass: boolean } {
+  private checkRegimeGate(qmon: Qmon, directionRegime: DirectionRegime, volatilityRegime: VolatilityRegime): GateResult {
     const directionIndex = directionRegime === "trending-up" ? 0 : directionRegime === "trending-down" ? 1 : 2;
     const volatilityIndex = volatilityRegime === "high" ? 0 : volatilityRegime === "normal" ? 1 : 2;
 
-    const directionEnabled = qmon.genome.directionRegimeGenes[directionIndex];
-    const volatilityEnabled = qmon.genome.volatilityRegimeGenes[volatilityIndex];
+    const directionEnabled = this.getQmonDirectionRegimeGenes(qmon)[directionIndex];
+    const volatilityEnabled = this.getQmonVolatilityRegimeGenes(qmon)[volatilityIndex];
 
-    // Both disabled: complete block
     if (!directionEnabled && !volatilityEnabled) {
       return {
         passed: false,
-        partialPass: false,
         reason: `Neither direction '${directionRegime}' nor volatility '${volatilityRegime}' are enabled`,
       };
     }
 
-    // Only one enabled: partial pass (50% score penalty applied elsewhere)
-    if (!directionEnabled || !volatilityEnabled) {
+    if (!directionEnabled) {
       return {
-        passed: true,
-        partialPass: true,
-        reason: undefined as string | undefined,
+        passed: false,
+        reason: `Direction regime '${directionRegime}' is not enabled`,
       };
     }
 
-    // Both enabled: full pass
-    return { passed: true, partialPass: false, reason: undefined as string | undefined };
+    if (!volatilityEnabled) {
+      return {
+        passed: false,
+        reason: `Volatility regime '${volatilityRegime}' is not enabled`,
+      };
+    }
+
+    return { passed: true, reason: undefined as string | undefined };
   }
 
   /**
@@ -1349,16 +1511,16 @@ export class QmonEngine {
    * Check if threshold gate passes and determine action.
    */
   private checkThresholdGate(qmon: Qmon, score: number): GateResult & { action: TradingAction } {
-    if (score >= qmon.genome.minScoreBuy) {
+    if (score >= this.getQmonMinScoreBuy(qmon)) {
       return { passed: true, action: "BUY_UP", reason: undefined };
     }
-    if (score <= -qmon.genome.minScoreSell) {
+    if (score <= -this.getQmonMinScoreSell(qmon)) {
       return { passed: true, action: "BUY_DOWN", reason: undefined };
     }
     return {
       passed: false,
       action: "HOLD",
-      reason: `Score ${score.toFixed(3)} does not exceed threshold (buy: ${qmon.genome.minScoreBuy}, sell: ${qmon.genome.minScoreSell})`,
+      reason: `Score ${score.toFixed(3)} does not exceed threshold (buy: ${this.getQmonMinScoreBuy(qmon)}, sell: ${this.getQmonMinScoreSell(qmon)})`,
     };
   }
 
@@ -1490,8 +1652,8 @@ export class QmonEngine {
    * Filter the fired triggers down to the ones enabled by one QMON genome.
    */
   private getTriggeredBy(qmon: Qmon, firedTriggerIds: readonly string[]): readonly string[] {
-    const compiledGenome = this.getCompiledGenome(qmon);
-    const triggeredBy = firedTriggerIds.filter((triggerId) => compiledGenome.enabledTriggerIds.includes(triggerId));
+    const enabledTriggerIds = this.getQmonEnabledTriggerIds(qmon);
+    const triggeredBy = firedTriggerIds.filter((triggerId) => enabledTriggerIds.includes(triggerId));
 
     return triggeredBy;
   }
@@ -1535,7 +1697,10 @@ export class QmonEngine {
   /**
    * Compute the directional alpha and identify the dominant evidence block.
    */
-  private computeDirectionalAlpha(qmon: Qmon, signalValues: Record<string, number | null | Record<string, number | null>>): DirectionalAlphaResult {
+  private computeGeneticDirectionalAlpha(
+    qmon: Qmon,
+    signalValues: Record<string, number | null | Record<string, number | null>>,
+  ): DirectionalAlphaResult {
     const compiledGenome = this.getCompiledGenome(qmon);
     let predictiveContribution = 0;
     let predictiveWeightSum = 0;
@@ -1553,12 +1718,7 @@ export class QmonEngine {
       const normalizedSignalValue = this.getNormalizedSignalValue(signalValues, compiledSignalGene.signalId);
 
       if (normalizedSignalValue !== null) {
-        // PAPER MODE: Use all signals without correlation filtering
-        // Correlation filtering only applies in REAL mode for champions
         validSignalCount += 1;
-
-        // No correlation multiplier in paper mode - use genome weights as-is
-        const effectiveWeight = compiledSignalGene.weight;
         const signedSignalValue = normalizedSignalValue * compiledSignalGene.orientationMultiplier;
 
         if (signedSignalValue > 0.05) {
@@ -1568,26 +1728,23 @@ export class QmonEngine {
         }
 
         if (compiledSignalGene.signalGroup === "predictive") {
-          predictiveContribution += signedSignalValue * effectiveWeight;
-          predictiveWeightSum += effectiveWeight;
+          predictiveContribution += signedSignalValue * compiledSignalGene.weight;
+          predictiveWeightSum += compiledSignalGene.weight;
         } else {
-          microstructureContribution += signedSignalValue * effectiveWeight;
-          microstructureWeightSum += effectiveWeight;
+          microstructureContribution += signedSignalValue * compiledSignalGene.weight;
+          microstructureWeightSum += compiledSignalGene.weight;
         }
       }
     }
 
-    // No minimum signal requirement in paper mode
-    // QMONs can trade even with limited signal data
-
     const predictiveAlpha = predictiveWeightSum > 0 ? predictiveContribution / predictiveWeightSum : 0;
     const microstructureAlpha = microstructureWeightSum > 0 ? microstructureContribution / microstructureWeightSum : 0;
-    const directionalAlpha = Math.max(
+    let directionalAlpha = Math.max(
       -1,
       Math.min(1, predictiveAlpha * compiledGenome.predictiveBlockWeight + microstructureAlpha * compiledGenome.microstructureBlockWeight),
     );
-    const signalAgreementCount = Math.max(positiveAgreementCount, negativeAgreementCount);
-    const dominantSignalGroup =
+    let signalAgreementCount = Math.max(positiveAgreementCount, negativeAgreementCount);
+    let dominantSignalGroup: DominantSignalGroup =
       Math.abs(predictiveAlpha) > Math.abs(microstructureAlpha)
         ? "predictive"
         : Math.abs(microstructureAlpha) > Math.abs(predictiveAlpha)
@@ -1596,6 +1753,12 @@ export class QmonEngine {
             ? "mixed"
             : "none";
 
+    if (validSignalCount < this.getQmonMinSignalCount(qmon)) {
+      directionalAlpha = 0;
+      signalAgreementCount = 0;
+      dominantSignalGroup = "none";
+    }
+
     return {
       directionalAlpha,
       predictiveAlpha,
@@ -1603,6 +1766,45 @@ export class QmonEngine {
       signalAgreementCount,
       dominantSignalGroup,
     };
+  }
+
+  /**
+   * Compute the directional alpha for either genetic or preset strategies.
+   */
+  private computeDirectionalAlpha(
+    qmon: Qmon,
+    signalValues: Record<string, number | null | Record<string, number | null>>,
+    directionRegime: DirectionRegimeValue = "flat",
+    volatilityRegime: VolatilityRegimeValue = "normal",
+    timeSegment: TimeSegment = "mid",
+  ): DirectionalAlphaResult {
+    const presetStrategyDefinition = this.getPresetStrategyDefinition(qmon);
+    let directionalAlphaResult =
+      presetStrategyDefinition === null
+        ? this.computeGeneticDirectionalAlpha(qmon, signalValues)
+        : {
+            predictiveAlpha: 0,
+            microstructureAlpha: 0,
+            ...this.presetStrategyService.evaluatePresetSignalStrategy(
+              presetStrategyDefinition,
+              signalValues,
+              directionRegime,
+              volatilityRegime,
+              timeSegment,
+            ),
+          };
+
+    if (presetStrategyDefinition !== null && directionalAlphaResult.signalAgreementCount < this.getQmonMinSignalCount(qmon)) {
+      directionalAlphaResult = {
+        directionalAlpha: 0,
+        predictiveAlpha: 0,
+        microstructureAlpha: 0,
+        signalAgreementCount: 0,
+        dominantSignalGroup: "none",
+      };
+    }
+
+    return directionalAlphaResult;
   }
 
   /**
@@ -1635,19 +1837,17 @@ export class QmonEngine {
     const estimatedFeeUsd = baseShareCount === null ? 0 : this.executionService.calculateTakerFeeUsd(baseShareCount, limitPrice);
     const slippageCostUsd = baseShareCount === null || limitPrice === null ? 0 : (predictedSlippageBps / 10_000) * baseShareCount * limitPrice;
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
-    const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getCompiledGenome(qmon).enabledTriggerIds.includes(triggerId));
-    const allowNoTrigger = qmon.genome.entryPolicy?.allowNoTrigger ?? false;
-    const minimumEdgeBps = Math.max(qmon.genome.entryPolicy?.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS);
-    const minimumNetEvUsd = Math.max(qmon.genome.entryPolicy?.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD);
-    const minimumFillQuality = Math.max(qmon.genome.entryPolicy?.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
-    const minimumConfirmations = Math.max(qmon.genome.entryPolicy?.minConfirmations ?? 2, config.QMON_MIN_ENTRY_CONFIRMATIONS);
+    const entryPolicy = this.getQmonEntryPolicy(qmon);
+    const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getQmonEnabledTriggerIds(qmon).includes(triggerId));
+    const minimumEdgeBps = Math.max(entryPolicy.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS);
+    const minimumNetEvUsd = Math.max(entryPolicy.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD);
+    const minimumFillQuality = Math.max(entryPolicy.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
+    const minimumConfirmations = Math.max(entryPolicy.minConfirmations ?? 2, config.QMON_MIN_ENTRY_CONFIRMATIONS);
     const maximumSlippageBps = Math.min(
-      qmon.genome.entryPolicy?.maxSlippageBps ?? qmon.genome.maxSlippageBps,
+      entryPolicy.maxSlippageBps ?? qmon.genome.maxSlippageBps,
       config.QMON_MAX_ENTRY_SLIPPAGE_BPS,
     );
-    // Apply EV premium based on trigger presence and allowNoTrigger setting
-    const noTriggerPremium = allowNoTrigger ? 0.05 : NO_TRIGGER_EV_PREMIUM_USD;
-    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : noTriggerPremium);
+    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : NO_TRIGGER_EV_PREMIUM_USD);
     let tradeabilityRejectReason: string | null = null;
 
     if (estimatedEdgeBps < minimumEdgeBps) {
@@ -1660,7 +1860,7 @@ export class QmonEngine {
       tradeabilityRejectReason = "fill-quality-too-low";
     } else if (predictedSlippageBps > maximumSlippageBps) {
       tradeabilityRejectReason = "predicted-slippage-too-high";
-    } else if (Math.abs(spreadSignalValue) * 100 > (qmon.genome.entryPolicy?.maxSpreadPenaltyBps ?? 40)) {
+    } else if (Math.abs(spreadSignalValue) * 100 > (entryPolicy.maxSpreadPenaltyBps ?? 40)) {
       tradeabilityRejectReason = "spread-penalty-too-high";
     } else if (directionalAlphaResult.signalAgreementCount < minimumConfirmations) {
       tradeabilityRejectReason = "insufficient-confirmations";
@@ -1689,7 +1889,7 @@ export class QmonEngine {
     let sizedShareCount: number | null = null;
 
     if (baseShareCount !== null) {
-      const executionPolicy = qmon.genome.executionPolicy;
+      const executionPolicy = this.getQmonExecutionPolicy(qmon);
       const evMultiplier = tradeabilityAssessment.estimatedNetEvUsd >= 0.12 ? 1.75 : tradeabilityAssessment.estimatedNetEvUsd >= 0.08 ? 1.4 : 1;
       const fillQualityMultiplier = tradeabilityAssessment.predictedFillQuality >= 0.7 ? 1.2 : 1;
       const sizeTierMultiplier = executionPolicy?.sizeTier === 3 ? 1.4 : executionPolicy?.sizeTier === 2 ? 1.15 : 1;
@@ -1708,12 +1908,15 @@ export class QmonEngine {
     signalValues: Record<string, number | null | Record<string, number | null>>,
     firedTriggerIds: readonly string[],
     limitPrice: number | null,
+    directionRegime: DirectionRegimeValue,
+    volatilityRegime: VolatilityRegimeValue,
+    timeSegment: TimeSegment,
   ): { action: TradingAction; tradeabilityAssessment: TradeabilityAssessment } {
-    const directionalAlphaResult = this.computeDirectionalAlpha(qmon, signalValues);
+    const directionalAlphaResult = this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment);
     const action: TradingAction =
-      directionalAlphaResult.directionalAlpha >= (qmon.genome.minScoreBuy ?? 0.25)
+      directionalAlphaResult.directionalAlpha >= (this.getQmonMinScoreBuy(qmon) ?? 0.25)
         ? "BUY_UP"
-        : directionalAlphaResult.directionalAlpha <= -(qmon.genome.minScoreSell ?? 0.25)
+        : directionalAlphaResult.directionalAlpha <= -(this.getQmonMinScoreSell(qmon) ?? 0.25)
           ? "BUY_DOWN"
           : "HOLD";
     const tradeabilityAssessment =
@@ -2745,7 +2948,7 @@ export class QmonEngine {
 
   /**
    * Initialize populations for all markets if they don't exist.
-   * Creates 200 diverse QMONs per market (1600 total).
+   * Creates genetic bootstrap QMONs plus the immutable preset catalog for each market.
    */
   public initializePopulations(): void {
     const marketKeys = this.getMarketKeys();
@@ -2756,12 +2959,18 @@ export class QmonEngine {
       const existing = existingIndex >= 0 ? (newPopulations[existingIndex] ?? null) : null;
 
       if (!existing || existing.qmons.length === 0) {
-        // Generate 200 diverse genomes for this market
-        const genomes = this.genomeService.generateInitialPopulation();
+        const genomes = this.genomeService.generateInitialPopulation(config.QMON_GENETIC_POPULATION_SIZE);
+        const presetStrategyDefinitions = config.QMON_PRESET_QMONS_ENABLED
+          ? this.presetStrategyService.getPresetStrategyDefinitions(config.QMON_PRESET_QMON_COUNT)
+          : [];
         const qmons: Qmon[] = [];
 
         for (const genome of genomes) {
           qmons.push(this.createQmon(market, 0, genome, []));
+        }
+
+        for (const presetStrategyDefinition of presetStrategyDefinitions) {
+          qmons.push(this.createPresetQmon(market, presetStrategyDefinition));
         }
 
         const newPopulation = this.createEmptyPopulation(market, qmons);
@@ -3328,7 +3537,8 @@ export class QmonEngine {
     const entryDirectionalAlpha = qmon.position.directionalAlpha ?? qmon.position.entryScore ?? 0;
     const entryDirectionMultiplier = qmon.position.action === "BUY_UP" ? 1 : -1;
     const currentImbalance = this.getScalarSignalValue(marketSignals, "imbalance") ?? 0;
-    const thesisPolicy = qmon.genome.exitPolicy?.thesisInvalidationPolicy ?? "hybrid";
+    const exitPolicy = this.getQmonExitPolicy(qmon);
+    const thesisPolicy = exitPolicy?.thesisInvalidationPolicy ?? "hybrid";
     const hasAlphaFlip = entryDirectionMultiplier * currentScore <= -THESIS_INVALIDATION_ALPHA_FLIP && entryDirectionMultiplier * entryDirectionalAlpha > 0;
     const hasMicrostructureFailure = entryDirectionMultiplier * currentImbalance <= -THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR;
     const hasThesisInvalidation =
@@ -3340,13 +3550,13 @@ export class QmonEngine {
     const hasStopLoss =
       qmon.genome.stopLossPct > 0 &&
       openPositionReturnPct !== null &&
-      openPositionReturnPct <= -qmon.genome.stopLossPct &&
+      openPositionReturnPct <= -(exitPolicy?.extremeStopLossPct ?? qmon.genome.stopLossPct) &&
       this.hasStopLossAgeBuffer(qmon, now);
     const hasTakeProfit =
       qmon.genome.takeProfitPct > 0 &&
       openPositionReturnPct !== null &&
-      peakReturnPct > qmon.genome.takeProfitPct &&
-      openPositionReturnPct <= qmon.genome.takeProfitPct;
+      peakReturnPct > (exitPolicy?.extremeTakeProfitPct ?? qmon.genome.takeProfitPct) &&
+      openPositionReturnPct <= (exitPolicy?.extremeTakeProfitPct ?? qmon.genome.takeProfitPct);
     let closeDecision: PositionCloseDecision = { close: false, reason: "" };
 
     if (this.hasReachedSettlementTime(qmon, now) && this.getSettledShareValue(qmon, chainlinkPrice) !== null) {
@@ -3507,6 +3717,8 @@ export class QmonEngine {
     volatilityRegime: VolatilityRegimeValue,
     timeSegment: TimeSegment,
   ): EvaluationResult {
+    const timeGate = this.checkTimeGate(qmon, timeSegment);
+    const regimeGate = this.checkRegimeGate(qmon, directionRegime, volatilityRegime);
     const triggerGate = this.checkTriggerGate(qmon, firedTriggerIds);
     if (!triggerGate.passed) {
       return {
@@ -3518,17 +3730,30 @@ export class QmonEngine {
         tradeabilityRejectReason: "trigger-gate-blocked",
         gates: {
           trigger: false,
-          time: false,
-          regime: false,
+          time: timeGate.passed,
+          regime: regimeGate.passed,
           threshold: false,
         },
       };
     }
 
-    const timeGate = this.checkTimeGate(qmon, timeSegment);
-    // Time gate now always passes, but may apply penalty later
+    if (!timeGate.passed) {
+      return {
+        qmonId: qmon.id,
+        action: "HOLD",
+        score: 0,
+        directionalAlpha: 0,
+        estimatedNetEvUsd: 0,
+        tradeabilityRejectReason: "time-gate-blocked",
+        gates: {
+          trigger: true,
+          time: false,
+          regime: regimeGate.passed,
+          threshold: false,
+        },
+      };
+    }
 
-    const regimeGate = this.checkRegimeGate(qmon, directionRegime, volatilityRegime);
     if (!regimeGate.passed) {
       return {
         qmonId: qmon.id,
@@ -3539,7 +3764,7 @@ export class QmonEngine {
         tradeabilityRejectReason: "regime-gate-blocked",
         gates: {
           trigger: triggerGate.passed,
-          time: true,
+          time: timeGate.passed,
           regime: false,
           threshold: false,
         },
@@ -3547,26 +3772,23 @@ export class QmonEngine {
     }
 
     const selectedAction =
-      this.computeDirectionalAlpha(qmon, signalValues).directionalAlpha >= (qmon.genome.minScoreBuy ?? 0.25)
+      this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment).directionalAlpha >= (this.getQmonMinScoreBuy(qmon) ?? 0.25)
         ? "BUY_UP"
-        : this.computeDirectionalAlpha(qmon, signalValues).directionalAlpha <= -(qmon.genome.minScoreSell ?? 0.25)
+        : this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment).directionalAlpha <= -(this.getQmonMinScoreSell(qmon) ?? 0.25)
           ? "BUY_DOWN"
           : "HOLD";
     const bestExecutablePrice = this.getLimitPriceForAction(signalValues, selectedAction);
-    const entryDecision = this.buildEntryDecision(qmon, signalValues, firedTriggerIds, bestExecutablePrice);
+    const entryDecision = this.buildEntryDecision(
+      qmon,
+      signalValues,
+      firedTriggerIds,
+      bestExecutablePrice,
+      directionRegime,
+      volatilityRegime,
+      timeSegment,
+    );
     const thresholdPassed = entryDecision.action !== "HOLD" && entryDecision.tradeabilityAssessment.shouldAllowEntry;
-
-    // Apply score penalties for partial gate passes
-    // Regime gate: 50% penalty when only one of direction/volatility enabled
-    // Time gate: 30% penalty when time segment is not enabled
-    // Penalties are cumulative: if both apply, total penalty is 65% (0.5 * 0.7 = 0.35)
-    let directionalAlpha = entryDecision.tradeabilityAssessment.directionalAlpha;
-    if (regimeGate.partialPass) {
-      directionalAlpha *= 0.5;
-    }
-    if (timeGate.partialPass) {
-      directionalAlpha *= 0.7;
-    }
+    const directionalAlpha = entryDecision.tradeabilityAssessment.directionalAlpha;
 
     return {
       qmonId: qmon.id,
@@ -3578,8 +3800,8 @@ export class QmonEngine {
       tradeabilityAssessment: entryDecision.tradeabilityAssessment,
       gates: {
         trigger: triggerGate.passed,
-        time: true,
-        regime: true,
+        time: timeGate.passed,
+        regime: regimeGate.passed,
         threshold: thresholdPassed,
       },
     };
@@ -3591,6 +3813,7 @@ export class QmonEngine {
   public setFamilyState(state: QmonFamilyState): void {
     this.familyState = {
       ...state,
+      strategySchemaVersion: state.strategySchemaVersion ?? 1,
       populations: state.populations.map((population) => ({
         ...this.normalizePopulationExecutionRuntime(population),
         qmons: population.qmons.map((qmon) => this.refreshQmonMetrics(qmon)),

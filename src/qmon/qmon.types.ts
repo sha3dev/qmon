@@ -8,6 +8,8 @@ export type QmonLifecycle = "active" | "retired";
 
 export type QmonId = string;
 
+export type QmonStrategyKind = "genetic" | "preset";
+
 export type MarketKey = `${string}-${string}`;
 
 export type HorizonLabel = "30s" | "2m" | "5m";
@@ -59,7 +61,7 @@ export type EntryPolicy = {
   readonly maxSpreadPenaltyBps: number;
   readonly maxSlippageBps: number;
   readonly minFillQuality: number;
-  readonly allowNoTrigger: boolean; // If true, allows trades without trigger but with higher EV threshold
+  readonly allowNoTrigger: boolean; // Legacy compatibility field; runtime entry logic now enforces a hard trigger gate.
 };
 
 export type ExecutionSizeTier = 1 | 2 | 3;
@@ -268,6 +270,11 @@ export type QmonMetrics = {
 export type Qmon = {
   readonly id: QmonId;
   readonly market: MarketKey;
+  readonly strategyKind?: QmonStrategyKind;
+  readonly strategyName?: string;
+  readonly strategyDescription?: string;
+  readonly presetStrategyId?: string | null;
+  readonly presetFamily?: string | null;
   readonly genome: QmonGenome;
   readonly role: QmonRole;
   readonly lifecycle: QmonLifecycle;
@@ -333,6 +340,7 @@ export type QmonRealWalkForwardGate = {
 };
 
 export type QmonFamilyState = {
+  readonly strategySchemaVersion?: number;
   readonly populations: readonly QmonPopulation[];
   readonly globalGeneration: number;
   readonly createdAt: number;
@@ -373,3 +381,36 @@ export type DirectionRegimeValue = "trending-up" | "trending-down" | "flat";
 export type VolatilityRegimeValue = "high" | "normal" | "low";
 
 export type ExchangeWeights = readonly [number, number, number, number];
+
+export type QmonPresetStrategyDefinition = {
+  readonly presetStrategyId: string;
+  readonly presetFamily: string;
+  readonly strategyName: string;
+  readonly strategyDescription: string;
+  readonly triggerIds: readonly string[];
+  readonly timeWindowGenes: TimeWindowGenes;
+  readonly directionRegimeGenes: DirectionRegimeGenes;
+  readonly volatilityRegimeGenes: VolatilityRegimeGenes;
+  readonly entryPolicy: EntryPolicy;
+  readonly executionPolicy: ExecutionPolicy;
+  readonly exitPolicy: ExitPolicy;
+  readonly minScoreBuy: number;
+  readonly minScoreSell: number;
+  readonly minSignalCount: number;
+  readonly anchorPrice: number;
+  readonly slopeThreshold: number;
+  readonly edgeThreshold: number;
+  readonly distanceThreshold: number;
+  readonly spreadLimit: number;
+  readonly depthThreshold: number;
+  readonly imbalanceThreshold: number;
+  readonly stalenessLimit: number;
+  readonly pressureThreshold: number;
+  readonly alphaScale: number;
+};
+
+export type QmonPresetSignalEvaluation = {
+  readonly directionalAlpha: number;
+  readonly signalAgreementCount: number;
+  readonly dominantSignalGroup: DominantSignalGroup;
+};

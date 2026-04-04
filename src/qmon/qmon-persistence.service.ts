@@ -30,6 +30,7 @@ import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMark
 
 const FAMILY_STATE_FILENAME = "family-state.json";
 const FAMILY_STATE_BACKUP_DIRNAME = "family-state-backups";
+const FAMILY_STATE_SCHEMA_VERSION = 1;
 
 /**
  * @section class
@@ -334,6 +335,7 @@ export class QmonPersistenceService {
   private sanitizeFamilyStateForPersistence(state: QmonFamilyState): Record<string, unknown> {
     const sanitizedState: Record<string, unknown> = {
       ...state,
+      strategySchemaVersion: FAMILY_STATE_SCHEMA_VERSION,
       populations: state.populations.map((population) => this.sanitizePopulationForPersistence(population)),
     };
 
@@ -491,6 +493,7 @@ export class QmonPersistenceService {
   ): QmonFamilyState {
     const normalizedState: QmonFamilyState = {
       ...state,
+      strategySchemaVersion: FAMILY_STATE_SCHEMA_VERSION,
       populations: state.populations.map((population) =>
         this.normalizePopulation(
           this.sanitizeLoadedPopulation(population),
@@ -524,7 +527,13 @@ export class QmonPersistenceService {
 
     try {
       const json = await readFile(familyStatePath, "utf-8");
-      familyState = this.normalizeFamilyState(JSON.parse(json) as QmonFamilyState);
+      const parsedFamilyState = JSON.parse(json) as QmonFamilyState;
+
+      if (parsedFamilyState.strategySchemaVersion === FAMILY_STATE_SCHEMA_VERSION) {
+        familyState = this.normalizeFamilyState(parsedFamilyState);
+      } else {
+        console.warn("Ignoring persisted family state because strategy schema version changed");
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn(`Failed to load family state: ${message}`);

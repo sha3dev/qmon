@@ -32,12 +32,22 @@ function createQmon(
     windowsLived: number;
     totalTrades: number;
     paperWindowPnls: readonly number[];
+    strategyKind?: Qmon["strategyKind"];
+    strategyName?: string;
+    strategyDescription?: string;
+    presetStrategyId?: string | null;
+    presetFamily?: string | null;
   },
 ): Qmon {
   return {
     id: options.id,
     market: MARKET_KEY,
     genome,
+    strategyKind: options.strategyKind ?? "genetic",
+    strategyName: options.strategyName ?? "Genetic Test Strategy",
+    strategyDescription: options.strategyDescription ?? "Synthetic QMON used by evolution tests.",
+    presetStrategyId: options.presetStrategyId ?? null,
+    presetFamily: options.presetFamily ?? null,
     role: "candidate",
     lifecycle: "active",
     generation: 0,
@@ -281,4 +291,90 @@ test("QmonEvolutionService replaces weak QMONs using the strongest taker-only pa
     true,
   );
   assert.equal(evolutionResult.highestChildGeneration, 1);
+});
+
+test("QmonEvolutionService never uses preset QMONs as parents and never replaces them", () => {
+  const genomeService = QmonGenomeService.createDefault();
+  const evolutionService = new QmonEvolutionService(genomeService);
+  const seededGenome = genomeService.generateSeededGenome("balanced");
+  const presetChampion = createQmon(seededGenome, {
+    id: "PRESET01",
+    totalPnl: 15,
+    championScore: 500,
+    paperLongWindowPnlSum: 12,
+    negativeWindowRateLast10: 0,
+    windowsLived: 20,
+    totalTrades: 40,
+    paperWindowPnls: Array(20).fill(1),
+    strategyKind: "preset",
+    strategyName: "Preset Control",
+    strategyDescription: "Preset strategy that must stay immutable in evolution.",
+    presetStrategyId: "late-threshold-sprint-01",
+    presetFamily: "late-threshold-sprint",
+  });
+  const weakPreset = createQmon(seededGenome, {
+    id: "PRESET02",
+    totalPnl: -10,
+    championScore: null,
+    paperLongWindowPnlSum: -9,
+    negativeWindowRateLast10: 1,
+    windowsLived: 20,
+    totalTrades: 40,
+    paperWindowPnls: Array(20).fill(-0.5),
+    strategyKind: "preset",
+    strategyName: "Preset Loser",
+    strategyDescription: "Preset strategy that must not be replaced by evolution.",
+    presetStrategyId: "late-threshold-sprint-02",
+    presetFamily: "late-threshold-sprint",
+  });
+  const geneticParent = createQmon(seededGenome, {
+    id: "GEN01",
+    totalPnl: 11,
+    championScore: 320,
+    paperLongWindowPnlSum: 8,
+    negativeWindowRateLast10: 0,
+    windowsLived: 20,
+    totalTrades: 20,
+    paperWindowPnls: Array(20).fill(0.8),
+  });
+  const secondGeneticParent = createQmon(seededGenome, {
+    id: "GEN03",
+    totalPnl: 10,
+    championScore: 300,
+    paperLongWindowPnlSum: 7,
+    negativeWindowRateLast10: 0,
+    windowsLived: 20,
+    totalTrades: 20,
+    paperWindowPnls: Array(20).fill(0.7),
+  });
+  const weakGenetic = createQmon(seededGenome, {
+    id: "GEN02",
+    totalPnl: -6,
+    championScore: null,
+    paperLongWindowPnlSum: -4,
+    negativeWindowRateLast10: 0.8,
+    windowsLived: 20,
+    totalTrades: 4,
+    paperWindowPnls: Array(20).fill(-0.3),
+  });
+  const evolutionResult = withMockRandom(() =>
+    evolutionService.evolvePopulation(
+      createPopulation([presetChampion, weakPreset, geneticParent, secondGeneticParent, weakGenetic]),
+      (newbornQmon) => newbornQmon,
+    ),
+  );
+
+  assert.equal(evolutionResult.replacements.length, 1);
+  assert.equal(
+    evolutionResult.replacements.every((replacement) => replacement.deadQmonId !== "PRESET01" && replacement.deadQmonId !== "PRESET02"),
+    true,
+  );
+  assert.equal(
+    evolutionResult.replacements.every((replacement) => !replacement.parentIds.includes("PRESET01") && !replacement.parentIds.includes("PRESET02")),
+    true,
+  );
+  assert.equal(
+    evolutionResult.population.qmons.filter((qmon) => qmon.id === "PRESET01" || qmon.id === "PRESET02").length,
+    2,
+  );
 });

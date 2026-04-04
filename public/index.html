@@ -431,6 +431,11 @@
     }
     .qmon-card:hover { border-color: rgba(124,77,255,0.55); box-shadow: 0 10px 24px rgba(124,77,255,0.12); transform: translateY(-2px); }
     .qmon-card.has-position { border-color: rgba(124,77,255,0.48); background: linear-gradient(180deg, rgba(124,77,255,0.05), rgba(26,29,39,0.98)); }
+    .qmon-card.preset-strategy { border-color: rgba(255,215,64,0.24); }
+    .qmon-card.preset-strategy:hover {
+      border-color: rgba(255,215,64,0.48);
+      box-shadow: 0 10px 24px rgba(255,215,64,0.08);
+    }
 
     /* Card header */
     .qmon-head {
@@ -441,6 +446,10 @@
     .qmon-id { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
     .qmon-market { font-size: 9px; color: var(--text-muted); margin-left: 6px; }
     .qmon-head-id { display:flex; align-items:center; gap:8px; }
+    .qmon-strategy-line {
+      margin-top: 4px; font-size: 9px; color: var(--text-secondary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;
+    }
     .qmon-mode {
       font-size: 8px; padding: 3px 8px; border-radius: 3px; font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.5px;
@@ -521,6 +530,35 @@
     .gen-badge.gen-3 { background: rgba(255,215,64,0.14); color: var(--yellow); border-color: rgba(255,215,64,0.28); }
     .gen-badge.gen-4 { background: rgba(255,152,0,0.14); color: var(--orange); border-color: rgba(255,152,0,0.28); }
     .gen-badge.gen-5 { background: rgba(255,23,68,0.14); color: var(--red-mid); border-color: rgba(239,83,80,0.28); }
+    .strategy-badge {
+      font-size: 7px; padding: 2px 6px; border-radius: 3px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid rgba(124,77,255,0.28);
+      background: rgba(124,77,255,0.14); color: var(--accent);
+    }
+    .strategy-badge.preset {
+      border-color: rgba(255,215,64,0.28);
+      background: rgba(255,215,64,0.12);
+      color: var(--yellow);
+    }
+    .strategy-summary-card {
+      padding: 10px 12px; border-radius: 8px;
+      background: linear-gradient(180deg, rgba(34,38,54,0.96), rgba(24,27,38,0.98));
+      border: 1px solid rgba(124,77,255,0.18);
+    }
+    .strategy-summary-card.preset {
+      border-color: rgba(255,215,64,0.22);
+      background: linear-gradient(180deg, rgba(255,215,64,0.06), rgba(24,27,38,0.98));
+    }
+    .strategy-summary-title {
+      font-size: 11px; font-weight: 700; color: var(--text-primary); letter-spacing: 0.3px;
+    }
+    .strategy-summary-desc {
+      margin-top: 6px; font-size: 10px; color: var(--text-secondary); line-height: 1.45;
+    }
+    .strategy-summary-meta {
+      margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;
+      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;
+    }
 
     @media (max-width: 980px) {
       .market-pnl-item.total {
@@ -723,6 +761,14 @@
         </div>
       </div>
       <div class="filter-section">
+        <span class="filter-section-title">STRATEGY</span>
+        <div class="filter-chips">
+          <button class="filter-chip" :class="{ active: filterStrategy === '' }" @click="filterStrategy = ''">ALL</button>
+          <button class="filter-chip" :class="{ active: filterStrategy === 'preset' }" @click="filterStrategy = 'preset'">PRESET</button>
+          <button class="filter-chip" :class="{ active: filterStrategy === 'genetic' }" @click="filterStrategy = 'genetic'">GENETIC</button>
+        </div>
+      </div>
+      <div class="filter-section">
         <button class="filter-chip" :class="{ active: filterPosition }" @click="filterPosition = !filterPosition">HAS POSITION</button>
       </div>
       <span style="font-size:9px; color:var(--text-muted); margin-left:auto;" x-text="filteredQmons.length + ' QMONs'"></span>
@@ -766,19 +812,21 @@
     <!-- QMON cards grid -->
     <div class="qmon-grid">
       <template x-for="qmon in paginatedQmons" :key="qmon.id">
-        <div class="qmon-card" :class="{ 'has-position': hasAnyPosition(qmon) }" @click="openModal(qmon)">
+        <div class="qmon-card" :class="{ 'has-position': hasAnyPosition(qmon), 'preset-strategy': isPresetQmon(qmon) }" @click="openModal(qmon)">
           <!-- Header -->
           <div class="qmon-head">
             <div class="qmon-head-id">
               <div style="display:flex; gap:4px; align-items:center;">
                 <span class="gen-badge" :class="generationBadgeClass(qmon.generation)" x-text="qmon.generation"></span>
+                <span class="strategy-badge" :class="{ preset: isPresetQmon(qmon) }" x-text="strategyKindLabel(qmon)"></span>
                 <template x-if="isExploratoryQmon(qmon)">
                   <span style="font-size:7px; padding:2px 5px; background:rgba(124,77,255,0.2); color:var(--accent); font-weight:700; border-radius:3px; text-transform:uppercase; letter-spacing:0.5px;">EXP</span>
                 </template>
               </div>
               <div>
-              <span class="qmon-id" x-text="qmon.id"></span>
-              <span class="qmon-market" x-text="qmon.market"></span>
+                <span class="qmon-id" x-text="qmon.id"></span>
+                <span class="qmon-market" x-text="qmon.market"></span>
+                <div class="qmon-strategy-line" x-text="strategyDisplayName(qmon)"></div>
               </div>
             </div>
             <span class="qmon-mode" :class="'mode-' + roleClass(qmon)" x-text="roleLabel(qmon)"></span>
@@ -868,9 +916,22 @@
           Generation <span x-text="selectedQmon.generation"></span> •
           Age <span style="color:var(--accent); font-weight:600;" x-text="(selectedQmon.windowsLived ?? 0) + ' windows'"></span> •
           <span class="qmon-mode" :class="'mode-' + roleClass(selectedQmon)" x-text="roleLabel(selectedQmon)"></span>
+          <span class="strategy-badge" style="margin-left:8px;" :class="{ preset: isPresetQmon(selectedQmon) }" x-text="strategyKindLabel(selectedQmon)"></span>
           <template x-if="isExploratoryQmon(selectedQmon)">
             <span style="margin-left:8px; padding:2px 6px; background:rgba(124,77,255,0.15); color:var(--accent); font-size:9px; font-weight:700; border-radius:3px; text-transform:uppercase; letter-spacing:0.5px;">EXPLORATORY</span>
           </template>
+        </div>
+
+        <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">STRATEGY</div>
+          <div class="strategy-summary-card" :class="{ preset: isPresetQmon(selectedQmon) }">
+            <div class="strategy-summary-title" x-text="strategyDisplayName(selectedQmon)"></div>
+            <div class="strategy-summary-desc" x-text="strategyDisplayDescription(selectedQmon)"></div>
+            <div class="strategy-summary-meta">
+              <span x-text="isPresetQmon(selectedQmon) ? 'Preset family: ' + (selectedQmon.presetFamily || 'n/a') : 'Family: genetic'"></span>
+              <span x-show="isPresetQmon(selectedQmon)" x-text="'Preset ID: ' + (selectedQmon.presetStrategyId || 'n/a')"></span>
+            </div>
+          </div>
         </div>
 
         <!-- Parent IDs Section -->
@@ -1125,8 +1186,8 @@
               <span style="font-weight:600;" :class="costClass(selectedQmon.genome.entryPolicy?.maxSlippageBps)" x-text="formatNullableBps(selectedQmon.genome.entryPolicy?.maxSlippageBps)"></span>
             </div>
             <div style="font-size:10px; padding:4px 8px; border-radius:4px; background:var(--bg-card); display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--text-secondary);">No Trigger Mode</span>
-              <span style="font-weight:600;" :style="selectedQmon.genome.entryPolicy?.allowNoTrigger ? 'color:var(--green-mid);' : 'color:var(--text-muted);'" x-text="selectedQmon.genome.entryPolicy?.allowNoTrigger ? 'ENABLED' : 'DISABLED'"></span>
+              <span style="color:var(--text-secondary);">Trigger Required</span>
+              <span style="font-weight:600; color:var(--green-mid);">YES</span>
             </div>
           </div>
         </div>
@@ -1190,11 +1251,11 @@
             </div>
           </div>
           <div style="margin-top:10px; padding:8px; border-radius:4px; background:rgba(124,77,255,0.08); border:1px solid rgba(124,77,255,0.2);">
-            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">REVISED GATE LOGIC</div>
+            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">STRICT SAFETY GATES</div>
             <div style="font-size:8px; color:var(--text-secondary); line-height:1.3;">
-              • Regime gate: <span style="color:var(--text-primary);">OR logic</span> with 50% penalty when only one regime matches<br/>
-              • Time gate: <span style="color:var(--text-primary);">Always passes</span> with 30% penalty when segment disabled<br/>
-              • Trigger gate: <span style="color:var(--text-primary);">Can be disabled</span> with +$0.05 EV premium when allowNoTrigger enabled
+              • Regime gate: <span style="color:var(--text-primary);">Direction AND volatility must both match</span><br/>
+              • Time gate: <span style="color:var(--text-primary);">Disabled segment blocks entry</span><br/>
+              • Trigger gate: <span style="color:var(--text-primary);">At least one enabled trigger must fire</span>
             </div>
           </div>
         </div>
@@ -1309,14 +1370,14 @@
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
-          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">SIGNAL CORRELATION STATUS</div>
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">SIGNAL QUALITY POLICY</div>
           <div style="padding:8px; border-radius:4px; background:rgba(124,77,255,0.08); border:1px solid rgba(124,77,255,0.2);">
-            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">CORRELATION-BASED FILTERING</div>
+            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">STRICT AGREEMENT + FAMILY RULES</div>
             <div style="font-size:8px; color:var(--text-secondary); line-height:1.3; margin-bottom:6px;">
-              Only signals with <span style="color:var(--text-primary);">|correlation| ≥ 0.2</span> and <span style="color:var(--text-primary);">p-value < 0.05</span> are used in directional alpha calculations.
+              Genetic QMONs need enough valid signal votes before alpha is accepted. Preset QMONs use fixed family rules plus the same hard trigger/time/regime gates.
             </div>
             <div style="font-size:8px; color:var(--text-muted);">
-              <em>Real-time correlation data available at /api/signal-correlations</em>
+              <em>Walk-forward and champion readiness still decide whether a strategy is allowed to drive the seat.</em>
             </div>
           </div>
         </div>
@@ -1482,6 +1543,7 @@
         searchQuery: '',
         filterMarket: '',
         filterRole: '',
+        filterStrategy: '',
         filterPosition: false,
         currentPage: 0,
         pageSize: 20,
@@ -1564,7 +1626,10 @@
             const q = this.searchQuery.toLowerCase();
             qmons = qmons.filter(qm =>
               qm.id.toLowerCase().includes(q) ||
-              qm.market.toLowerCase().includes(q)
+              qm.market.toLowerCase().includes(q) ||
+              String(qm.strategyName || '').toLowerCase().includes(q) ||
+              String(qm.strategyDescription || '').toLowerCase().includes(q) ||
+              String(qm.presetFamily || '').toLowerCase().includes(q)
             );
           }
 
@@ -1574,6 +1639,10 @@
 
           if (this.filterRole) {
             qmons = qmons.filter(qm => qm.role === this.filterRole);
+          }
+
+          if (this.filterStrategy) {
+            qmons = qmons.filter(qm => (qm.strategyKind || 'genetic') === this.filterStrategy);
           }
 
           if (this.filterPosition) {
@@ -1654,6 +1723,7 @@
           this.$watch('searchQuery', () => this.resetPagination());
           this.$watch('filterMarket', () => this.resetPagination());
           this.$watch('filterRole', () => this.resetPagination());
+          this.$watch('filterStrategy', () => this.resetPagination());
           this.$watch('filterPosition', () => this.resetPagination());
           document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
@@ -2015,14 +2085,33 @@
           return role === 'champion' ? 'CH 👑' : 'CA';
         },
 
+        isPresetQmon(qmon) {
+          return (qmon?.strategyKind || 'genetic') === 'preset';
+        },
+
         generationBadgeClass(generation) {
           const normalizedGeneration = Math.max(0, Number(generation || 0));
           return `gen-${Math.min(normalizedGeneration, 5)}`;
         },
 
         isExploratoryQmon(qmon) {
-          // A QMON is exploratory if it has generation=0 and no parents
-          return qmon.generation === 0 && (!qmon.parentIds || qmon.parentIds.length === 0);
+          return !this.isPresetQmon(qmon) && qmon.generation === 0 && (!qmon.parentIds || qmon.parentIds.length === 0);
+        },
+
+        strategyKindLabel(qmon) {
+          return this.isPresetQmon(qmon) ? 'PRESET' : 'GENETIC';
+        },
+
+        strategyDisplayName(qmon) {
+          return qmon?.strategyName || (this.isPresetQmon(qmon) ? 'Preset Fixed Strategy' : 'Genetic Adaptive Strategy');
+        },
+
+        strategyDisplayDescription(qmon) {
+          return qmon?.strategyDescription || (
+            this.isPresetQmon(qmon)
+              ? 'Fixed-rule preset strategy evaluated through the same paper/champion loop as genetic QMONs.'
+              : 'Genome-born strategy evolved through the paper/champion loop and strict safety gates.'
+          );
         },
 
         roleClass(qmon) {

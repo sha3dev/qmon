@@ -1,9 +1,11 @@
 import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
+import config from "../src/config.ts";
 import { QmonChampionService } from "../src/qmon/qmon-champion.service.ts";
 import { QmonEngine } from "../src/qmon/qmon-engine.service.ts";
-import type { MarketKey, Qmon, QmonFamilyState, QmonPopulation } from "../src/qmon/qmon.types.ts";
+import { QmonPresetStrategyService } from "../src/qmon/qmon-preset-strategy.service.ts";
+import type { DirectionRegimeValue, MarketKey, Qmon, QmonFamilyState, QmonPopulation, VolatilityRegimeValue } from "../src/qmon/qmon.types.ts";
 import type { RegimeResult } from "../src/regime/regime.types.ts";
 import { SignalEngine } from "../src/signal/signal-engine.service.ts";
 import type { Snapshot, StructuredSignalResult } from "../src/signal/signal.types.ts";
@@ -18,11 +20,14 @@ function mustValue<T>(value: T | null | undefined): T {
   return value;
 }
 
-function createRegimes(): RegimeResult {
+function createRegimes(
+  direction: DirectionRegimeValue = "flat",
+  volatility: VolatilityRegimeValue = "normal",
+): RegimeResult {
   return {
     btc: {
-      direction: "flat",
-      volatility: "normal",
+      direction,
+      volatility,
       directionStrength: 0,
       volatilityLevel: 0,
       lastUpdated: 1,
@@ -184,6 +189,26 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
   };
 }
 
+function createPresetQmon(): Qmon {
+  const presetStrategyService = QmonPresetStrategyService.createDefault();
+  const presetStrategyDefinition = presetStrategyService.getPresetStrategyDefinition("edge-distance-confluence-01");
+
+  if (presetStrategyDefinition === null) {
+    throw new Error("expected preset strategy definition");
+  }
+
+  return {
+    ...createQmon(),
+    id: "PRESET01",
+    strategyKind: "preset",
+    strategyName: presetStrategyDefinition.strategyName,
+    strategyDescription: presetStrategyDefinition.strategyDescription,
+    presetStrategyId: presetStrategyDefinition.presetStrategyId,
+    presetFamily: presetStrategyDefinition.presetFamily,
+    genome: presetStrategyService.createCompatibilityGenome(presetStrategyDefinition),
+  };
+}
+
 function createPopulation(qmons: readonly Qmon[], activeChampionQmonId: string | null = null): QmonPopulation {
   return {
     market: MARKET_KEY,
@@ -238,9 +263,17 @@ test("QmonEngine initializes one deterministic taker-only population per market"
   qmonEngine.initializePopulations();
 
   const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+  const expectedPresetCount = config.QMON_PRESET_QMONS_ENABLED ? config.QMON_PRESET_QMON_COUNT : 0;
+  const expectedPopulationSize = config.QMON_GENETIC_POPULATION_SIZE + expectedPresetCount;
 
-  assert.equal(population.qmons.length, 200);
-  assert.equal(new Set(population.qmons.map((qmon) => JSON.stringify(qmon.genome))).size, 200);
+  assert.equal(population.qmons.length, expectedPopulationSize);
+  assert.equal(population.qmons.filter((qmon) => (qmon.strategyKind ?? "genetic") === "genetic").length, config.QMON_GENETIC_POPULATION_SIZE);
+  assert.equal(population.qmons.filter((qmon) => qmon.strategyKind === "preset").length, expectedPresetCount);
+  assert.equal(new Set(population.qmons.map((qmon) => JSON.stringify({
+    genome: qmon.genome,
+    presetStrategyId: qmon.presetStrategyId ?? null,
+    strategyKind: qmon.strategyKind ?? "genetic",
+  }))).size, expectedPopulationSize);
   assert.equal(
     population.qmons.every((qmon) => qmon.pendingOrder === null),
     true,
@@ -398,6 +431,115 @@ test("QmonEngine blocks new entries when no enabled trigger fired", () => {
   assert.equal(blockedQmon.position.action, null);
   assert.equal(blockedQmon.pendingOrder, null);
   assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine blocks entries when the current time segment is disabled", () => {
+  const timeLockedQmon: Qmon = {
+    ...createQmon(),
+    genome: {
+      ...createQmon().genome,
+      timeWindowGenes: [true, false, false],
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([timeLockedQmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(5_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine blocks entries unless direction and volatility regimes both match", () => {
+  const regimeLockedQmon: Qmon = {
+    ...createQmon(),
+    genome: {
+      ...createQmon().genome,
+      directionRegimeGenes: [false, false, true],
+      volatilityRegimeGenes: [true, false, false],
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([regimeLockedQmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes("flat", "normal"), ["consensus-flip"], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine blocks genetic entries when too few valid signals are available", () => {
+  const signalLockedQmon: Qmon = {
+    ...createQmon(),
+    genome: {
+      ...createQmon().genome,
+      entryPolicy: {
+        ...createQmon().genome.entryPolicy,
+        minConfirmations: 4,
+      },
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([signalLockedQmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine allows fixed preset QMONs to open paper positions through the same execution flow", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createPresetQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
+      createRegimes("trending-up", "normal"),
+      ["mispricing"],
+      entrySnapshots,
+    );
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
+      createRegimes("trending-up", "normal"),
+      ["mispricing"],
+      entrySnapshots,
+    );
+  });
+
+  const openedPresetQmon = mustValue(qmonEngine.getQmon("PRESET01"));
+
+  assert.equal(openedPresetQmon.strategyKind, "preset");
+  assert.equal(openedPresetQmon.position.action, "BUY_UP");
+  assert.equal(openedPresetQmon.pendingOrder, null);
+  assert.equal(openedPresetQmon.decisionHistory.length, 1);
 });
 
 test("QmonEngine allows BUY_DOWN entries when downside outcome EV is positive after fees", () => {

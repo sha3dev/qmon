@@ -94,7 +94,7 @@ export class QmonEvolutionService {
   }
 
   private isParentEligible(qmon: Qmon): boolean {
-    let isEligible = qmon.lifecycle === "active";
+    let isEligible = (qmon.strategyKind ?? "genetic") === "genetic" && qmon.lifecycle === "active";
 
     if (isEligible) {
       isEligible = qmon.position.action === null && qmon.pendingOrder === null;
@@ -112,7 +112,7 @@ export class QmonEvolutionService {
   }
 
   private isDeathEligible(qmon: Qmon, protectedParentIds: ReadonlySet<QmonId>, activeChampionQmonId: QmonId | null): boolean {
-    let isEligible = qmon.lifecycle === "active";
+    let isEligible = (qmon.strategyKind ?? "genetic") === "genetic" && qmon.lifecycle === "active";
 
     if (isEligible) {
       isEligible = qmon.position.action === null && qmon.pendingOrder === null;
@@ -273,6 +273,11 @@ export class QmonEvolutionService {
     return {
       id: generateQmonId(),
       market,
+      strategyKind: "genetic",
+      strategyName: "Genetic Offspring Strategy",
+      strategyDescription: `Adaptive genome-born QMON produced from parents ${parentAQmon.id} and ${parentBQmon.id}.`,
+      presetStrategyId: null,
+      presetFamily: null,
       genome: this.genomeService.createOffspringGenome(parentAQmon.genome, parentBQmon.genome, adaptiveMutationRate),
       role: "candidate",
       lifecycle: "active",
@@ -304,6 +309,11 @@ export class QmonEvolutionService {
     let exploratoryQmon: Qmon = {
       id: generateQmonId(),
       market,
+      strategyKind: "genetic",
+      strategyName: "Genetic Explorer Strategy",
+      strategyDescription: "Fresh random genome-born QMON injected to explore outside the current parent pool.",
+      presetStrategyId: null,
+      presetFamily: null,
       genome: randomGenome,
       role: "candidate",
       lifecycle: "active",
@@ -418,10 +428,11 @@ export class QmonEvolutionService {
     const activeChampionQmonId = population.activeChampionQmonId;
     const parentPool = this.buildParentPool(population.qmons);
     const protectedParentIds = new Set(parentPool.map((parentQmon) => parentQmon.id));
+    const geneticQmonCount = population.qmons.filter((qmon) => (qmon.strategyKind ?? "genetic") === "genetic").length;
     const candidateDeaths = population.qmons
       .filter((qmon) => this.isDeathEligible(qmon, protectedParentIds, activeChampionQmonId))
       .sort((leftQmon, rightQmon) => this.compareHistoricalWeakness(leftQmon, rightQmon));
-    const replacementCount = Math.min(candidateDeaths.length, Math.max(1, Math.ceil(population.qmons.length * config.QMON_EVOLUTION_REPLACEMENT_RATE)));
+    const replacementCount = Math.min(candidateDeaths.length, Math.max(1, Math.ceil(geneticQmonCount * config.QMON_EVOLUTION_REPLACEMENT_RATE)));
     const replacements: EvolutionReplacement[] = [];
     const qmonsById = new Map(population.qmons.map((qmon) => [qmon.id, qmon]));
     let highestChildGeneration: number | null = null;
@@ -454,7 +465,7 @@ export class QmonEvolutionService {
       evolutionWindowCount !== null && evolutionWindowCount % EXPLORATORY_INJECTION_WINDOW_INTERVAL === 0;
 
     if (shouldInjectExplorers) {
-      const currentQmons = [...qmonsById.values()];
+      const currentQmons = [...qmonsById.values()].filter((qmon) => (qmon.strategyKind ?? "genetic") === "genetic");
       const sortedByWeakness = [...currentQmons].sort((leftQmon, rightQmon) =>
         this.compareHistoricalWeakness(leftQmon, rightQmon),
       );
