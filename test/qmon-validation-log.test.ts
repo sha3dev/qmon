@@ -83,6 +83,71 @@ test("QmonValidationLogService reports order failure rate and taker CPnL rows", 
   }
 });
 
+test("QmonValidationLogService returns candidate and seat CPnL rows after reloading persisted logs", async () => {
+  const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
+  const firstValidationLogService = new QmonValidationLogService(diagnosticsDir);
+  const mockNow = Date.now();
+
+  try {
+    withMockNow(mockNow, () => {
+      firstValidationLogService.logPositionOpened({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        entryPrice: 0.2,
+        executionPrice: 0.2,
+        shareCount: 10,
+        fee: 0.1,
+        cashflow: -2.1,
+        isSeat: false,
+      });
+      firstValidationLogService.logPositionClosed({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        reason: "sell-threshold-hit",
+        entryPrice: 0.2,
+        exitPrice: 0.5,
+        executionPrice: 0.5,
+        shareCount: 10,
+        grossPnl: 3,
+        fee: 0.1,
+        netPnl: 2.9,
+        cashflow: 4.9,
+        isSeat: false,
+      });
+      firstValidationLogService.logPositionClosed({
+        market: "btc-5m",
+        qmonId: "QMON_SEAT",
+        action: "BUY_DOWN",
+        reason: "market-settled",
+        entryPrice: 0.3,
+        exitPrice: 1,
+        executionPrice: 1,
+        shareCount: 5,
+        grossPnl: 3.5,
+        fee: 0,
+        netPnl: 3.5,
+        cashflow: 5,
+        isSeat: true,
+      });
+    });
+
+    await firstValidationLogService.flush();
+
+    const secondValidationLogService = new QmonValidationLogService(diagnosticsDir);
+    const cpnlLogRows = await secondValidationLogService.readCpnlLogRows("24h", 10);
+
+    assert.equal(cpnlLogRows.length, 3);
+    assert.deepEqual(
+      cpnlLogRows.map((cpnlLogRow) => cpnlLogRow.qmonId),
+      ["QMON01", "QMON01", "QMON_SEAT"],
+    );
+  } finally {
+    await rm(diagnosticsDir, { recursive: true, force: true });
+  }
+});
+
 test("QmonValidationLogService ignores tradeability warnings in diagnostics aggregates", async () => {
   const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
   const validationLogService = new QmonValidationLogService(diagnosticsDir);

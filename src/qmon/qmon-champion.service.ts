@@ -36,6 +36,7 @@ const CHAMPION_TRADES_PER_WINDOW_PENALTY = 90;
 const CHAMPION_MAX_EXPOSURE_RATIO = 0.8;
 const CHAMPION_MAX_TRADES_PER_WINDOW = 1.5;
 const CHAMPION_MIN_NET_PNL_PER_TRADE = 0.1;
+const CHAMPION_INCUMBENT_REPLACEMENT_MARGIN = 25;
 const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
 const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
 
@@ -438,6 +439,40 @@ export class QmonChampionService {
     return selectedChampion;
   }
 
+  private shouldRetainIncumbentChampion(incumbentChampion: Qmon): boolean {
+    const shouldRetain =
+      incumbentChampion.lifecycle === "active" &&
+      this.hasConsistentTradeState(incumbentChampion) &&
+      incumbentChampion.metrics.totalPnl > 0 &&
+      incumbentChampion.metrics.winRate >= CHAMPION_MIN_WIN_RATE &&
+      incumbentChampion.metrics.totalTrades >= 10 &&
+      (incumbentChampion.metrics.feeRatio ?? 0) <= CHAMPION_MAX_FEE_RATIO &&
+      incumbentChampion.metrics.maxDrawdown <= CHAMPION_MAX_DRAWDOWN;
+
+    return shouldRetain;
+  }
+
+  private resolveChampionWithIncumbentRetention(
+    selectedChampion: Qmon | null,
+    preservedChampion: Qmon | null,
+    shouldPreserveSeatState: boolean,
+  ): Qmon | null {
+    let resolvedChampion = shouldPreserveSeatState ? preservedChampion : selectedChampion;
+
+    if (
+      !shouldPreserveSeatState &&
+      preservedChampion !== null &&
+      this.shouldRetainIncumbentChampion(preservedChampion) &&
+      (selectedChampion === null ||
+        (preservedChampion.metrics.championScore ?? 0) + CHAMPION_INCUMBENT_REPLACEMENT_MARGIN >=
+          (selectedChampion.metrics.championScore ?? Number.NEGATIVE_INFINITY))
+    ) {
+      resolvedChampion = preservedChampion;
+    }
+
+    return resolvedChampion;
+  }
+
   private applyChampionRoles(qmons: readonly Qmon[], activeChampionQmonId: string | null): Qmon[] {
     const qmonsWithRoles: Qmon[] = [];
 
@@ -512,8 +547,13 @@ export class QmonChampionService {
     const finalizedPaperQmons = this.finalizePaperWindowHistory(qmons);
     const preservedChampion =
       population.activeChampionQmonId !== null ? (finalizedPaperQmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
-    const selectedChampion = shouldPreserveSeatState ? preservedChampion : this.selectActiveChampion(finalizedPaperQmons);
-    const activeChampionQmonId = selectedChampion?.id ?? null;
+    const selectedChampion = this.selectActiveChampion(finalizedPaperQmons);
+    const resolvedChampion = this.resolveChampionWithIncumbentRetention(
+      selectedChampion,
+      preservedChampion,
+      shouldPreserveSeatState,
+    );
+    const activeChampionQmonId = resolvedChampion?.id ?? null;
     const qmonsWithRoles = this.applyChampionRoles(finalizedPaperQmons, activeChampionQmonId);
     const nextWindowStartMs = qmonsWithRoles[0]?.currentWindowStart ?? population.seatLastWindowStartMs;
     const finalizedPopulation: QmonPopulation = {

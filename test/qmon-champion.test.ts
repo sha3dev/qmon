@@ -595,3 +595,113 @@ test("QmonChampionService leaves the seat without champion when strict eligibili
   assert.equal(weakQmon.metrics.isChampionEligible, false);
   assert.equal(finalizedPopulation.activeChampionQmonId, null);
 });
+
+test("QmonChampionService keeps a healthy idle incumbent when no replacement is strictly eligible", () => {
+  const championService = new QmonChampionService();
+  const incumbentChampion = championService.refreshMetrics({
+    ...createChampionCandidate("INCUMBENT", 0.7, 0.2),
+    role: "champion",
+    paperWindowPnls: [0.8, 0.7, 0.6, 0, 0],
+  });
+  const weakQmon = championService.refreshMetrics({
+    ...createChampionCandidate("WEAKSEAT", 0.4, 1.2),
+    metrics: {
+      ...createChampionCandidate("WEAKSEAT", 0.4, 1.2).metrics,
+      totalTrades: 16,
+      totalPnl: -1,
+      peakTotalPnl: 0,
+      winRate: 0.4,
+      winCount: 6,
+    },
+    paperWindowPnls: [-0.2, -0.3, 0, 0, 0],
+  });
+  const finalizedPopulation = championService.finalizePopulation(
+    {
+      market: MARKET_KEY,
+      qmons: [incumbentChampion, weakQmon],
+      createdAt: 1,
+      lastUpdated: 1,
+      activeChampionQmonId: "INCUMBENT",
+      marketPaperSessionPnl: 0,
+      marketConsolidatedPnl: 0,
+      seatPosition: {
+        action: null,
+        enteredAt: null,
+        entryScore: null,
+        entryPrice: null,
+        peakReturnPct: null,
+        shareCount: null,
+        priceToBeat: null,
+        marketStartMs: null,
+        marketEndMs: null,
+      },
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: null,
+      seatLastWindowStartMs: 1,
+      seatLastSettledWindowStartMs: null,
+    },
+    [incumbentChampion, weakQmon],
+    {
+      action: null,
+      enteredAt: null,
+      entryScore: null,
+      entryPrice: null,
+      peakReturnPct: null,
+      shareCount: null,
+      priceToBeat: null,
+      marketStartMs: null,
+      marketEndMs: null,
+    },
+  );
+
+  assert.equal(finalizedPopulation.activeChampionQmonId, "INCUMBENT");
+});
+
+test("QmonChampionService keeps an idle incumbent indefinitely while it remains healthy", () => {
+  const championService = new QmonChampionService();
+  const idleChampion = championService.refreshMetrics({
+    ...createChampionCandidate("IDLE001", 0.7, 0.2),
+    role: "champion",
+    paperWindowPnls: [0.8, 0, 0, 0, 0],
+  });
+  const finalizedPopulation = championService.finalizePopulation(
+    {
+      market: MARKET_KEY,
+      qmons: [idleChampion],
+      createdAt: 1,
+      lastUpdated: 1,
+      activeChampionQmonId: "IDLE001",
+      marketPaperSessionPnl: 0,
+      marketConsolidatedPnl: 0,
+      seatPosition: {
+        action: null,
+        enteredAt: null,
+        entryScore: null,
+        entryPrice: null,
+        peakReturnPct: null,
+        shareCount: null,
+        priceToBeat: null,
+        marketStartMs: null,
+        marketEndMs: null,
+      },
+      seatPendingOrder: null,
+      seatLastCloseTimestamp: null,
+      seatLastWindowStartMs: 1,
+      seatLastSettledWindowStartMs: null,
+    },
+    [idleChampion],
+    {
+      action: null,
+      enteredAt: null,
+      entryScore: null,
+      entryPrice: null,
+      peakReturnPct: null,
+      shareCount: null,
+      priceToBeat: null,
+      marketStartMs: null,
+      marketEndMs: null,
+    },
+  );
+
+  assert.equal(finalizedPopulation.activeChampionQmonId, "IDLE001");
+});

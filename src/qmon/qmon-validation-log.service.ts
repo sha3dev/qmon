@@ -757,13 +757,13 @@ export class QmonValidationLogService {
     return matchingEvents.slice(-filter.limit);
   }
 
-  private isSeatCashflowEvent(event: ValidationLogEvent, market?: string): boolean {
+  private isPositionCashflowEvent(event: ValidationLogEvent, market?: string): boolean {
     const isMatchingMarket = market === undefined || event.market === market;
     const hasCashflow = typeof event.cashflow === "number";
     const isPositionCashflow = event.eventType === "position-opened" || event.eventType === "position-closed";
-    const isSeatCashflow = isMatchingMarket && event.isSeat === true && hasCashflow && isPositionCashflow;
+    const isCashflowEvent = isMatchingMarket && hasCashflow && isPositionCashflow;
 
-    return isSeatCashflow;
+    return isCashflowEvent;
   }
 
   private formatCpnlFlowMessage(event: ValidationLogEvent): string {
@@ -832,8 +832,8 @@ export class QmonValidationLogService {
     return cpnlLogRow;
   }
 
-  private async readSeatCashflowEventsFromRange(range: DiagnosticRange, limit: number, market?: string): Promise<readonly ValidationLogEvent[]> {
-    const seatCashflowEvents: ValidationLogEvent[] = [];
+  private async readPositionCashflowEventsFromRange(range: DiagnosticRange, limit: number, market?: string): Promise<readonly ValidationLogEvent[]> {
+    const positionCashflowEvents: ValidationLogEvent[] = [];
     const normalizedLimit = this.normalizeLimit(limit);
     const rangeDates = [...this.getRangeDates(range)].sort((left, right) => left.localeCompare(right));
     const sessionStartTimestamp = this.cpnlSessionStartedAt;
@@ -857,11 +857,11 @@ export class QmonValidationLogService {
               for (const parsedEvent of parsedEvents) {
                 const isInsideSession = sessionStartTimestamp === null || parsedEvent.timestamp >= sessionStartTimestamp;
 
-                if (isInsideSession && this.isSeatCashflowEvent(parsedEvent, market)) {
-                  seatCashflowEvents.push(parsedEvent);
+                if (isInsideSession && this.isPositionCashflowEvent(parsedEvent, market)) {
+                  positionCashflowEvents.push(parsedEvent);
 
-                  if (seatCashflowEvents.length > normalizedLimit * 2) {
-                    seatCashflowEvents.splice(0, seatCashflowEvents.length - normalizedLimit);
+                  if (positionCashflowEvents.length > normalizedLimit * 2) {
+                    positionCashflowEvents.splice(0, positionCashflowEvents.length - normalizedLimit);
                   }
                 }
               }
@@ -871,12 +871,12 @@ export class QmonValidationLogService {
       } catch (error: unknown) {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
           const message = error instanceof Error ? error.message : String(error);
-          console.warn(`Failed to read seat cashflow events for ${date}: ${message}`);
+          console.warn(`Failed to read position cashflow events for ${date}: ${message}`);
         }
       }
     }
 
-    return seatCashflowEvents.slice(-normalizedLimit);
+    return positionCashflowEvents.slice(-normalizedLimit);
   }
 
   private createAggregateFromRange(): DiagnosticsAggregate {
@@ -1174,7 +1174,7 @@ export class QmonValidationLogService {
   }
 
   private shouldPersistRawEvent(event: ValidationLogEvent): boolean {
-    const shouldPersist = event.isSeat === true;
+    const shouldPersist = event.isSeat === true || event.eventType === "position-opened" || event.eventType === "position-closed";
 
     return shouldPersist;
   }
@@ -1275,10 +1275,10 @@ export class QmonValidationLogService {
 
   public async readRecentCpnlEvents(limit: number): Promise<readonly ValidationLogEvent[]> {
     const recentCpnlEvents = await this.readRecentFilteredEvents(limit, (event) => {
-      const hasSeatCashflow = this.isSeatCashflowEvent(event);
+      const hasPositionCashflow = this.isPositionCashflowEvent(event);
       const isInsideSession = this.cpnlSessionStartedAt === null || event.timestamp >= this.cpnlSessionStartedAt;
 
-      return hasSeatCashflow && isInsideSession;
+      return hasPositionCashflow && isInsideSession;
     });
 
     return recentCpnlEvents;
@@ -1286,8 +1286,8 @@ export class QmonValidationLogService {
 
   public async readCpnlLogRows(range: DiagnosticRange, limit: number): Promise<readonly CpnlLogRow[]> {
     await this.flush();
-    const seatCashflowEvents = await this.readSeatCashflowEventsFromRange(range, limit);
-    const cpnlLogRows = seatCashflowEvents.map((event) => this.buildCpnlLogRow(event));
+    const positionCashflowEvents = await this.readPositionCashflowEventsFromRange(range, limit);
+    const cpnlLogRows = positionCashflowEvents.map((event) => this.buildCpnlLogRow(event));
 
     return cpnlLogRows;
   }
