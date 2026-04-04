@@ -28,6 +28,7 @@
       --orange: #ff9800;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    [x-cloak] { display: none !important; }
     body {
       font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
       background: var(--bg-primary); color: var(--text-primary);
@@ -652,6 +653,23 @@
     /* Empty state */
     .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
     .empty-state-text { font-size: 11px; }
+    .dashboard-loading {
+      display: grid; place-items: center; min-height: 360px;
+      padding: 32px 20px; background: linear-gradient(180deg, rgba(26,29,39,0.96), rgba(20,23,32,0.98));
+      border: 1px solid var(--border); border-radius: 10px;
+    }
+    .dashboard-loading-card {
+      padding: 20px 24px; border-radius: 10px; background: var(--bg-secondary);
+      border: 1px solid rgba(124,77,255,0.24); text-align: center;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+    }
+    .dashboard-loading-title {
+      font-size: 12px; font-weight: 700; color: var(--accent);
+      letter-spacing: 0.6px; text-transform: uppercase;
+    }
+    .dashboard-loading-text {
+      margin-top: 8px; font-size: 10px; color: var(--text-secondary);
+    }
 
     /* Modal overlay */
     .modal-overlay {
@@ -666,7 +684,7 @@
     .neutral { color: var(--text-secondary); }
   </style>
 </head>
-<body x-data="qmonDashboard()" x-init="init()">
+<body x-data="qmonDashboard()" x-init="init()" x-cloak>
 
   <div class="header">
     <div class="header-left">
@@ -821,8 +839,15 @@
       </div>
     </div>
 
+    <div class="dashboard-loading" x-show="!isDashboardBootstrapped">
+      <div class="dashboard-loading-card">
+        <div class="dashboard-loading-title">Loading QMON dashboard</div>
+        <div class="dashboard-loading-text">Waiting for population, diagnostics and signal snapshots…</div>
+      </div>
+    </div>
+
     <!-- QMON cards grid -->
-    <div class="qmon-grid">
+    <div class="qmon-grid" x-show="isDashboardBootstrapped">
       <template x-for="qmon in paginatedQmons" :key="qmon.id">
         <div class="qmon-card" :class="{ 'has-position': hasAnyPosition(qmon), 'preset-strategy': isPresetQmon(qmon) }" @click="openModal(qmon)">
           <!-- Header -->
@@ -895,14 +920,14 @@
     </div>
 
     <!-- Pagination -->
-    <div class="pagination" x-show="totalPages > 1">
+    <div class="pagination" x-show="isDashboardBootstrapped && totalPages > 1">
       <template x-for="page in visiblePages" :key="page">
         <button class="page-btn" :class="{ active: currentPage === page }" @click="currentPage = page" x-text="page + 1"></button>
       </template>
     </div>
 
     <!-- Empty state -->
-    <div class="empty-state" x-show="filteredQmons.length === 0">
+    <div class="empty-state" x-show="isDashboardBootstrapped && filteredQmons.length === 0">
       <div class="empty-state-text">No QMONs match your filters.</div>
     </div>
   </div>
@@ -1553,6 +1578,7 @@
         runtimeStatus: null,
         marketPnls: [],
         diagnosticsOverview: null,
+        isDashboardBootstrapped: false,
 
         searchQuery: '',
         filterMarket: '',
@@ -1796,6 +1822,8 @@
           } catch (e) {
             this.connected = false;
           }
+
+          this.isDashboardBootstrapped = true;
         },
 
         async fetchSlowData() {
