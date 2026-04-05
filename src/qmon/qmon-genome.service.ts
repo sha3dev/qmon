@@ -256,7 +256,7 @@ export class QmonGenomeService {
 
   private createEntryPolicy(family: QmonGenomeFamily, variantIndex: number): EntryPolicy {
     const entryPolicy: EntryPolicy = {
-      confidenceThreshold: Number(this.clampNumber(0.58 + (variantIndex % 5) * 0.02 + (family === "high-conviction-conservative" ? 0.04 : 0), 0.54, 0.72).toFixed(2)),
+      confidenceThreshold: Number(this.clampNumber(0.54 + (variantIndex % 5) * 0.02 + (family === "high-conviction-conservative" ? 0.02 : 0), 0.52, 0.68).toFixed(2)),
       confirmationRequirement: Math.max(2, Math.min(4, 2 + (variantIndex % 3))),
       maxSpreadPenaltyBps: 25 + (4 - (variantIndex % 5)) * 10,
       maxSlippageBps: Math.min(config.QMON_MAX_ENTRY_SLIPPAGE_BPS, 40 + (variantIndex % 5) * 8),
@@ -353,7 +353,7 @@ export class QmonGenomeService {
 
   private mutateEntryPolicy(entryPolicy: EntryPolicy): EntryPolicy {
     const mutatedEntryPolicy: EntryPolicy = {
-      confidenceThreshold: Number(this.clampNumber(entryPolicy.confidenceThreshold + (this.randomBool() ? 0.02 : -0.02), 0.54, 0.72).toFixed(2)),
+      confidenceThreshold: Number(this.clampNumber(entryPolicy.confidenceThreshold + (this.randomBool() ? 0.02 : -0.02), 0.52, 0.68).toFixed(2)),
       confirmationRequirement: Math.max(2, Math.min(4, entryPolicy.confirmationRequirement + (this.randomBool() ? 1 : -1))),
       maxSpreadPenaltyBps: Math.max(20, Math.min(80, entryPolicy.maxSpreadPenaltyBps + (this.randomBool() ? 10 : -10))),
       maxSlippageBps: Math.max(25, Math.min(config.QMON_MAX_ENTRY_SLIPPAGE_BPS, entryPolicy.maxSlippageBps + (this.randomBool() ? 10 : -10))),
@@ -392,7 +392,7 @@ export class QmonGenomeService {
     let isValidGenome = hasMeaningfulBeliefWeights;
 
     if (isValidGenome) {
-      isValidGenome = genome.entryPolicy.confidenceThreshold >= 0.54 && genome.entryPolicy.confidenceThreshold <= 0.72;
+      isValidGenome = genome.entryPolicy.confidenceThreshold >= 0.52 && genome.entryPolicy.confidenceThreshold <= 0.68;
     }
 
     if (isValidGenome) {

@@ -90,9 +90,9 @@ const EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE = 12;
 const PERFORMANCE_QUARANTINE_MIN_WINDOWS = 6;
 const PERFORMANCE_QUARANTINE_MIN_TRADES = 6;
 const PERFORMANCE_QUARANTINE_MAX_WIN_RATE = 0.35;
-const FINAL_OUTCOME_ALPHA_PROBABILITY_WEIGHT = 0.3;
-const FINAL_OUTCOME_MARKET_WEIGHT = 0.2;
-const FINAL_OUTCOME_MODEL_WEIGHT = 0.8;
+const FINAL_OUTCOME_ALPHA_PROBABILITY_WEIGHT = 0.7;
+const FINAL_OUTCOME_MARKET_WEIGHT = 0.35;
+const FINAL_OUTCOME_MODEL_WEIGHT = 0.65;
 const THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR = 0.25;
 
 type PositionPnlResult = {
@@ -1761,6 +1761,9 @@ export class QmonEngine {
   ): number {
     const edgeSignalValue = this.getScalarSignalValue(signalValues, "edge") ?? 0;
     const distanceSignalValue = this.getScalarSignalValue(signalValues, "distance") ?? 0;
+    const zScoreSignalValue = this.getScalarSignalValue(signalValues, "zScore") ?? 0;
+    const marketEfficiencySignalValue = this.getScalarSignalValue(signalValues, "marketEfficiency") ?? 0;
+    const accelerationSignalValue = this.getScalarSignalValue(signalValues, "acceleration") ?? 0;
     const momentumSignalValue = this.getNormalizedSignalValue(signalValues, "momentum") ?? 0;
     const velocitySignalValue = this.getNormalizedSignalValue(signalValues, "velocity") ?? 0;
     const meanReversionSignalValue = this.getNormalizedSignalValue(signalValues, "meanReversion") ?? 0;
@@ -1775,18 +1778,53 @@ export class QmonEngine {
     let beliefSignalValue = 0;
 
     if (beliefKey === "spotOracleAlignment") {
-      beliefSignalValue = edgeSignalValue * 0.45 + distanceSignalValue * 0.35 + crossAssetMomentumSignalValue * 0.2;
+      beliefSignalValue =
+        edgeSignalValue * 0.3 +
+        distanceSignalValue * 0.2 +
+        zScoreSignalValue * 0.25 +
+        marketEfficiencySignalValue * 0.1 +
+        crossAssetMomentumSignalValue * 0.15;
     } else if (beliefKey === "resolutionMomentum") {
-      beliefSignalValue = momentumSignalValue * 0.45 + velocitySignalValue * 0.35 + crossAssetMomentumSignalValue * 0.2;
+      beliefSignalValue =
+        momentumSignalValue * 0.25 +
+        velocitySignalValue * 0.2 +
+        accelerationSignalValue * 0.15 +
+        tokenPressureSignalValue * 0.15 +
+        zScoreSignalValue * 0.15 +
+        crossAssetMomentumSignalValue * 0.1;
     } else if (beliefKey === "consensusPersistence") {
-      beliefSignalValue = edgeSignalValue * 0.35 + momentumSignalValue * 0.35 + tokenPressureSignalValue * 0.3;
+      beliefSignalValue =
+        edgeSignalValue * 0.2 +
+        momentumSignalValue * 0.15 +
+        tokenPressureSignalValue * 0.25 +
+        marketEfficiencySignalValue * 0.15 +
+        distanceSignalValue * 0.1 +
+        zScoreSignalValue * 0.15;
     } else if (beliefKey === "microstructureStability") {
-      beliefSignalValue = imbalanceSignalValue * 0.35 + micropriceSignalValue * 0.35 + bookDepthSignalValue * 0.2 + tokenPressureSignalValue * 0.1;
+      beliefSignalValue =
+        imbalanceSignalValue * 0.2 +
+        micropriceSignalValue * 0.15 +
+        bookDepthSignalValue * 0.15 +
+        tokenPressureSignalValue * 0.2 +
+        marketEfficiencySignalValue * 0.15 -
+        Math.max(spreadSignalValue, 0) * 0.15;
     } else if (beliefKey === "bookFreshness") {
-      const freshnessScore = this.clampAlphaValue(bookDepthSignalValue * 0.45 - Math.max(spreadSignalValue, 0) * 0.35 - Math.max(stalenessSignalValue, 0) * 0.35);
+      const freshnessScore = this.clampAlphaValue(
+        bookDepthSignalValue * 0.25 +
+        tokenPressureSignalValue * 0.15 +
+        marketEfficiencySignalValue * 0.15 -
+        Math.max(spreadSignalValue, 0) * 0.2 -
+        Math.max(stalenessSignalValue, 0) * 0.25,
+      );
       beliefSignalValue = freshnessScore * (directionalReference === 0 ? 0 : Math.sign(directionalReference));
     } else if (beliefKey === "marketDivergence") {
-      beliefSignalValue = edgeSignalValue * 0.45 - meanReversionSignalValue * 0.3 + distanceSignalValue * 0.25;
+      beliefSignalValue =
+        edgeSignalValue * 0.25 +
+        distanceSignalValue * 0.15 +
+        zScoreSignalValue * 0.2 -
+        meanReversionSignalValue * 0.15 -
+        marketEfficiencySignalValue * 0.15 +
+        tokenPressureSignalValue * 0.1;
     }
 
     return this.clampAlphaValue(beliefSignalValue);

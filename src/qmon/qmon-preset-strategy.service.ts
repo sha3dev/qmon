@@ -233,7 +233,7 @@ export class QmonPresetStrategyService {
 
   private createEntryPolicy(presetFamily: PresetFamilyId, variantIndex: number): EntryPolicy {
     const entryPolicy: EntryPolicy = {
-      confidenceThreshold: Number(this.clampNumber(0.58 + (variantIndex % 5) * 0.02 + (presetFamily === "high-conviction-conservative" ? 0.04 : 0), 0.54, 0.72).toFixed(2)),
+      confidenceThreshold: Number(this.clampNumber(0.54 + (variantIndex % 5) * 0.02 + (presetFamily === "high-conviction-conservative" ? 0.02 : 0), 0.52, 0.68).toFixed(2)),
       confirmationRequirement: Math.max(2, Math.min(4, 2 + (variantIndex % 3))),
       maxSpreadPenaltyBps: 25 + (4 - (variantIndex % 5)) * 10,
       maxSlippageBps: Math.min(config.QMON_MAX_ENTRY_SLIPPAGE_BPS, 40 + (variantIndex % 5) * 8),
