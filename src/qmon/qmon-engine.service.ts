@@ -84,9 +84,6 @@ const MIN_POSITION_NOTIONAL_USD = 1;
  */
 const ENTRY_COOLDOWN_MS = 30_000;
 const STOP_LOSS_MIN_HOLD_MS = 60_000;
-const MAX_EV_POSITION_MULTIPLIER = 1.5;
-const EXECUTION_QUALITY_STRESS_EDGE_BPS = 45;
-const EXECUTION_QUALITY_STRESS_NET_EV_USD = 0.08;
 const EXECUTION_QUALITY_STRESS_FILL_QUALITY = 0.2;
 const EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS = 80;
 const EXECUTION_QUALITY_STRESS_EMA_ALPHA = 0.2;
@@ -94,9 +91,9 @@ const EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE = 12;
 const PERFORMANCE_QUARANTINE_MIN_WINDOWS = 6;
 const PERFORMANCE_QUARANTINE_MIN_TRADES = 6;
 const PERFORMANCE_QUARANTINE_MAX_WIN_RATE = 0.35;
-const TRIGGER_EV_DISCOUNT_USD = 0.02;
-const NO_TRIGGER_EV_PREMIUM_USD = 0.03;
-const THESIS_INVALIDATION_ALPHA_FLIP = 0.08;
+const FINAL_OUTCOME_ALPHA_PROBABILITY_WEIGHT = 0.3;
+const FINAL_OUTCOME_MARKET_WEIGHT = 0.2;
+const FINAL_OUTCOME_MODEL_WEIGHT = 0.8;
 const THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR = 0.25;
 const PREDICTIVE_SIGNAL_IDS = ["edge", "distance", "momentum", "velocity", "meanReversion", "crossAssetMomentum"] as const;
 const _MICROSTRUCTURE_SIGNAL_IDS = ["imbalance", "microprice", "bookDepth", "spread", "staleness", "tokenPressure"] as const;
@@ -127,6 +124,7 @@ type SeatProcessingResult = {
 type PositionCloseDecision = {
   readonly close: boolean;
   readonly reason: string;
+  readonly finalOutcomeProbability: number | null;
 };
 
 type SettledPositionResult = {
@@ -866,10 +864,13 @@ export class QmonEngine {
       entryDirectionRegime: null,
       entryVolatilityRegime: null,
       directionalAlpha: null,
+      finalOutcomeProbability: null,
+      marketImpliedProbability: null,
       estimatedEdgeBps: null,
       estimatedNetEvUsd: null,
       predictedSlippageBps: null,
       predictedFillQuality: null,
+      riskBudgetUsd: null,
       signalAgreementCount: null,
       dominantSignalGroup: "none",
     };
@@ -1298,6 +1299,9 @@ export class QmonEngine {
         fee,
         pnlContribution,
         directionalAlpha: qmon.position.directionalAlpha ?? qmon.position.entryScore ?? null,
+        entryFinalOutcomeProbability: qmon.position.finalOutcomeProbability ?? null,
+        marketImpliedProbability: qmon.position.marketImpliedProbability ?? null,
+        riskBudgetUsd: qmon.position.riskBudgetUsd ?? null,
         estimatedEdgeBps: qmon.position.estimatedEdgeBps ?? null,
         estimatedNetEvUsd: qmon.position.estimatedNetEvUsd ?? null,
         predictedSlippageBps: qmon.position.predictedSlippageBps ?? null,
@@ -1323,7 +1327,15 @@ export class QmonEngine {
   /**
    * Log a closed paper position with the full PnL breakdown.
    */
-  private logPositionClosed(qmon: Qmon, market: MarketKey, reason: string, positionPnl: PositionPnlResult, pnlContribution: number, isSeat = false): void {
+  private logPositionClosed(
+    qmon: Qmon,
+    market: MarketKey,
+    reason: string,
+    positionPnl: PositionPnlResult,
+    pnlContribution: number,
+    exitFinalOutcomeProbability: number | null,
+    isSeat = false,
+  ): void {
     if (this.validationLogService !== null) {
       this.validationLogService.logPositionClosed({
         market,
@@ -1339,6 +1351,9 @@ export class QmonEngine {
         cashflow: positionPnl.exitValue - positionPnl.exitFee,
         pnlContribution,
         directionalAlpha: qmon.position.directionalAlpha ?? qmon.position.entryScore ?? null,
+        entryFinalOutcomeProbability: qmon.position.finalOutcomeProbability ?? null,
+        exitFinalOutcomeProbability,
+        riskBudgetUsd: qmon.position.riskBudgetUsd ?? null,
         estimatedEdgeBps: qmon.position.estimatedEdgeBps ?? null,
         estimatedNetEvUsd: qmon.position.estimatedNetEvUsd ?? null,
         predictedSlippageBps: qmon.position.predictedSlippageBps ?? null,
@@ -1954,6 +1969,86 @@ export class QmonEngine {
   }
 
   /**
+   * Blend market-implied and model-implied confidence into a final outcome probability.
+   */
+  private estimateFinalOutcomeProbability(action: PendingOrderAction | TradingAction, directionalAlpha: number, impliedProbability: number | null): number {
+    const directionMultiplier = action === "BUY_UP" ? 1 : action === "BUY_DOWN" ? -1 : 0;
+    const boundedImpliedProbability = Math.max(0.01, Math.min(0.99, impliedProbability ?? 0.5));
+    const modelOutcomeProbability = Math.max(
+      0.01,
+      Math.min(0.99, 0.5 + directionMultiplier * directionalAlpha * FINAL_OUTCOME_ALPHA_PROBABILITY_WEIGHT),
+    );
+    const finalOutcomeProbability = Math.max(
+      0.01,
+      Math.min(
+        0.99,
+        boundedImpliedProbability * FINAL_OUTCOME_MARKET_WEIGHT + modelOutcomeProbability * FINAL_OUTCOME_MODEL_WEIGHT,
+      ),
+    );
+
+    return finalOutcomeProbability;
+  }
+
+  /**
+   * Recover the current binary-outcome probability for one open position.
+   */
+  private estimateOpenPositionOutcomeProbability(
+    qmon: Qmon,
+    currentScore: number,
+    upPrice: number | null,
+    downPrice: number | null,
+  ): number | null {
+    const action = qmon.position.action;
+    const impliedProbability = action === "BUY_UP" ? upPrice : action === "BUY_DOWN" ? downPrice : null;
+    let finalOutcomeProbability: number | null = null;
+
+    if (action !== null && impliedProbability !== null) {
+      finalOutcomeProbability = this.estimateFinalOutcomeProbability(action, currentScore, impliedProbability);
+    }
+
+    return finalOutcomeProbability;
+  }
+
+  /**
+   * Compute the worst-case loss if the bought outcome settles worthless.
+   */
+  private computeWorstCaseEntryLossUsd(requestedShares: number, tokenPrice: number | null): number {
+    const netShares = this.executionService.calculateNetTakerBuyShares(requestedShares, tokenPrice);
+    const entryFeeUsd = this.executionService.calculateTakerFeeUsd(requestedShares, tokenPrice);
+    const worstCaseEntryLossUsd = netShares * (tokenPrice ?? 0) + entryFeeUsd;
+
+    return worstCaseEntryLossUsd;
+  }
+
+  /**
+   * Size one entry from a fixed worst-case USD loss budget.
+   */
+  private computePositionSizeFromRiskBudget(tokenPrice: number | null): number | null {
+    const minimumShareCount = this.executionService.computeShareCount(tokenPrice);
+    let requestedShares: number | null = null;
+
+    if (tokenPrice !== null && tokenPrice > 0 && minimumShareCount !== null) {
+      const minimumRiskUsd = this.computeWorstCaseEntryLossUsd(minimumShareCount, tokenPrice);
+
+      if (minimumRiskUsd <= config.QMON_MAX_ENTRY_RISK_USD) {
+        let candidateShares = minimumShareCount;
+        let nextCandidateShares = candidateShares + 1;
+        let canIncreaseShares = this.computeWorstCaseEntryLossUsd(nextCandidateShares, tokenPrice) <= config.QMON_MAX_ENTRY_RISK_USD;
+
+        while (canIncreaseShares) {
+          candidateShares = nextCandidateShares;
+          nextCandidateShares += 1;
+          canIncreaseShares = this.computeWorstCaseEntryLossUsd(nextCandidateShares, tokenPrice) <= config.QMON_MAX_ENTRY_RISK_USD;
+        }
+
+        requestedShares = candidateShares;
+      }
+    }
+
+    return requestedShares;
+  }
+
+  /**
    * Estimate tradeability including EV, fill quality and rejection reason.
    */
   private assessTradeability(
@@ -1985,36 +2080,29 @@ export class QmonEngine {
     );
     const edgeSignalValue = this.getScalarSignalValue(signalValues, "edge") ?? 0;
     const distanceSignalValue = this.getScalarSignalValue(signalValues, "distance") ?? 0;
-    const directionalProbEdge = directionalAlphaResult.directionalAlpha * 0.12;
-    const marketUpProbability = action === "BUY_UP" ? (limitPrice ?? 0.5) : Math.max(0.01, Math.min(0.99, 1 - (limitPrice ?? 0.5)));
-    const targetUpProbability = Math.max(0.01, Math.min(0.99, marketUpProbability + directionalProbEdge));
-    const targetOutcomeProbability = action === "BUY_UP" ? targetUpProbability : 1 - targetUpProbability;
-    const impliedProbability = limitPrice ?? 0.5;
-    const estimatedEdgeBps = (targetOutcomeProbability - impliedProbability) * 10_000;
+    const impliedProbability = Math.max(0.01, Math.min(0.99, limitPrice ?? 0.5));
+    const finalOutcomeProbability = this.estimateFinalOutcomeProbability(action, directionalAlphaResult.directionalAlpha, impliedProbability);
+    const estimatedEdgeBps = (finalOutcomeProbability - impliedProbability) * 10_000;
     const baseShareCount = this.executionService.computeShareCount(limitPrice);
-    const grossEvUsd = baseShareCount === null ? 0 : baseShareCount * (targetOutcomeProbability - impliedProbability);
+    const grossEvUsd = baseShareCount === null ? 0 : baseShareCount * (finalOutcomeProbability - impliedProbability);
     const estimatedFeeUsd = baseShareCount === null ? 0 : this.executionService.calculateTakerFeeUsd(baseShareCount, limitPrice);
     const slippageCostUsd = baseShareCount === null || limitPrice === null ? 0 : (predictedSlippageBps / 10_000) * baseShareCount * limitPrice;
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
     const entryPolicy = this.getQmonEntryPolicy(qmon);
-    const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getQmonEnabledTriggerIds(qmon).includes(triggerId));
-    const minimumEdgeBps = Math.max(entryPolicy.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS) + combinedStressScore * EXECUTION_QUALITY_STRESS_EDGE_BPS;
-    const minimumNetEvUsd = Math.max(entryPolicy.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD) + combinedStressScore * EXECUTION_QUALITY_STRESS_NET_EV_USD;
     const minimumFillQuality = Math.max(entryPolicy.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
     const minimumConfirmations = Math.max(entryPolicy.minConfirmations ?? 2, config.QMON_MIN_ENTRY_CONFIRMATIONS);
     const maximumSlippageBps = Math.min(
       entryPolicy.maxSlippageBps ?? qmon.genome.maxSlippageBps,
       config.QMON_MAX_ENTRY_SLIPPAGE_BPS,
     );
-    const requiredNetEvUsd = minimumNetEvUsd + (hasRelevantTrigger ? -TRIGGER_EV_DISCOUNT_USD : NO_TRIGGER_EV_PREMIUM_USD);
+    const requiredFinalOutcomeProbability = Math.min(0.99, config.QMON_MIN_FINAL_OUTCOME_PROBABILITY + combinedStressScore * 0.05);
+    const riskBudgetUsd = config.QMON_MAX_ENTRY_RISK_USD;
     let tradeabilityRejectReason: string | null = null;
 
-    if (estimatedEdgeBps < minimumEdgeBps) {
-      tradeabilityRejectReason = "edge-too-small";
+    if (finalOutcomeProbability < requiredFinalOutcomeProbability) {
+      tradeabilityRejectReason = "final-outcome-confidence-too-low";
     } else if (directionMultiplier * edgeSignalValue < -0.05 || directionMultiplier * distanceSignalValue < -0.05) {
       tradeabilityRejectReason = "directional-conflict";
-    } else if (grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd < requiredNetEvUsd) {
-      tradeabilityRejectReason = "net-ev-too-small";
     } else if (adjustedFillQuality < minimumFillQuality) {
       tradeabilityRejectReason = "fill-quality-too-low";
     } else if (predictedSlippageBps > maximumSlippageBps) {
@@ -2029,10 +2117,13 @@ export class QmonEngine {
 
     return {
       directionalAlpha: directionalAlphaResult.directionalAlpha,
+      finalOutcomeProbability,
+      marketImpliedProbability: impliedProbability,
       estimatedEdgeBps,
       estimatedNetEvUsd: grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd,
       predictedSlippageBps,
       predictedFillQuality: adjustedFillQuality,
+      riskBudgetUsd,
       signalAgreementCount: directionalAlphaResult.signalAgreementCount,
       dominantSignalGroup: directionalAlphaResult.dominantSignalGroup,
       tradeabilityRejectReason,
@@ -2041,22 +2132,10 @@ export class QmonEngine {
   }
 
   /**
-   * Compute size from EV quality rather than score alone.
+   * Compute size from a fixed worst-case risk budget.
    */
-  private computePositionSizeFromEv(qmon: Qmon, tokenPrice: number | null, tradeabilityAssessment: TradeabilityAssessment): number | null {
-    const baseShareCount = this.executionService.computeShareCount(tokenPrice);
-    let sizedShareCount: number | null = null;
-
-    if (baseShareCount !== null) {
-      const executionPolicy = this.getQmonExecutionPolicy(qmon);
-      const evMultiplier = tradeabilityAssessment.estimatedNetEvUsd >= 0.12 ? 1.75 : tradeabilityAssessment.estimatedNetEvUsd >= 0.08 ? 1.4 : 1;
-      const fillQualityMultiplier = tradeabilityAssessment.predictedFillQuality >= 0.7 ? 1.2 : 1;
-      const sizeTierMultiplier = executionPolicy?.sizeTier === 3 ? 1.4 : executionPolicy?.sizeTier === 2 ? 1.15 : 1;
-      const rawMultiplier = Math.min(MAX_EV_POSITION_MULTIPLIER, evMultiplier * fillQualityMultiplier * sizeTierMultiplier);
-      sizedShareCount = config.QMON_USE_MINIMUM_ENTRY_SHARES ? baseShareCount : Math.ceil(baseShareCount * rawMultiplier);
-    }
-
-    return sizedShareCount;
+  private computeEntryShareCount(_qmon: Qmon, tokenPrice: number | null, _tradeabilityAssessment: TradeabilityAssessment): number | null {
+    return this.computePositionSizeFromRiskBudget(tokenPrice);
   }
 
   /**
@@ -2083,10 +2162,13 @@ export class QmonEngine {
       action === "HOLD"
         ? {
             directionalAlpha: directionalAlphaResult.directionalAlpha,
+            finalOutcomeProbability: 0.5,
+            marketImpliedProbability: 0.5,
             estimatedEdgeBps: 0,
             estimatedNetEvUsd: 0,
             predictedSlippageBps: 0,
             predictedFillQuality: 0,
+            riskBudgetUsd: config.QMON_MAX_ENTRY_RISK_USD,
             signalAgreementCount: directionalAlphaResult.signalAgreementCount,
             dominantSignalGroup: directionalAlphaResult.dominantSignalGroup,
             tradeabilityRejectReason: "alpha-below-threshold",
@@ -2139,24 +2221,9 @@ export class QmonEngine {
   }
 
   /**
-   * Determine whether the current score has already flipped against the open position.
+   * Disaster exits only become available after the position has had time to work.
    */
-  private hasOppositeScoreExit(qmon: Qmon, currentScore: number): boolean {
-    let hasOppositeExit = false;
-
-    if (qmon.position.action === "BUY_UP") {
-      hasOppositeExit = currentScore <= -qmon.genome.minScoreSell;
-    } else if (qmon.position.action === "BUY_DOWN") {
-      hasOppositeExit = currentScore >= qmon.genome.minScoreBuy;
-    }
-
-    return hasOppositeExit;
-  }
-
-  /**
-   * Stop loss only becomes available after the position has had time to work.
-   */
-  private hasStopLossAgeBuffer(qmon: Qmon, now: number): boolean {
+  private hasDisasterExitAgeBuffer(qmon: Qmon, now: number): boolean {
     const enteredAt = qmon.position.enteredAt;
     let hasBuffer = false;
 
@@ -2177,6 +2244,7 @@ export class QmonEngine {
     market: MarketKey,
     timestamp: number,
     reason: string,
+    finalOutcomeProbability: number | null,
     score: number,
     results: EvaluationResult[],
     snapshots?: readonly Snapshot[],
@@ -2191,19 +2259,24 @@ export class QmonEngine {
     let updatedQmon = qmon;
 
     if (exitAction !== null && limitPrice !== null && requestedShares > 0) {
-      const pendingExitOrder = this.executionService.createPendingOrder(
-        "exit",
-        exitAction,
-        score,
-        [reason],
-        requestedShares,
-        limitPrice,
-        market,
-        qmon.position.marketStartMs,
-        qmon.position.marketEndMs,
-        qmon.position.priceToBeat,
-        timestamp,
-      );
+      const pendingExitOrder = {
+        ...this.executionService.createPendingOrder(
+          "exit",
+          exitAction,
+          score,
+          [reason],
+          requestedShares,
+          limitPrice,
+          market,
+          qmon.position.marketStartMs,
+          qmon.position.marketEndMs,
+          qmon.position.priceToBeat,
+          timestamp,
+        ),
+        finalOutcomeProbability,
+        marketImpliedProbability: limitPrice,
+        riskBudgetUsd: qmon.position.riskBudgetUsd ?? null,
+      };
 
       this.logPaperOrderCreated(qmon.id, pendingExitOrder, bestBidAsk?.bidPrice ?? null, bestBidAsk?.askPrice ?? null, isSeat);
       updatedQmon = {
@@ -2247,7 +2320,7 @@ export class QmonEngine {
     const bestBidAsk = this.executionService.getBookBestBidAsk(tokenBook);
     const limitPrice = bestBidAsk?.askPrice ?? null;
 
-    const shareCount = this.computePositionSizeFromEv(qmon, limitPrice, tradeabilityAssessment);
+    const shareCount = this.computeEntryShareCount(qmon, limitPrice, tradeabilityAssessment);
 
     let updatedQmon = qmon;
 
@@ -2298,7 +2371,7 @@ export class QmonEngine {
     snapshots?: readonly Snapshot[],
   ): SettledPositionResult {
     const positionPnl = this.calculatePositionPnl(qmon, asset, window, upPrice, downPrice, chainlinkPrice, true, snapshots);
-    const closedQmon = this.closePosition(qmon, positionPnl.exitValue, positionPnl.exitFee, "market-settled", market);
+    const closedQmon = this.closePosition(qmon, positionPnl.exitValue, positionPnl.exitFee, "market-settled", market, positionPnl.exitPrice);
     const pnlContribution = positionPnl.exitValue - positionPnl.exitFee;
     const settledPositionResult: SettledPositionResult = {
       qmon: closedQmon,
@@ -2336,10 +2409,13 @@ export class QmonEngine {
       entryDirectionRegime: pendingOrder.entryDirectionRegime ?? null,
       entryVolatilityRegime: pendingOrder.entryVolatilityRegime ?? null,
       directionalAlpha: pendingOrder.directionalAlpha ?? pendingOrder.score,
+      finalOutcomeProbability: pendingOrder.finalOutcomeProbability ?? null,
+      marketImpliedProbability: pendingOrder.marketImpliedProbability ?? null,
       estimatedEdgeBps: pendingOrder.estimatedEdgeBps ?? null,
       estimatedNetEvUsd: pendingOrder.estimatedNetEvUsd ?? null,
       predictedSlippageBps: pendingOrder.predictedSlippageBps ?? null,
       tradeabilityRejectReason: pendingOrder.tradeabilityRejectReason ?? null,
+      riskBudgetUsd: pendingOrder.riskBudgetUsd ?? null,
       signalAgreementCount: pendingOrder.signalAgreementCount ?? null,
       dominantSignalGroup: pendingOrder.dominantSignalGroup ?? "none",
     };
@@ -2370,10 +2446,13 @@ export class QmonEngine {
         entryDirectionRegime: pendingOrder.entryDirectionRegime ?? null,
         entryVolatilityRegime: pendingOrder.entryVolatilityRegime ?? null,
         directionalAlpha: pendingOrder.directionalAlpha ?? pendingOrder.score,
+        finalOutcomeProbability: pendingOrder.finalOutcomeProbability ?? null,
+        marketImpliedProbability: pendingOrder.marketImpliedProbability ?? null,
         estimatedEdgeBps: pendingOrder.estimatedEdgeBps ?? null,
         estimatedNetEvUsd: pendingOrder.estimatedNetEvUsd ?? null,
         predictedSlippageBps: pendingOrder.predictedSlippageBps ?? null,
         predictedFillQuality: pendingOrder.predictedFillQuality ?? null,
+        riskBudgetUsd: pendingOrder.riskBudgetUsd ?? null,
         signalAgreementCount: pendingOrder.signalAgreementCount ?? null,
         dominantSignalGroup: pendingOrder.dominantSignalGroup ?? "none",
       },
@@ -2424,10 +2503,13 @@ export class QmonEngine {
       entryDirectionRegime: qmon.position.entryDirectionRegime ?? null,
       entryVolatilityRegime: qmon.position.entryVolatilityRegime ?? null,
       directionalAlpha: qmon.position.directionalAlpha ?? qmon.position.entryScore,
+      finalOutcomeProbability: pendingOrder.finalOutcomeProbability ?? qmon.position.finalOutcomeProbability ?? null,
+      marketImpliedProbability: qmon.position.marketImpliedProbability ?? null,
       estimatedEdgeBps: qmon.position.estimatedEdgeBps ?? null,
       estimatedNetEvUsd: qmon.position.estimatedNetEvUsd ?? null,
       predictedSlippageBps: qmon.position.predictedSlippageBps ?? null,
       tradeabilityRejectReason: null,
+      riskBudgetUsd: qmon.position.riskBudgetUsd ?? null,
       signalAgreementCount: qmon.position.signalAgreementCount ?? null,
       dominantSignalGroup: qmon.position.dominantSignalGroup ?? "none",
     };
@@ -2691,7 +2773,15 @@ export class QmonEngine {
         shareCount: fillResult.filledShares,
         exitValue,
       };
-      this.logPositionClosed(qmon, market, pendingOrder.triggeredBy[0] ?? "signal-fill", positionPnl, pnlContribution, isSeat);
+      this.logPositionClosed(
+        qmon,
+        market,
+        pendingOrder.triggeredBy[0] ?? "signal-fill",
+        positionPnl,
+        pnlContribution,
+        pendingOrder.finalOutcomeProbability ?? null,
+        isSeat,
+      );
       results.push({
         qmonId: qmon.id,
         action: "HOLD",
@@ -3032,7 +3122,15 @@ export class QmonEngine {
     const now = Date.now();
     const seatProxyQmon = this.buildSeatProxyQmon(population, championQmon, now);
     const settledSeatResult = this.settleOpenPosition(seatProxyQmon, market, asset, window, upPrice, downPrice, chainlinkPrice, snapshots);
-    this.logPositionClosed(seatProxyQmon, market, "market-settled", settledSeatResult.positionPnl, settledSeatResult.pnlContribution, true);
+    this.logPositionClosed(
+      seatProxyQmon,
+      market,
+      "market-settled",
+      settledSeatResult.positionPnl,
+      settledSeatResult.pnlContribution,
+      settledSeatResult.positionPnl.exitPrice,
+      true,
+    );
 
     return this.syncSeatState(population, settledSeatResult.qmon, settledSeatResult.pnlContribution, seatProxyQmon.position.marketStartMs);
   }
@@ -3117,6 +3215,7 @@ export class QmonEngine {
             market,
             now,
             shouldCloseSeatPosition.reason,
+            shouldCloseSeatPosition.finalOutcomeProbability,
             this.calculateScore(championQmon, marketSignals),
             [],
             snapshots,
@@ -3169,10 +3268,13 @@ export class QmonEngine {
         championEvaluation.score,
         championEvaluation.tradeabilityAssessment ?? {
           directionalAlpha: championEvaluation.directionalAlpha ?? championEvaluation.score,
+          finalOutcomeProbability: config.QMON_MIN_FINAL_OUTCOME_PROBABILITY,
+          marketImpliedProbability: 0.5,
           estimatedEdgeBps: 0,
           estimatedNetEvUsd: championEvaluation.estimatedNetEvUsd ?? 0,
           predictedSlippageBps: 0,
           predictedFillQuality: 0,
+          riskBudgetUsd: config.QMON_MAX_ENTRY_RISK_USD,
           signalAgreementCount: 0,
           dominantSignalGroup: "none",
           tradeabilityRejectReason: championEvaluation.tradeabilityRejectReason ?? null,
@@ -3484,7 +3586,14 @@ export class QmonEngine {
         if (shouldClose.close) {
           if (shouldClose.reason === "market-settled") {
             const settledPositionResult = this.settleOpenPosition(qmon, market, asset, window, upPrice, downPrice, chainlinkPrice, snapshots);
-            this.logPositionClosed(qmon, market, shouldClose.reason, settledPositionResult.positionPnl, settledPositionResult.pnlContribution);
+            this.logPositionClosed(
+              qmon,
+              market,
+              shouldClose.reason,
+              settledPositionResult.positionPnl,
+              settledPositionResult.pnlContribution,
+              settledPositionResult.positionPnl.exitPrice,
+            );
             updatedQmons.push(settledPositionResult.qmon);
             results.push({
               qmonId: qmon.id,
@@ -3496,7 +3605,18 @@ export class QmonEngine {
           }
 
           updatedQmons.push(
-            this.queueExitOrder(qmon, asset, window, market, now, shouldClose.reason, this.calculateScore(qmon, marketSignals), results, snapshots),
+            this.queueExitOrder(
+              qmon,
+              asset,
+              window,
+              market,
+              now,
+              shouldClose.reason,
+              shouldClose.finalOutcomeProbability,
+              this.calculateScore(qmon, marketSignals),
+              results,
+              snapshots,
+            ),
           );
           continue;
         }
@@ -3547,10 +3667,13 @@ export class QmonEngine {
             result.score,
             result.tradeabilityAssessment ?? {
               directionalAlpha: result.directionalAlpha ?? result.score,
+              finalOutcomeProbability: config.QMON_MIN_FINAL_OUTCOME_PROBABILITY,
+              marketImpliedProbability: 0.5,
               estimatedEdgeBps: 0,
               estimatedNetEvUsd: result.estimatedNetEvUsd ?? 0,
               predictedSlippageBps: 0,
               predictedFillQuality: 0,
+              riskBudgetUsd: config.QMON_MAX_ENTRY_RISK_USD,
               signalAgreementCount: 0,
               dominantSignalGroup: "none",
               tradeabilityRejectReason: result.tradeabilityRejectReason ?? null,
@@ -3750,7 +3873,15 @@ export class QmonEngine {
         exitValue,
       };
 
-      this.logPositionClosed(seatProxyQmon, market, pendingOrder.triggeredBy[0] ?? "signal-fill", positionPnl, pnlContribution, true);
+      this.logPositionClosed(
+        seatProxyQmon,
+        market,
+        pendingOrder.triggeredBy[0] ?? "signal-fill",
+        positionPnl,
+        pnlContribution,
+        pendingOrder.finalOutcomeProbability ?? null,
+        true,
+      );
       updatedPopulation = this.syncSeatState(population, updatedSeatProxyQmon, pnlContribution, population.seatLastSettledWindowStartMs);
     }
 
@@ -3811,40 +3942,23 @@ export class QmonEngine {
   ): PositionCloseDecision {
     const openPositionReturnPct = this.getOpenPositionReturnPct(qmon, upPrice, downPrice);
     const currentScore = this.calculateScore(qmon, marketSignals);
-    const peakReturnPct = qmon.position.peakReturnPct ?? 0;
-    const entryDirectionalAlpha = qmon.position.directionalAlpha ?? qmon.position.entryScore ?? 0;
-    const entryDirectionMultiplier = qmon.position.action === "BUY_UP" ? 1 : -1;
-    const currentImbalance = this.getScalarSignalValue(marketSignals, "imbalance") ?? 0;
     const exitPolicy = this.getQmonExitPolicy(qmon);
-    const thesisPolicy = exitPolicy?.thesisInvalidationPolicy ?? "hybrid";
-    const hasAlphaFlip = entryDirectionMultiplier * currentScore <= -THESIS_INVALIDATION_ALPHA_FLIP && entryDirectionMultiplier * entryDirectionalAlpha > 0;
-    const hasMicrostructureFailure = entryDirectionMultiplier * currentImbalance <= -THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR;
-    const hasThesisInvalidation =
-      thesisPolicy === "alpha-flip"
-        ? hasAlphaFlip
-        : thesisPolicy === "microstructure-failure"
-          ? hasMicrostructureFailure
-          : hasAlphaFlip || hasMicrostructureFailure;
-    const hasStopLoss =
-      qmon.genome.stopLossPct > 0 &&
+    const finalOutcomeProbability = this.estimateOpenPositionOutcomeProbability(qmon, currentScore, upPrice, downPrice);
+    const collapseThreshold = exitPolicy.thesisCollapseProbability ?? config.QMON_THESIS_COLLAPSE_PROBABILITY;
+    const extremeDrawdownThreshold = exitPolicy.extremeDrawdownPct ?? config.QMON_EXTREME_DRAWDOWN_PCT;
+    const hasThesisCollapsed = finalOutcomeProbability !== null && finalOutcomeProbability < collapseThreshold;
+    const hasExtremeDrawdown =
       openPositionReturnPct !== null &&
-      openPositionReturnPct <= -(exitPolicy?.extremeStopLossPct ?? qmon.genome.stopLossPct) &&
-      this.hasStopLossAgeBuffer(qmon, now);
-    const hasTakeProfit =
-      qmon.genome.takeProfitPct > 0 &&
-      openPositionReturnPct !== null &&
-      peakReturnPct > (exitPolicy?.extremeTakeProfitPct ?? qmon.genome.takeProfitPct) &&
-      openPositionReturnPct <= (exitPolicy?.extremeTakeProfitPct ?? qmon.genome.takeProfitPct);
-    let closeDecision: PositionCloseDecision = { close: false, reason: "" };
+      openPositionReturnPct <= -extremeDrawdownThreshold &&
+      this.hasDisasterExitAgeBuffer(qmon, now);
+    let closeDecision: PositionCloseDecision = { close: false, reason: "", finalOutcomeProbability };
 
     if (this.hasReachedSettlementTime(qmon, now) && this.getSettledShareValue(qmon, chainlinkPrice) !== null) {
-      closeDecision = { close: true, reason: "market-settled" };
-    } else if (hasThesisInvalidation) {
-      closeDecision = { close: true, reason: "thesis-invalidated" };
-    } else if (hasStopLoss) {
-      closeDecision = { close: true, reason: "stop-loss-hit" };
-    } else if (hasTakeProfit) {
-      closeDecision = { close: true, reason: "take-profit-hit" };
+      closeDecision = { close: true, reason: "market-settled", finalOutcomeProbability: this.getSettledShareValue(qmon, chainlinkPrice) };
+    } else if (hasThesisCollapsed) {
+      closeDecision = { close: true, reason: "thesis-collapsed", finalOutcomeProbability };
+    } else if (hasExtremeDrawdown) {
+      closeDecision = { close: true, reason: "extreme-drawdown-hit", finalOutcomeProbability };
     }
 
     return closeDecision;
@@ -3912,7 +4026,14 @@ export class QmonEngine {
    * @param exitValue - The value received at exit (shareCount × exitPrice)
    * @param fee - Trading fees paid
    */
-  private closePosition(qmon: Qmon, exitValue: number, fee: number, reason: string, market: MarketKey): Qmon {
+  private closePosition(
+    qmon: Qmon,
+    exitValue: number,
+    fee: number,
+    reason: string,
+    market: MarketKey,
+    finalOutcomeProbability: number | null,
+  ): Qmon {
     const shareCount = qmon.position.shareCount ?? 0;
     const entryPrice = qmon.position.entryPrice ?? 0;
     const entryCost = shareCount * entryPrice;
@@ -3936,10 +4057,13 @@ export class QmonEngine {
       priceImpactBps: null,
       isHydratedReplay: false,
       directionalAlpha: qmon.position.directionalAlpha ?? qmon.position.entryScore,
+      finalOutcomeProbability,
+      marketImpliedProbability: qmon.position.marketImpliedProbability ?? null,
       estimatedEdgeBps: qmon.position.estimatedEdgeBps ?? null,
       estimatedNetEvUsd: qmon.position.estimatedNetEvUsd ?? null,
       predictedSlippageBps: qmon.position.predictedSlippageBps ?? null,
       tradeabilityRejectReason: null,
+      riskBudgetUsd: qmon.position.riskBudgetUsd ?? null,
       signalAgreementCount: qmon.position.signalAgreementCount ?? null,
       dominantSignalGroup: qmon.position.dominantSignalGroup ?? "none",
     };

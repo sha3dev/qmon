@@ -128,10 +128,13 @@ export class QmonPersistenceService {
       entryDirectionRegime: null,
       entryVolatilityRegime: null,
       directionalAlpha: null,
+      finalOutcomeProbability: null,
+      marketImpliedProbability: null,
       estimatedEdgeBps: null,
       estimatedNetEvUsd: null,
       predictedSlippageBps: null,
       predictedFillQuality: null,
+      riskBudgetUsd: null,
       signalAgreementCount: null,
       dominantSignalGroup: "none",
     };

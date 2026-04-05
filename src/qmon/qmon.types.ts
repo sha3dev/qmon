@@ -80,6 +80,8 @@ export type ExitPolicy = {
   readonly extremeStopLossPct: number;
   readonly extremeTakeProfitPct: number;
   readonly thesisInvalidationPolicy: ThesisInvalidationPolicy;
+  readonly thesisCollapseProbability?: number;
+  readonly extremeDrawdownPct?: number;
 };
 
 export type QmonGenome = {
@@ -124,10 +126,13 @@ export type QmonExecutionState =
 
 export type TradeabilityAssessment = {
   readonly directionalAlpha: number;
+  readonly finalOutcomeProbability: number;
+  readonly marketImpliedProbability: number;
   readonly estimatedEdgeBps: number;
   readonly estimatedNetEvUsd: number;
   readonly predictedSlippageBps: number;
   readonly predictedFillQuality: number;
+  readonly riskBudgetUsd: number;
   readonly signalAgreementCount: number;
   readonly dominantSignalGroup: DominantSignalGroup;
   readonly tradeabilityRejectReason: string | null;
@@ -149,12 +154,15 @@ export type QmonPendingOrder = {
   readonly priceToBeat: number | null;
   readonly entryDirectionRegime?: DirectionRegimeValue | null;
   readonly entryVolatilityRegime?: VolatilityRegimeValue | null;
-  readonly directionalAlpha?: number;
-  readonly estimatedEdgeBps?: number;
-  readonly estimatedNetEvUsd?: number;
-  readonly predictedSlippageBps?: number;
-  readonly predictedFillQuality?: number;
-  readonly signalAgreementCount?: number;
+  readonly directionalAlpha?: number | null;
+  readonly finalOutcomeProbability?: number | null;
+  readonly marketImpliedProbability?: number | null;
+  readonly estimatedEdgeBps?: number | null;
+  readonly estimatedNetEvUsd?: number | null;
+  readonly predictedSlippageBps?: number | null;
+  readonly predictedFillQuality?: number | null;
+  readonly riskBudgetUsd?: number | null;
+  readonly signalAgreementCount?: number | null;
   readonly dominantSignalGroup?: DominantSignalGroup;
   readonly tradeabilityRejectReason?: string | null;
 };
@@ -173,10 +181,13 @@ export type QmonPosition = {
   readonly entryDirectionRegime?: DirectionRegimeValue | null;
   readonly entryVolatilityRegime?: VolatilityRegimeValue | null;
   readonly directionalAlpha?: number | null;
+  readonly finalOutcomeProbability?: number | null;
+  readonly marketImpliedProbability?: number | null;
   readonly estimatedEdgeBps?: number | null;
   readonly estimatedNetEvUsd?: number | null;
   readonly predictedSlippageBps?: number | null;
   readonly predictedFillQuality?: number | null;
+  readonly riskBudgetUsd?: number | null;
   readonly signalAgreementCount?: number | null;
   readonly dominantSignalGroup?: DominantSignalGroup;
 };
@@ -215,10 +226,13 @@ export type QmonDecision = {
   readonly entryDirectionRegime?: DirectionRegimeValue | null;
   readonly entryVolatilityRegime?: VolatilityRegimeValue | null;
   readonly directionalAlpha?: number | null;
+  readonly finalOutcomeProbability?: number | null;
+  readonly marketImpliedProbability?: number | null;
   readonly estimatedEdgeBps?: number | null;
   readonly estimatedNetEvUsd?: number | null;
   readonly predictedSlippageBps?: number | null;
   readonly tradeabilityRejectReason?: string | null;
+  readonly riskBudgetUsd?: number | null;
   readonly signalAgreementCount?: number | null;
   readonly dominantSignalGroup?: DominantSignalGroup;
 };

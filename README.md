@@ -310,11 +310,39 @@ All runtime configuration comes from `src/config.ts`.
 | `MAX_MAX_SLIPPAGE_BPS` | Upper bound for genome `maxSlippageBps`. | `1500` |
 | `QMON_PERSIST_CHECKPOINT_MS` | Minimum interval between non-critical state saves. | `10000` |
 | `QMON_EVOLUTION_ENABLED` | Enables population replacement during window rollovers. | `true` |
-| `QMON_EVOLUTION_REPLACEMENT_RATE` | Share of the active pool replaced on a rollover. | `0.02` |
-| `QMON_EVOLUTION_MIN_PARENT_WINDOWS` | Minimum completed windows before a QMON can reproduce. | `10` |
-| `QMON_EVOLUTION_NEWBORN_PROTECTION_WINDOWS` | Minimum windows before a weak QMON can be culled. | `5` |
+| `QMON_EVOLUTION_REPLACEMENT_RATE` | Share of the active pool replaced on a rollover. | `0.01` |
+| `QMON_EVOLUTION_MIN_PARENT_WINDOWS` | Minimum completed windows before a QMON can reproduce. | `12` |
+| `QMON_EVOLUTION_NEWBORN_PROTECTION_WINDOWS` | Minimum windows before a weak QMON can be culled. | `8` |
 | `QMON_EVOLUTION_MUTATION_RATE` | Mutation rate used when creating offspring genomes. | `0.04` |
-| `QMON_HYDRATION_WINDOW_COUNT` | Number of historical windows replayed into newborns. | `30` |
+| `QMON_GENETIC_POPULATION_SIZE` | Number of genetic QMONs seeded per market. | `96` |
+| `QMON_PRESET_QMON_COUNT` | Number of preset QMONs seeded per market. | `120` |
+| `QMON_PRESET_QMONS_ENABLED` | Enables preset strategies alongside genetic QMONs. | `true` |
+| `QMON_HYDRATION_WINDOW_COUNT` | Number of historical windows replayed into newborns. | `10` |
+| `QMON_HYDRATION_SNAPSHOT_STRIDE` | Snapshot downsampling factor during hydration replay. | `10` |
+| `QMON_MIN_ENTRY_EDGE_BPS` | Legacy minimum modeled edge kept for observability and compatibility. | `35` |
+| `QMON_MIN_ENTRY_NET_EV_USD` | Legacy minimum net EV kept for observability and compatibility. | `0.08` |
+| `QMON_MIN_ENTRY_CONFIRMATIONS` | Minimum aligned signals before a new entry is allowed. | `2` |
+| `QMON_MIN_ENTRY_FILL_QUALITY` | Minimum fill-quality score required for a new entry. | `0.5` |
+| `QMON_MAX_ENTRY_SLIPPAGE_BPS` | Hard cap for predicted entry slippage. | `80` |
+| `QMON_MIN_FINAL_OUTCOME_PROBABILITY` | Minimum final-outcome conviction required before buying an outcome. | `0.6` |
+| `QMON_THESIS_COLLAPSE_PROBABILITY` | Early-exit threshold below which an open thesis is considered broken. | `0.4` |
+| `QMON_MAX_ENTRY_RISK_USD` | Worst-case USD loss budget allowed for a single new entry. | `1` |
+| `QMON_EXTREME_DRAWDOWN_PCT` | Disaster-only unrealized drawdown threshold for early exits. | `0.85` |
+| `QMON_EXECUTION_MODE` | Global routing mode for seat execution. | `paper` |
+| `QMON_USE_MINIMUM_ENTRY_SHARES` | Keeps compatibility with minimum-share entry sizing. | `true` |
+| `QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD` | Session loss guardrail for real execution. | `10` |
+| `QMON_REAL_REQUIRE_WALK_FORWARD` | Requires walk-forward validation before arming real routing. | `true` |
+| `QMON_REAL_MIN_WF_TRADES` | Minimum walk-forward trades for real routing. | `10` |
+| `QMON_REAL_MAX_WF_DRAWDOWN_USD` | Maximum walk-forward drawdown allowed for real routing. | `4` |
+| `QMON_REAL_MIN_WF_NET_PNL_USD` | Minimum walk-forward net PnL required for real routing. | `1` |
+| `QMON_REAL_MAX_WF_FEE_RATIO` | Maximum walk-forward fee ratio allowed for real routing. | `0.45` |
+| `QMON_REAL_MAX_WF_SLIPPAGE_BPS` | Maximum walk-forward slippage allowed for real routing. | `80` |
+| `POLYMARKET_PRIVATE_KEY` | Private key used for authenticated real execution. | unset |
+| `POLYMARKET_FUNDER_ADDRESS` | Funder address used by the Polymarket venue client. | unset |
+| `POLYMARKET_SIGNATURE_TYPE` | Optional signature type override for Polymarket. | unset |
+| `POLYMARKET_MAX_ALLOWED_SLIPPAGE` | Optional venue-level slippage override. | unset |
+| `POLYMARKET_SAFE_MAX_BUY_AMOUNT` | Venue-side buy notional cap used by the real executor. | `15` |
+| `QMON_REAL_CONFIRMATION_TIMEOUT_MS` | Timeout for waiting on live venue confirmations. | `15000` |
 
 ## Troubleshooting
 

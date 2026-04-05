@@ -351,9 +351,21 @@ export class QmonGenomeService {
       extremeStopLossPct: STOP_LOSS_OPTIONS[(baseIndex + variantIndex) % STOP_LOSS_OPTIONS.length] ?? 0.3,
       extremeTakeProfitPct: TAKE_PROFIT_OPTIONS[0] ?? 0.5,
       thesisInvalidationPolicy: THESIS_INVALIDATION_POLICIES[(baseIndex + variantIndex) % THESIS_INVALIDATION_POLICIES.length] ?? "hybrid",
+      thesisCollapseProbability: config.QMON_THESIS_COLLAPSE_PROBABILITY,
+      extremeDrawdownPct: config.QMON_EXTREME_DRAWDOWN_PCT,
     };
 
     return exitPolicy;
+  }
+
+  private normalizeExitPolicy(exitPolicy: ExitPolicy): ExitPolicy {
+    const normalizedExitPolicy: ExitPolicy = {
+      ...exitPolicy,
+      thesisCollapseProbability: exitPolicy.thesisCollapseProbability ?? config.QMON_THESIS_COLLAPSE_PROBABILITY,
+      extremeDrawdownPct: exitPolicy.extremeDrawdownPct ?? config.QMON_EXTREME_DRAWDOWN_PCT,
+    };
+
+    return normalizedExitPolicy;
   }
 
   private createGenomeFamily(family: QmonGenomeFamily): QmonGenome {
@@ -632,7 +644,7 @@ export class QmonGenomeService {
       exchangeWeights,
       entryPolicy,
       executionPolicy,
-      exitPolicy,
+      exitPolicy: this.normalizeExitPolicy(exitPolicy),
       maxTradesPerWindow: executionPolicy.maxTradesPerWindow,
       maxSlippageBps: entryPolicy.maxSlippageBps,
       minScoreBuy: scoreThresholds.minScoreBuy,
@@ -863,7 +875,7 @@ export class QmonGenomeService {
       exchangeWeights: this.normalizeExchangeWeights(rawExchangeWeights),
       entryPolicy,
       executionPolicy,
-      exitPolicy,
+      exitPolicy: this.normalizeExitPolicy(exitPolicy),
       maxTradesPerWindow: executionPolicy.maxTradesPerWindow,
       maxSlippageBps: entryPolicy.maxSlippageBps,
       minScoreBuy: scoreThresholds.minScoreBuy,
@@ -1194,7 +1206,7 @@ export class QmonGenomeService {
       exchangeWeights: this.normalizeExchangeWeights([Math.random(), Math.random(), Math.random(), Math.random()]),
       entryPolicy,
       executionPolicy,
-      exitPolicy,
+      exitPolicy: this.normalizeExitPolicy(exitPolicy),
       maxTradesPerWindow: executionPolicy.maxTradesPerWindow,
       maxSlippageBps: entryPolicy.maxSlippageBps,
       minScoreBuy: scoreThresholds.minScoreBuy,

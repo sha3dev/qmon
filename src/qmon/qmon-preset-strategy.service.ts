@@ -387,6 +387,8 @@ export class QmonPresetStrategyService {
       extremeStopLossPct: [0.12, 0.3, 0.4, 0.5][variantIndex % 4] ?? 0.3,
       extremeTakeProfitPct: 0.5,
       thesisInvalidationPolicy,
+      thesisCollapseProbability: config.QMON_THESIS_COLLAPSE_PROBABILITY,
+      extremeDrawdownPct: config.QMON_EXTREME_DRAWDOWN_PCT,
     };
 
     return exitPolicy;
