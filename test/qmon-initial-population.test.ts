@@ -28,6 +28,7 @@ test("QmonGenomeService builds a deterministic settlement-focused bootstrap popu
   assert.equal(initialPopulation.every((genome) => genome.entryPolicy.maxSlippageBps <= config.QMON_MAX_ENTRY_SLIPPAGE_BPS), true);
   assert.equal(initialPopulation.every((genome) => genome.exitPolicy.thesisCollapseProbability >= 0.25), true);
   assert.equal(initialPopulation.every((genome) => genome.exitPolicy.extremeDrawdownPct <= 0.95), true);
+  assert.equal(initialPopulation.every((genome) => genome.riskBudgetUsd >= 1.05), true);
   assert.equal(confidenceThresholds.size >= 5, true);
   assert.equal(riskBudgets.size >= 5, true);
 });

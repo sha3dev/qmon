@@ -40,6 +40,7 @@ const GENOME_FAMILIES = [
   "high-conviction-conservative",
   "divergence-capture",
 ] as const;
+const MIN_EXECUTABLE_RISK_BUDGET_USD = 1.05;
 const FAMILY_BASE_WEIGHTS: Record<QmonGenomeFamily, BeliefWeights> = {
   "consensus-resolver": {
     spotOracleAlignment: 1.25,
@@ -314,7 +315,11 @@ export class QmonGenomeService {
   private createRiskBudgetUsd(family: QmonGenomeFamily, variantIndex: number): number {
     const familyMultiplier = family === "high-conviction-conservative" ? 0.75 : family === "trend-confirmation" ? 1.15 : 1;
     const riskBudgetUsd = Number(
-      this.clampNumber(config.QMON_MAX_ENTRY_RISK_USD * familyMultiplier + ((variantIndex % 5) - 2) * 0.15, 0.5, config.QMON_MAX_ENTRY_RISK_USD * 2).toFixed(2),
+      this.clampNumber(
+        config.QMON_MAX_ENTRY_RISK_USD * familyMultiplier + ((variantIndex % 5) - 2) * 0.15,
+        MIN_EXECUTABLE_RISK_BUDGET_USD,
+        config.QMON_MAX_ENTRY_RISK_USD * 2,
+      ).toFixed(2),
     );
 
     return riskBudgetUsd;
@@ -496,7 +501,13 @@ export class QmonGenomeService {
     if (this.randomBool(mutationRate)) {
       offspringGenome = {
         ...offspringGenome,
-        riskBudgetUsd: Number(this.clampNumber(offspringGenome.riskBudgetUsd + (this.randomBool() ? 0.15 : -0.15), 0.5, config.QMON_MAX_ENTRY_RISK_USD * 2).toFixed(2)),
+        riskBudgetUsd: Number(
+          this.clampNumber(
+            offspringGenome.riskBudgetUsd + (this.randomBool() ? 0.15 : -0.15),
+            MIN_EXECUTABLE_RISK_BUDGET_USD,
+            config.QMON_MAX_ENTRY_RISK_USD * 2,
+          ).toFixed(2),
+        ),
       };
     }
 

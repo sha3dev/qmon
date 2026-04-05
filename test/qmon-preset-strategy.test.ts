@@ -31,6 +31,7 @@ test("QmonPresetStrategyService exposes the configured preset strategy count wit
   assert.equal(strategyNames.size, presetStrategyDefinitions.length);
   assert.equal(strategyDescriptions.size, presetStrategyDefinitions.length);
   assert.equal(strategySignatures.size, presetStrategyDefinitions.length);
+  assert.equal(presetStrategyDefinitions.every((presetStrategyDefinition) => presetStrategyDefinition.riskBudgetUsd >= 1.05), true);
   assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "consensus-resolver"), true);
   assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "trend-confirmation"), true);
   assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "divergence-capture"), true);

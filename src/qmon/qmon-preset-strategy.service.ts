@@ -29,6 +29,7 @@ const PRESET_FAMILY_IDS = [
   "high-conviction-conservative",
   "divergence-capture",
 ] as const;
+const MIN_EXECUTABLE_RISK_BUDGET_USD = 1.05;
 const BELIEF_KEYS: readonly BeliefKey[] = [
   "spotOracleAlignment",
   "resolutionMomentum",
@@ -285,7 +286,11 @@ export class QmonPresetStrategyService {
   private createRiskBudgetUsd(presetFamily: PresetFamilyId, variantIndex: number): number {
     const familyMultiplier = presetFamily === "high-conviction-conservative" ? 0.75 : presetFamily === "trend-confirmation" ? 1.15 : 1;
     const riskBudgetUsd = Number(
-      this.clampNumber(config.QMON_MAX_ENTRY_RISK_USD * familyMultiplier + ((variantIndex % 5) - 2) * 0.15, 0.5, config.QMON_MAX_ENTRY_RISK_USD * 2).toFixed(2),
+      this.clampNumber(
+        config.QMON_MAX_ENTRY_RISK_USD * familyMultiplier + ((variantIndex % 5) - 2) * 0.15,
+        MIN_EXECUTABLE_RISK_BUDGET_USD,
+        config.QMON_MAX_ENTRY_RISK_USD * 2,
+      ).toFixed(2),
     );
 
     return riskBudgetUsd;

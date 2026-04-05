@@ -133,7 +133,7 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
         thesisCollapseProbability: 0.4,
         extremeDrawdownPct: 0.85,
       },
-      riskBudgetUsd: 1,
+      riskBudgetUsd: config.QMON_MAX_ENTRY_RISK_USD,
     },
     role,
     lifecycle: "active",
@@ -813,6 +813,39 @@ test("QmonEngine caps cheap outcome sizing by worst-case USD risk", () => {
   assert.equal(sizedQmon.position.action, "BUY_UP");
   assert.equal((sizedQmon.position.shareCount ?? 0) < 50, true);
   assert.equal((sizedQmon.position.riskBudgetUsd ?? 0) <= config.QMON_MAX_ENTRY_RISK_USD, true);
+});
+
+test("QmonEngine reports position-size-invalid when the risk budget cannot fund the minimum entry", () => {
+  const qmon = createQmon();
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([{
+    ...qmon,
+    genome: {
+      ...qmon.genome,
+      riskBudgetUsd: 0.5,
+    },
+  }])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+  let resultReason: string | null | undefined;
+
+  withMockNow(1_000, () => {
+    const results = qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
+      createRegimes(),
+      ["consensus-flip"],
+      entrySnapshots,
+    );
+
+    resultReason = results[0]?.tradeabilityRejectReason;
+  });
+
+  const updatedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(resultReason, "position-size-invalid");
+  assert.equal(updatedQmon.position.action, null);
+  assert.equal(updatedQmon.pendingOrder, null);
 });
 
 test("QmonEngine settles the champion seat without mutating the champion paper position", () => {

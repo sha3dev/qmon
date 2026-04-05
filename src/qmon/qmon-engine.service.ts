@@ -2001,10 +2001,16 @@ export class QmonEngine {
     );
     const requiredFinalOutcomeProbability = Math.min(0.99, Math.max(entryPolicy.confidenceThreshold, config.QMON_MIN_FINAL_OUTCOME_PROBABILITY) + combinedStressScore * 0.05);
     const riskBudgetUsd = qmon.genome.riskBudgetUsd;
+    const estimatedNetEvUsd = grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd;
+    const affordableShareCount = this.computePositionSizeFromRiskBudget(limitPrice, riskBudgetUsd);
     let tradeabilityRejectReason: string | null = null;
 
     if (finalOutcomeProbability < requiredFinalOutcomeProbability) {
       tradeabilityRejectReason = "final-outcome-confidence-too-low";
+    } else if (finalOutcomeProbability <= impliedProbability) {
+      tradeabilityRejectReason = "final-outcome-edge-too-low";
+    } else if (estimatedNetEvUsd <= 0) {
+      tradeabilityRejectReason = "net-ev-non-positive";
     } else if (uncertaintyScore > entryPolicy.uncertaintyTolerance) {
       tradeabilityRejectReason = "uncertainty-too-high";
     } else if (directionMultiplier * edgeSignalValue < -0.05 || directionMultiplier * distanceSignalValue < -0.05) {
@@ -2019,6 +2025,8 @@ export class QmonEngine {
       tradeabilityRejectReason = "insufficient-confirmations";
     } else if (directionMultiplier * imbalanceSignalValue < -THESIS_INVALIDATION_MICROSTRUCTURE_FLOOR) {
       tradeabilityRejectReason = "book-opposes-direction";
+    } else if (affordableShareCount === null) {
+      tradeabilityRejectReason = "position-size-invalid";
     }
 
     return {
@@ -2026,7 +2034,7 @@ export class QmonEngine {
       finalOutcomeProbability,
       marketImpliedProbability: impliedProbability,
       estimatedEdgeBps,
-      estimatedNetEvUsd: grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd,
+      estimatedNetEvUsd,
       predictedSlippageBps,
       predictedFillQuality: adjustedFillQuality,
       riskBudgetUsd,
@@ -2057,26 +2065,41 @@ export class QmonEngine {
     executionQuality: QmonExecutionQuality | undefined,
   ): { action: TradingAction; tradeabilityAssessment: TradeabilityAssessment } {
     const directionalAlphaResult = this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment);
-    const action: TradingAction =
-      directionalAlphaResult.directionalAlpha > 0.02 ? "BUY_UP" : directionalAlphaResult.directionalAlpha < -0.02 ? "BUY_DOWN" : "HOLD";
-    const limitPrice = this.getLimitPriceForAction(signalValues, action);
+    const buyUpAssessment = this.assessTradeability(
+      qmon,
+      "BUY_UP",
+      directionalAlphaResult,
+      signalValues,
+      firedTriggerIds,
+      this.getLimitPriceForAction(signalValues, "BUY_UP"),
+      executionQuality,
+    );
+    const buyDownAssessment = this.assessTradeability(
+      qmon,
+      "BUY_DOWN",
+      directionalAlphaResult,
+      signalValues,
+      firedTriggerIds,
+      this.getLimitPriceForAction(signalValues, "BUY_DOWN"),
+      executionQuality,
+    );
+    const hasBuyUp = buyUpAssessment.shouldAllowEntry;
+    const hasBuyDown = buyDownAssessment.shouldAllowEntry;
+    const shouldPreferBuyUp =
+      buyUpAssessment.finalOutcomeProbability > buyDownAssessment.finalOutcomeProbability ||
+      (
+        buyUpAssessment.finalOutcomeProbability === buyDownAssessment.finalOutcomeProbability &&
+        buyUpAssessment.estimatedNetEvUsd >= buyDownAssessment.estimatedNetEvUsd
+      );
+    const action: TradingAction = hasBuyUp && (!hasBuyDown || shouldPreferBuyUp) ? "BUY_UP" : hasBuyDown ? "BUY_DOWN" : "HOLD";
     const tradeabilityAssessment =
-      action === "HOLD"
-        ? {
-            directionalAlpha: directionalAlphaResult.directionalAlpha,
-            finalOutcomeProbability: 0.5,
-            marketImpliedProbability: 0.5,
-            estimatedEdgeBps: 0,
-            estimatedNetEvUsd: 0,
-            predictedSlippageBps: 0,
-            predictedFillQuality: 0,
-            riskBudgetUsd: qmon.genome.riskBudgetUsd,
-            signalAgreementCount: directionalAlphaResult.signalAgreementCount,
-            dominantSignalGroup: directionalAlphaResult.dominantSignalGroup,
-            tradeabilityRejectReason: "alpha-below-threshold",
-            shouldAllowEntry: false,
-          }
-        : this.assessTradeability(qmon, action, directionalAlphaResult, signalValues, firedTriggerIds, limitPrice, executionQuality);
+      action === "BUY_UP"
+        ? buyUpAssessment
+        : action === "BUY_DOWN"
+          ? buyDownAssessment
+          : shouldPreferBuyUp
+            ? buyUpAssessment
+            : buyDownAssessment;
 
     return {
       action,
