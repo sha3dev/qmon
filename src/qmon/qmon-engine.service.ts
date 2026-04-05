@@ -2000,7 +2000,7 @@ export class QmonEngine {
     const spreadSignalValue = this.getScalarSignalValue(signalValues, "spread") ?? 0;
     const bookDepthSignalValue = this.getScalarSignalValue(signalValues, "bookDepth") ?? 0;
     const imbalanceSignalValue = this.getScalarSignalValue(signalValues, "imbalance") ?? 0;
-    const marketStressEvidence = Math.min((executionQuality?.resolvedOrderCount ?? 0) / EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE, 1);
+    const marketStressEvidence = (executionQuality?.resolvedOrderCount ?? 0) >= EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE ? 1 : 0;
     const marketStressScore = (executionQuality?.stressScore ?? 0) * marketStressEvidence;
     const qmonFeeRatio = Math.max(qmon.metrics.feeRatio ?? 0, 0);
     const qmonRecentSlippageBps = Math.max(qmon.metrics.recentAvgSlippageBps ?? 0, 0);

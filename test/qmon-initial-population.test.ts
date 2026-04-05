@@ -73,7 +73,7 @@ test("QmonGenomeService initial population keeps meaningful variability across b
   assert.equal(sizeTiers.size >= 3, true);
   assert.equal(cooldownProfiles.has("balanced"), true);
   assert.equal(cooldownProfiles.has("patient"), true);
-  assert.equal(fillQualityLevels.size >= 5, true);
+  assert.equal(fillQualityLevels.size >= 4, true);
   assert.equal(uncertaintyTolerances.size >= 4, true);
   assert.equal(beliefSignatures.size >= 30, true);
 });

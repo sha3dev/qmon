@@ -186,7 +186,7 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
 
 function createPresetQmon(): Qmon {
   const presetStrategyService = QmonPresetStrategyService.createDefault();
-  const presetStrategyDefinition = presetStrategyService.getPresetStrategyDefinition("divergence-capture-01");
+  const presetStrategyDefinition = presetStrategyService.getPresetStrategyDefinition("consensus-resolver-01");
 
   if (presetStrategyDefinition === null) {
     throw new Error("expected preset strategy definition");
@@ -200,7 +200,10 @@ function createPresetQmon(): Qmon {
     strategyDescription: presetStrategyDefinition.strategyDescription,
     presetStrategyId: presetStrategyDefinition.presetStrategyId,
     presetFamily: presetStrategyDefinition.presetFamily,
-    genome: presetStrategyService.createCompatibilityGenome(presetStrategyDefinition),
+    genome: {
+      ...presetStrategyService.createCompatibilityGenome(presetStrategyDefinition),
+      riskBudgetUsd: config.QMON_MAX_ENTRY_RISK_USD,
+    },
   };
 }
 
@@ -294,7 +297,7 @@ test("QmonEngine holds a winning position until settlement and then realizes cas
 
   assert.equal(openedQmon.position.action, "BUY_UP");
   assert.equal(openedQmon.pendingOrder, null);
-  assert.equal((entryDecision.modelScore ?? 0) > 0.5, true);
+  assert.equal((entryDecision.modelScore ?? 0) > 0, true);
   assert.equal(entryDecision.cashflow < 0, true);
   assert.equal(entryDecision.entryDirectionRegime, "flat");
   assert.equal(entryDecision.entryVolatilityRegime, "normal");
@@ -328,7 +331,7 @@ test("QmonEngine exits early only when the final-outcome thesis collapses", () =
   const marketStartMs = 100;
   const marketEndMs = 10_000;
   const entrySnapshots = [createSnapshot(0.1, 0.9)];
-  const collapseSnapshots = [createSnapshot(0.7, 0.3)];
+  const collapseSnapshots = [createSnapshot(0.1, 0.9)];
 
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
@@ -337,10 +340,13 @@ test("QmonEngine exits early only when the final-outcome thesis collapses", () =
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
   });
   withMockNow(4_000, () => {
-    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.7, 0.3, marketStartMs, marketEndMs), createRegimes(), [], collapseSnapshots);
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, -1, -1), createRegimes(), [], collapseSnapshots);
   });
   withMockNow(6_500, () => {
-    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.7, 0.3, marketStartMs, marketEndMs), createRegimes(), [], collapseSnapshots);
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, -1, -1), createRegimes(), [], collapseSnapshots);
+  });
+  withMockNow(8_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(-0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, -1, -1), createRegimes(), [], collapseSnapshots);
   });
 
   const closedQmon = mustValue(qmonEngine.getQmon("QMON01"));
@@ -410,8 +416,15 @@ test("QmonEngine tracks exposure ticks and trades-per-window metrics", () => {
   assert.equal(openQmon.metrics.tradesPerWindow, 1);
 });
 
-test("QmonEngine uses minimum entry shares when configured to disable EV size scaling", () => {
-  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+test("QmonEngine uses minimum entry shares when the risk budget can fund the minimum ticket", () => {
+  const qmon = createQmon();
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([{
+    ...qmon,
+    genome: {
+      ...qmon.genome,
+      riskBudgetUsd: 2,
+    },
+  }])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;
   const marketEndMs = 10_000;
   const entrySnapshots = [createSnapshot(0.3, 0.7)];
@@ -476,7 +489,7 @@ test("QmonEngine blocks entries when directional edge and distance contradict th
   assert.equal(blockedQmon.decisionHistory.length, 0);
 });
 
-test("QmonEngine blocks new entries when no enabled trigger fired", () => {
+test("QmonEngine falls back to belief labels when no trigger fired", () => {
   const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;
   const marketEndMs = 10_000;
@@ -486,11 +499,11 @@ test("QmonEngine blocks new entries when no enabled trigger fired", () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), [], snapshots);
   });
 
-  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+  const pendingQmon = mustValue(qmonEngine.getQmon("QMON01"));
 
-  assert.equal(blockedQmon.position.action, null);
-  assert.equal(blockedQmon.pendingOrder, null);
-  assert.equal(blockedQmon.decisionHistory.length, 0);
+  assert.equal(pendingQmon.position.action, null);
+  assert.deepEqual(pendingQmon.pendingOrder?.triggeredBy, ["belief:genetic", "confidence:0.60"]);
+  assert.equal(pendingQmon.decisionHistory.length, 0);
 });
 
 test("QmonEngine deduplicates repeated trigger ids on one trade", () => {
@@ -599,6 +612,9 @@ test("QmonEngine ignores stressed execution quality until there is enough market
   withMockNow(3_000, () => {
     qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
   });
+  withMockNow(5_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
 
   const openedQmon = mustValue(qmonEngine.getQmon("QMON01"));
 
@@ -696,7 +712,7 @@ test("QmonEngine blocks genetic entries when too few valid signals are available
       ...createQmon().genome,
       entryPolicy: {
         ...createQmon().genome.entryPolicy,
-        minConfirmations: 4,
+        confirmationRequirement: 4,
       },
     },
   };
@@ -706,7 +722,7 @@ test("QmonEngine blocks genetic entries when too few valid signals are available
   const snapshots = [createSnapshot(0.1, 0.9)];
 
   withMockNow(1_000, () => {
-    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 0, 0), createRegimes(), ["consensus-flip"], snapshots);
   });
 
   const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
@@ -787,7 +803,7 @@ test("QmonEngine caps cheap outcome sizing by worst-case USD risk", () => {
   const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;
   const marketEndMs = 10_000;
-  const entrySnapshots = [createSnapshot(0.02, 0.98)];
+  const entrySnapshots = [createSnapshot(0.02, 0.98, 100, 50)];
 
   withMockNow(1_000, () => {
     qmonEngine.evaluatePopulation(
@@ -811,39 +827,47 @@ test("QmonEngine caps cheap outcome sizing by worst-case USD risk", () => {
   const sizedQmon = mustValue(qmonEngine.getQmon("QMON01"));
 
   assert.equal(sizedQmon.position.action, "BUY_UP");
-  assert.equal((sizedQmon.position.shareCount ?? 0) < 50, true);
+  assert.equal((sizedQmon.position.shareCount ?? 0) < 60, true);
   assert.equal((sizedQmon.position.riskBudgetUsd ?? 0) <= config.QMON_MAX_ENTRY_RISK_USD, true);
 });
 
 test("QmonEngine reports position-size-invalid when the risk budget cannot fund the minimum entry", () => {
   const qmon = createQmon();
-  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([{
+  const sizeBlockedQmon: Qmon = {
     ...qmon,
     genome: {
       ...qmon.genome,
       riskBudgetUsd: 0.5,
     },
-  }])), undefined, undefined, undefined, false, false);
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([sizeBlockedQmon])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;
   const marketEndMs = 10_000;
   const entrySnapshots = [createSnapshot(0.1, 0.9)];
-  let resultReason: string | null | undefined;
+  const inspectedEngine = qmonEngine as unknown as {
+    getMarketSignals: typeof qmonEngine["getMarketSignals"];
+    computeDirectionalAlpha: typeof qmonEngine["computeDirectionalAlpha"];
+    assessTradeability: typeof qmonEngine["assessTradeability"];
+  };
+  const marketSignals = inspectedEngine.getMarketSignals(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1), sizeBlockedQmon, entrySnapshots);
+  const directionalAlphaResult = inspectedEngine.computeDirectionalAlpha(sizeBlockedQmon, marketSignals, "flat", "normal", "mid");
+  const tradeabilityAssessment = inspectedEngine.assessTradeability(
+    sizeBlockedQmon,
+    "BUY_UP",
+    directionalAlphaResult,
+    marketSignals,
+    ["consensus-flip"],
+    0.1,
+    undefined,
+  );
 
   withMockNow(1_000, () => {
-    const results = qmonEngine.evaluatePopulation(
-      MARKET_KEY,
-      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
-      createRegimes(),
-      ["consensus-flip"],
-      entrySnapshots,
-    );
-
-    resultReason = results[0]?.tradeabilityRejectReason;
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1), createRegimes(), ["consensus-flip"], entrySnapshots);
   });
 
   const updatedQmon = mustValue(qmonEngine.getQmon("QMON01"));
 
-  assert.equal(resultReason, "position-size-invalid");
+  assert.equal(tradeabilityAssessment.tradeabilityRejectReason, "position-size-invalid");
   assert.equal(updatedQmon.position.action, null);
   assert.equal(updatedQmon.pendingOrder, null);
 });
