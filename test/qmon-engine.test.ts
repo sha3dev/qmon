@@ -466,6 +466,63 @@ test("QmonEngine blocks new entries when no enabled trigger fired", () => {
   assert.equal(blockedQmon.decisionHistory.length, 0);
 });
 
+test("QmonEngine deduplicates repeated trigger ids on one trade", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.9, 0.1)];
+  const exitSnapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(-0.9, 0.9, 0.1, marketStartMs, marketEndMs, 100_000, -1, -1),
+      createRegimes(),
+      ["consensus-flip", "consensus-flip", "consensus-flip"],
+      entrySnapshots,
+    );
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(-0.9, 0.9, 0.1, marketStartMs, marketEndMs, 100_000, -1, -1),
+      createRegimes(),
+      ["consensus-flip", "consensus-flip"],
+      entrySnapshots,
+    );
+  });
+
+  const openedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.deepEqual(openedQmon.position.entryTriggers, ["consensus-flip"]);
+
+  withMockNow(4_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
+      createRegimes(),
+      [],
+      exitSnapshots,
+    );
+  });
+  withMockNow(6_500, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 1, 1),
+      createRegimes(),
+      [],
+      exitSnapshots,
+    );
+  });
+
+  const closedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+  const triggerBreakdown = closedQmon.metrics.triggerBreakdown ?? [];
+
+  assert.equal(triggerBreakdown.length, 1);
+  assert.equal(triggerBreakdown[0]?.triggerId, "consensus-flip");
+  assert.equal(triggerBreakdown[0]?.tradeCount, 1);
+});
+
 test("QmonEngine blocks entries when the current time segment is disabled", () => {
   const timeLockedQmon: Qmon = {
     ...createQmon(),

@@ -1610,7 +1610,7 @@ export class QmonEngine {
     totalTradePnl: number,
   ): readonly TriggerPerformanceSlice[] {
     const nextTriggerBreakdown = [...triggerBreakdown];
-    const entryTriggers = position.entryTriggers ?? [];
+    const entryTriggers = [...new Set(position.entryTriggers ?? [])];
 
     for (const triggerId of entryTriggers) {
       if (!triggerId.startsWith("regime:")) {
@@ -1675,7 +1675,7 @@ export class QmonEngine {
    */
   private getTriggeredBy(qmon: Qmon, firedTriggerIds: readonly string[]): readonly string[] {
     const enabledTriggerIds = this.getQmonEnabledTriggerIds(qmon);
-    const triggeredBy = firedTriggerIds.filter((triggerId) => enabledTriggerIds.includes(triggerId));
+    const triggeredBy = [...new Set(firedTriggerIds.filter((triggerId) => enabledTriggerIds.includes(triggerId)))];
 
     return triggeredBy;
   }

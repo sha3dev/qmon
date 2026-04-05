@@ -172,6 +172,23 @@ export class QmonPresetStrategyService {
     return presetStrategies;
   }
 
+  private getPresetFamilyVariantOrder(): readonly QmonPresetStrategyDefinition[] {
+    const orderedPresetStrategies: QmonPresetStrategyDefinition[] = [];
+
+    for (let variantIndex = 0; variantIndex < PRESET_VARIANTS_PER_FAMILY; variantIndex += 1) {
+      for (const presetFamily of PRESET_FAMILY_IDS) {
+        const presetStrategyId = `${presetFamily}-${String(variantIndex + 1).padStart(2, "0")}`;
+        const presetStrategyDefinition = this.presetStrategiesById.get(presetStrategyId);
+
+        if (presetStrategyDefinition !== undefined) {
+          orderedPresetStrategies.push(presetStrategyDefinition);
+        }
+      }
+    }
+
+    return orderedPresetStrategies;
+  }
+
   private createPresetStrategyDefinition(presetFamily: PresetFamilyId, variantIndex: number): QmonPresetStrategyDefinition {
     const variantStep = variantIndex % 5;
     const triggerIds = this.createPresetTriggerIds(presetFamily, variantIndex);
@@ -777,7 +794,7 @@ export class QmonPresetStrategyService {
    */
 
   public getPresetStrategyDefinitions(strategyCount = config.QMON_PRESET_QMON_COUNT): readonly QmonPresetStrategyDefinition[] {
-    const presetStrategyDefinitions = this.orderedPresetStrategies.slice(0, Math.max(0, strategyCount));
+    const presetStrategyDefinitions = this.getPresetFamilyVariantOrder().slice(0, Math.max(0, strategyCount));
 
     return presetStrategyDefinitions;
   }

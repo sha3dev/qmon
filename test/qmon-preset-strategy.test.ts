@@ -4,7 +4,7 @@ import { test } from "node:test";
 import config from "../src/config.ts";
 import { QmonPresetStrategyService } from "../src/qmon/qmon-preset-strategy.service.ts";
 
-test("QmonPresetStrategyService exposes 400 uniquely named preset strategies with non-duplicated rule signatures", () => {
+test("QmonPresetStrategyService exposes the configured preset strategy count with diversified families and unique signatures", () => {
   const presetStrategyService = QmonPresetStrategyService.createDefault();
   const presetStrategyDefinitions = presetStrategyService.getPresetStrategyDefinitions();
   const strategyIds = new Set(presetStrategyDefinitions.map((presetStrategyDefinition) => presetStrategyDefinition.presetStrategyId));

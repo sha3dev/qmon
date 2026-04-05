@@ -12,11 +12,10 @@ import type { MarketKey, Qmon, QmonGenome, QmonId, QmonMetrics, QmonPopulation, 
  */
 
 const MIN_PARENT_TRADES = 8;
-const PARENT_POOL_RATE = 0.4;
-const RANDOM_EXPLORER_RATE = 0.1;
+const PARENT_POOL_RATE = 0.25;
 const MIN_PARENT_POOL_SIZE = 8;
-const EXPLORATORY_INJECTION_WINDOW_INTERVAL = 50;
-const EXPLORATORY_INJECTION_SIZE = 20;
+const EXPLORATORY_INJECTION_WINDOW_INTERVAL = 200;
+const EXPLORATORY_INJECTION_SIZE = 4;
 
 type EvolutionReplacement = {
   readonly childQmonId: QmonId;
@@ -154,22 +153,10 @@ export class QmonEvolutionService {
     let parentPoolSize = eligibleParents.length;
 
     if (eligibleParents.length >= MIN_PARENT_POOL_SIZE) {
-      // Top 40% performers + 10% random explorers
-      const topCount = Math.max(MIN_PARENT_POOL_SIZE, Math.ceil(eligibleParents.length * PARENT_POOL_RATE));
-      const randomCount = Math.ceil(Math.min(eligibleParents.length * RANDOM_EXPLORER_RATE, 5));
-      parentPoolSize = Math.min(eligibleParents.length, topCount + randomCount);
+      parentPoolSize = Math.max(MIN_PARENT_POOL_SIZE, Math.ceil(eligibleParents.length * PARENT_POOL_RATE));
     }
 
     const parentPool = eligibleParents.slice(0, parentPoolSize);
-
-    // Add random explorers if there's room
-    if (parentPool.length < eligibleParents.length) {
-      const remainingCandidates = eligibleParents.slice(parentPool.length);
-      const randomExplorers = remainingCandidates
-        .sort(() => Math.random() - 0.5)
-        .slice(0, Math.min(5, eligibleParents.length - parentPool.length));
-      parentPool.push(...randomExplorers);
-    }
 
     return parentPool;
   }
@@ -374,9 +361,8 @@ export class QmonEvolutionService {
     const createdAt = Date.now();
     const nextGeneration = Math.max(parentAQmon.generation, parentBQmon.generation) + 1;
 
-    // ADAPTIVE MUTATION RATE: Calculate diversity and adjust
     const populationDiversity = this.calculateGeneticDiversity([parentAQmon, parentBQmon]);
-    const adaptiveMutationRate = this.calculateAdaptiveMutationRate(populationDiversity);
+    const adaptiveMutationRate = Math.min(config.QMON_EVOLUTION_MUTATION_RATE, this.calculateAdaptiveMutationRate(populationDiversity));
 
     return {
       id: generateQmonId(),
@@ -548,7 +534,6 @@ export class QmonEvolutionService {
     const qmonsById = new Map(population.qmons.map((qmon) => [qmon.id, qmon]));
     let highestChildGeneration: number | null = null;
 
-    // Standard evolution: replace weak QMONs with offspring
     for (let index = 0; index < replacementCount; index += 1) {
       const deadQmon = candidateDeaths[index];
       const parentAQmon = this.pickWeightedParent(parentPool, null);
@@ -570,10 +555,10 @@ export class QmonEvolutionService {
       }
     }
 
-    // EXPLORATORY INJECTION: Every 50 windows, inject 20 completely random genomes
-    // This helps escape local optima and discover strategies outside predefined families
     const shouldInjectExplorers =
-      evolutionWindowCount !== null && evolutionWindowCount % EXPLORATORY_INJECTION_WINDOW_INTERVAL === 0;
+      evolutionWindowCount !== null &&
+      evolutionWindowCount >= EXPLORATORY_INJECTION_WINDOW_INTERVAL &&
+      evolutionWindowCount % EXPLORATORY_INJECTION_WINDOW_INTERVAL === 0;
 
     if (shouldInjectExplorers) {
       const currentQmons = [...qmonsById.values()].filter((qmon) => (qmon.strategyKind ?? "genetic") === "genetic");
@@ -582,7 +567,6 @@ export class QmonEvolutionService {
       );
       const weakestCount = Math.min(EXPLORATORY_INJECTION_SIZE, sortedByWeakness.length);
 
-      // Replace worst performers with exploratory QMONs
       for (let index = 0; index < weakestCount; index += 1) {
         const weakQmon = sortedByWeakness[index];
         if (weakQmon !== undefined) {
@@ -596,7 +580,7 @@ export class QmonEvolutionService {
           replacements.push({
             childQmonId: exploratoryQmon.id,
             deadQmonId: weakQmon.id,
-            parentIds: [], // No parents for exploratory QMONs
+            parentIds: [],
             generation: exploratoryQmon.generation,
             replacementCount: replacementCount + index + 1,
           });
