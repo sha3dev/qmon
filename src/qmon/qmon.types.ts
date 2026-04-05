@@ -313,8 +313,22 @@ export type QmonPopulation = {
   readonly seatLastCloseTimestamp: number | null;
   readonly seatLastWindowStartMs: number | null;
   readonly seatLastSettledWindowStartMs: number | null;
+  readonly executionQuality?: QmonExecutionQuality;
   readonly executionRuntime?: QmonExecutionRuntime;
   readonly realWalkForwardGate?: QmonRealWalkForwardGate;
+};
+
+export type QmonExecutionQuality = {
+  readonly resolvedOrderCount: number;
+  readonly filledOrderCount: number;
+  readonly rejectedOrderCount: number;
+  readonly timedOutOrderCount: number;
+  readonly slippageRejectedOrderCount: number;
+  readonly avgFilledPriceImpactBps: number;
+  readonly avgRejectedSlippageBps: number;
+  readonly fillRate: number;
+  readonly rejectionRate: number;
+  readonly stressScore: number;
 };
 
 export type QmonExecutionRuntime = {

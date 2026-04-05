@@ -31,6 +31,7 @@ import type {
   PendingOrderAction,
   Qmon,
   QmonDecision,
+  QmonExecutionQuality,
   QmonExecutionRoute,
   QmonExecutionRuntime,
   QmonFamilyState,
@@ -84,6 +85,15 @@ const MIN_POSITION_NOTIONAL_USD = 1;
 const ENTRY_COOLDOWN_MS = 30_000;
 const STOP_LOSS_MIN_HOLD_MS = 60_000;
 const MAX_EV_POSITION_MULTIPLIER = 1.5;
+const EXECUTION_QUALITY_STRESS_EDGE_BPS = 45;
+const EXECUTION_QUALITY_STRESS_NET_EV_USD = 0.08;
+const EXECUTION_QUALITY_STRESS_FILL_QUALITY = 0.2;
+const EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS = 80;
+const EXECUTION_QUALITY_STRESS_EMA_ALPHA = 0.2;
+const EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE = 12;
+const PERFORMANCE_QUARANTINE_MIN_WINDOWS = 6;
+const PERFORMANCE_QUARANTINE_MIN_TRADES = 6;
+const PERFORMANCE_QUARANTINE_MAX_WIN_RATE = 0.35;
 const TRIGGER_EV_DISCOUNT_USD = 0.02;
 const NO_TRIGGER_EV_PREMIUM_USD = 0.03;
 const THESIS_INVALIDATION_ALPHA_FLIP = 0.08;
@@ -106,6 +116,7 @@ type PositionPnlResult = {
 type PendingOrderProcessingResult = {
   readonly qmon: Qmon;
   readonly shouldSkipEvaluation: boolean;
+  readonly executionQualitySample: ExecutionQualitySample | null;
 };
 
 type SeatProcessingResult = {
@@ -132,6 +143,15 @@ type WeightedExchangeSignals = {
   readonly staleness: number | null;
   readonly spread: number | null;
   readonly bookDepth: number | null;
+};
+
+type ExecutionQualitySample = {
+  readonly wasFilled: boolean;
+  readonly wasRejected: boolean;
+  readonly wasTimedOut: boolean;
+  readonly wasSlippageRejected: boolean;
+  readonly filledPriceImpactBps: number | null;
+  readonly rejectedSlippageBps: number | null;
 };
 
 type CompiledSignalBlockGene = {
@@ -604,6 +624,7 @@ export class QmonEngine {
 
     return {
       ...population,
+      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
       realWalkForwardGate,
       executionRuntime: {
         ...normalizedExecutionRuntime,
@@ -901,6 +922,90 @@ export class QmonEngine {
   }
 
   /**
+   * Create empty execution-quality aggregates for one market population.
+   */
+  private createDefaultExecutionQuality(): QmonExecutionQuality {
+    return {
+      resolvedOrderCount: 0,
+      filledOrderCount: 0,
+      rejectedOrderCount: 0,
+      timedOutOrderCount: 0,
+      slippageRejectedOrderCount: 0,
+      avgFilledPriceImpactBps: 0,
+      avgRejectedSlippageBps: 0,
+      fillRate: 0,
+      rejectionRate: 0,
+      stressScore: 0,
+    };
+  }
+
+  /**
+   * Roll one resolved execution outcome into the market-level execution quality state.
+   */
+  private updateExecutionQuality(
+    executionQuality: QmonExecutionQuality | undefined,
+    executionQualitySample: ExecutionQualitySample | null,
+  ): QmonExecutionQuality {
+    const currentExecutionQuality = executionQuality ?? this.createDefaultExecutionQuality();
+    let nextExecutionQuality = currentExecutionQuality;
+
+    if (executionQualitySample !== null) {
+      const resolvedOrderCount = currentExecutionQuality.resolvedOrderCount + 1;
+      const filledOrderCount = currentExecutionQuality.filledOrderCount + (executionQualitySample.wasFilled ? 1 : 0);
+      const rejectedOrderCount = currentExecutionQuality.rejectedOrderCount + (executionQualitySample.wasRejected ? 1 : 0);
+      const timedOutOrderCount = currentExecutionQuality.timedOutOrderCount + (executionQualitySample.wasTimedOut ? 1 : 0);
+      const slippageRejectedOrderCount = currentExecutionQuality.slippageRejectedOrderCount + (executionQualitySample.wasSlippageRejected ? 1 : 0);
+      const nextAvgFilledPriceImpactBps =
+        executionQualitySample.filledPriceImpactBps === null
+          ? currentExecutionQuality.avgFilledPriceImpactBps
+          : (currentExecutionQuality.avgFilledPriceImpactBps * currentExecutionQuality.filledOrderCount +
+              executionQualitySample.filledPriceImpactBps) /
+            Math.max(filledOrderCount, 1);
+      const nextAvgRejectedSlippageBps =
+        executionQualitySample.rejectedSlippageBps === null
+          ? currentExecutionQuality.avgRejectedSlippageBps
+          : (currentExecutionQuality.avgRejectedSlippageBps * currentExecutionQuality.slippageRejectedOrderCount +
+              executionQualitySample.rejectedSlippageBps) /
+            Math.max(slippageRejectedOrderCount, 1);
+      const fillRate = filledOrderCount / Math.max(resolvedOrderCount, 1);
+      const rejectionRate = rejectedOrderCount / Math.max(resolvedOrderCount, 1);
+      const sampleStressScore = Math.max(
+        0,
+        Math.min(
+          1,
+          rejectionRate * 0.4 +
+            (slippageRejectedOrderCount / Math.max(resolvedOrderCount, 1)) * 0.35 +
+            Math.min(nextAvgFilledPriceImpactBps / 250, 1) * 0.15 +
+            Math.min(nextAvgRejectedSlippageBps / 500, 1) * 0.1,
+        ),
+      );
+      const stressScore = Math.max(
+        0,
+        Math.min(
+          1,
+          currentExecutionQuality.stressScore * (1 - EXECUTION_QUALITY_STRESS_EMA_ALPHA) +
+            sampleStressScore * EXECUTION_QUALITY_STRESS_EMA_ALPHA,
+        ),
+      );
+
+      nextExecutionQuality = {
+        resolvedOrderCount,
+        filledOrderCount,
+        rejectedOrderCount,
+        timedOutOrderCount,
+        slippageRejectedOrderCount,
+        avgFilledPriceImpactBps: nextAvgFilledPriceImpactBps,
+        avgRejectedSlippageBps: nextAvgRejectedSlippageBps,
+        fillRate,
+        rejectionRate,
+        stressScore,
+      };
+    }
+
+    return nextExecutionQuality;
+  }
+
+  /**
    * Create an empty population-level seat position.
    */
   private createEmptyPopulation(market: MarketKey, qmons: readonly Qmon[]): QmonPopulation {
@@ -919,6 +1024,7 @@ export class QmonEngine {
       seatLastCloseTimestamp: null,
       seatLastWindowStartMs: null,
       seatLastSettledWindowStartMs: null,
+      executionQuality: this.createDefaultExecutionQuality(),
       realWalkForwardGate: {
         isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
         isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
@@ -954,6 +1060,7 @@ export class QmonEngine {
           seatLastCloseTimestamp: null,
           seatLastWindowStartMs: null,
           seatLastSettledWindowStartMs: null,
+          executionQuality: this.createDefaultExecutionQuality(),
           realWalkForwardGate: {
             isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
             isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
@@ -1517,6 +1624,23 @@ export class QmonEngine {
   }
 
   /**
+   * Quarantine strategies that have accumulated enough evidence of persistent underperformance.
+   */
+  private shouldQuarantineStrategy(qmon: Qmon): boolean {
+    let shouldQuarantine = false;
+
+    if (qmon.windowsLived >= PERFORMANCE_QUARANTINE_MIN_WINDOWS && qmon.metrics.totalTrades >= PERFORMANCE_QUARANTINE_MIN_TRADES) {
+      shouldQuarantine =
+        (qmon.metrics.fitnessScore ?? 0) < 0 &&
+        qmon.metrics.paperWindowPnlSum < 0 &&
+        qmon.metrics.paperLongWindowPnlSum < 0 &&
+        qmon.metrics.winRate <= PERFORMANCE_QUARANTINE_MAX_WIN_RATE;
+    }
+
+    return shouldQuarantine;
+  }
+
+  /**
    * Compute weighted score from signal genes and current signal values.
    * Uses horizon-aware weights for multi-horizon signals.
    *
@@ -1839,13 +1963,26 @@ export class QmonEngine {
     signalValues: Record<string, number | null | Record<string, number | null>>,
     firedTriggerIds: readonly string[],
     limitPrice: number | null,
+    executionQuality: QmonExecutionQuality | undefined,
   ): TradeabilityAssessment {
     const spreadSignalValue = this.getScalarSignalValue(signalValues, "spread") ?? 0;
     const bookDepthSignalValue = this.getScalarSignalValue(signalValues, "bookDepth") ?? 0;
     const imbalanceSignalValue = this.getScalarSignalValue(signalValues, "imbalance") ?? 0;
+    const marketStressEvidence = Math.min((executionQuality?.resolvedOrderCount ?? 0) / EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE, 1);
+    const marketStressScore = (executionQuality?.stressScore ?? 0) * marketStressEvidence;
+    const qmonFeeRatio = Math.max(qmon.metrics.feeRatio ?? 0, 0);
+    const qmonRecentSlippageBps = Math.max(qmon.metrics.recentAvgSlippageBps ?? 0, 0);
+    const qmonStressScore = Math.max(0, Math.min(1, qmonFeeRatio * 0.8 + Math.min(qmonRecentSlippageBps / 200, 1) * 0.2));
+    const combinedStressScore = Math.max(marketStressScore, qmonStressScore);
     const directionMultiplier = action === "BUY_UP" ? 1 : -1;
-    const adjustedFillQuality = Math.max(0, Math.min(1, 0.5 + bookDepthSignalValue * 0.35 - Math.max(spreadSignalValue, 0) * 0.3));
-    const predictedSlippageBps = Math.max(5, 30 + Math.max(spreadSignalValue, 0) * 80 - bookDepthSignalValue * 25);
+    const adjustedFillQuality = Math.max(
+      0,
+      Math.min(1, 0.5 + bookDepthSignalValue * 0.35 - Math.max(spreadSignalValue, 0) * 0.3 - combinedStressScore * EXECUTION_QUALITY_STRESS_FILL_QUALITY),
+    );
+    const predictedSlippageBps = Math.max(
+      5,
+      30 + Math.max(spreadSignalValue, 0) * 80 - bookDepthSignalValue * 25 + combinedStressScore * EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS,
+    );
     const edgeSignalValue = this.getScalarSignalValue(signalValues, "edge") ?? 0;
     const distanceSignalValue = this.getScalarSignalValue(signalValues, "distance") ?? 0;
     const directionalProbEdge = directionalAlphaResult.directionalAlpha * 0.12;
@@ -1861,8 +1998,8 @@ export class QmonEngine {
     const spreadPenaltyUsd = baseShareCount === null || limitPrice === null ? 0 : Math.max(0, spreadSignalValue) * baseShareCount * limitPrice * 0.15;
     const entryPolicy = this.getQmonEntryPolicy(qmon);
     const hasRelevantTrigger = firedTriggerIds.some((triggerId) => this.getQmonEnabledTriggerIds(qmon).includes(triggerId));
-    const minimumEdgeBps = Math.max(entryPolicy.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS);
-    const minimumNetEvUsd = Math.max(entryPolicy.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD);
+    const minimumEdgeBps = Math.max(entryPolicy.minEdgeBps ?? 25, config.QMON_MIN_ENTRY_EDGE_BPS) + combinedStressScore * EXECUTION_QUALITY_STRESS_EDGE_BPS;
+    const minimumNetEvUsd = Math.max(entryPolicy.minNetEvUsd ?? 0.05, config.QMON_MIN_ENTRY_NET_EV_USD) + combinedStressScore * EXECUTION_QUALITY_STRESS_NET_EV_USD;
     const minimumFillQuality = Math.max(entryPolicy.minFillQuality ?? 0.45, config.QMON_MIN_ENTRY_FILL_QUALITY);
     const minimumConfirmations = Math.max(entryPolicy.minConfirmations ?? 2, config.QMON_MIN_ENTRY_CONFIRMATIONS);
     const maximumSlippageBps = Math.min(
@@ -1933,6 +2070,7 @@ export class QmonEngine {
     directionRegime: DirectionRegimeValue,
     volatilityRegime: VolatilityRegimeValue,
     timeSegment: TimeSegment,
+    executionQuality: QmonExecutionQuality | undefined,
   ): { action: TradingAction; tradeabilityAssessment: TradeabilityAssessment } {
     const directionalAlphaResult = this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment);
     const action: TradingAction =
@@ -1954,7 +2092,7 @@ export class QmonEngine {
             tradeabilityRejectReason: "alpha-below-threshold",
             shouldAllowEntry: false,
           }
-        : this.assessTradeability(qmon, action, directionalAlphaResult, signalValues, firedTriggerIds, limitPrice);
+        : this.assessTradeability(qmon, action, directionalAlphaResult, signalValues, firedTriggerIds, limitPrice, executionQuality);
 
     return {
       action,
@@ -2351,9 +2489,10 @@ export class QmonEngine {
     const pendingOrder = qmon.pendingOrder;
     let updatedQmon = qmon;
     let shouldSkipEvaluation = false;
+    let executionQualitySample: ExecutionQualitySample | null = null;
 
     if (pendingOrder === null) {
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     if (this.executionService.hasPendingOrderExpiredAtMarketEnd(pendingOrder, now)) {
@@ -2364,12 +2503,20 @@ export class QmonEngine {
       };
       this.markStateMutation(true);
       shouldSkipEvaluation = pendingOrder.kind === "entry";
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      executionQualitySample = {
+        wasFilled: false,
+        wasRejected: true,
+        wasTimedOut: true,
+        wasSlippageRejected: false,
+        filledPriceImpactBps: null,
+        rejectedSlippageBps: null,
+      };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     if (!this.executionService.canCheckPendingOrder()) {
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     const tokenBook = this.executionService.getTokenBook(asset, window, pendingOrder.action, snapshots ?? this.snapshots);
@@ -2379,7 +2526,7 @@ export class QmonEngine {
 
     if (!this.executionService.hasPendingOrderReachedCheckTime(pendingOrder, fillResult, now)) {
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     if (fillResult.filledShares <= 0 || fillResult.averagePrice === null) {
@@ -2390,9 +2537,17 @@ export class QmonEngine {
           pendingOrder: null,
         };
         this.markStateMutation(true);
+        executionQualitySample = {
+          wasFilled: false,
+          wasRejected: true,
+          wasTimedOut: true,
+          wasSlippageRejected: false,
+          filledPriceImpactBps: null,
+          rejectedSlippageBps: null,
+        };
       }
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     if (this.executionService.shouldRequireFullFill(pendingOrder) && fillResult.remainingShares > 0) {
@@ -2403,9 +2558,17 @@ export class QmonEngine {
           pendingOrder: null,
         };
         this.markStateMutation(true);
+        executionQualitySample = {
+          wasFilled: false,
+          wasRejected: true,
+          wasTimedOut: true,
+          wasSlippageRejected: false,
+          filledPriceImpactBps: null,
+          rejectedSlippageBps: null,
+        };
       }
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     if (pendingOrder.kind === "entry" && !this.executionService.isEntryFillValid(fillResult)) {
@@ -2421,8 +2584,16 @@ export class QmonEngine {
         pendingOrder: null,
       };
       this.markStateMutation(true);
+      executionQualitySample = {
+        wasFilled: false,
+        wasRejected: true,
+        wasTimedOut: false,
+        wasSlippageRejected: false,
+        filledPriceImpactBps: null,
+        rejectedSlippageBps: null,
+      };
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     const rejectedSlippageBps = this.executionService.shouldRejectFillForSlippage(qmon.genome.maxSlippageBps, pendingOrder, fillResult);
@@ -2440,11 +2611,31 @@ export class QmonEngine {
         pendingOrder: null,
       };
       this.markStateMutation(true);
+      executionQualitySample = {
+        wasFilled: false,
+        wasRejected: true,
+        wasTimedOut: false,
+        wasSlippageRejected: true,
+        filledPriceImpactBps: null,
+        rejectedSlippageBps,
+      };
       shouldSkipEvaluation = true;
-      return { qmon: updatedQmon, shouldSkipEvaluation };
+      return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
     }
 
     this.logPaperOrderFill(qmon.id, pendingOrder, fillResult, isSeat);
+    executionQualitySample = {
+      wasFilled: true,
+      wasRejected: false,
+      wasTimedOut: false,
+      wasSlippageRejected: false,
+      filledPriceImpactBps: this.executionService.calculatePriceImpactBps(
+        pendingOrder.action === "BUY_UP" || pendingOrder.action === "BUY_DOWN" ? fillResult.bestAsk : fillResult.bestBid,
+        fillResult.averagePrice,
+        pendingOrder.action,
+      ),
+      rejectedSlippageBps: null,
+    };
 
     if (pendingOrder.kind === "entry") {
       updatedQmon = this.applyEntryFill(qmon, pendingOrder, fillResult, now);
@@ -2510,7 +2701,7 @@ export class QmonEngine {
       shouldSkipEvaluation = true;
     }
 
-    return { qmon: updatedQmon, shouldSkipEvaluation };
+    return { qmon: updatedQmon, shouldSkipEvaluation, executionQualitySample };
   }
 
   /**
@@ -2802,7 +2993,15 @@ export class QmonEngine {
     const seatResults: EvaluationResult[] = [];
     const seatProcessing = this.processPendingOrder(seatProxyQmon, asset, window, now, market, seatResults, snapshots, true);
     const seatPnlDelta = seatProcessing.qmon.metrics.totalPnl;
-    const updatedPopulation = this.syncSeatState(population, seatProcessing.qmon, seatPnlDelta, population.seatLastSettledWindowStartMs);
+    const updatedPopulation = this.syncSeatState(
+      {
+        ...population,
+        executionQuality: this.updateExecutionQuality(population.executionQuality, seatProcessing.executionQualitySample),
+      },
+      seatProcessing.qmon,
+      seatPnlDelta,
+      population.seatLastSettledWindowStartMs,
+    );
 
     return {
       population: updatedPopulation,
@@ -2943,7 +3142,15 @@ export class QmonEngine {
       return updatedPopulation;
     }
 
-    const championEvaluation = this.evaluateQmon(championQmon, marketSignals, firedTriggerIds, directionRegime, volatilityRegime, timeSegment);
+    const championEvaluation = this.evaluateQmon(
+      championQmon,
+      marketSignals,
+      firedTriggerIds,
+      directionRegime,
+      volatilityRegime,
+      timeSegment,
+      updatedPopulation.executionQuality,
+    );
 
     if (championEvaluation.action !== "HOLD") {
       if (updatedPopulation.seatPosition.action !== null) {
@@ -3232,6 +3439,7 @@ export class QmonEngine {
     const results: EvaluationResult[] = [];
     const updatedQmons: Qmon[] = [];
     const signalSnapshots = snapshots === undefined ? undefined : this.getLaggedSignalSnapshots(snapshots);
+    let currentExecutionQuality = population.executionQuality ?? this.createDefaultExecutionQuality();
 
     const now = Date.now();
     const marketEndTime = windowData?.prices.marketEndMs ?? null;
@@ -3262,6 +3470,7 @@ export class QmonEngine {
 
       const pendingOrderProcessing = this.processPendingOrder(qmon, asset, window, now, market, results, snapshots);
       qmon = pendingOrderProcessing.qmon;
+      currentExecutionQuality = this.updateExecutionQuality(currentExecutionQuality, pendingOrderProcessing.executionQualitySample);
 
       if (pendingOrderProcessing.shouldSkipEvaluation) {
         updatedQmons.push(qmon);
@@ -3317,7 +3526,15 @@ export class QmonEngine {
       }
       qmonForEval = tradeLimitCheck.qmon;
 
-      const result = this.evaluateQmon(qmonForEval, marketSignals, firedTriggerIds, regime?.direction ?? "flat", regime?.volatility ?? "normal", timeSegment);
+      const result = this.evaluateQmon(
+        qmonForEval,
+        marketSignals,
+        firedTriggerIds,
+        regime?.direction ?? "flat",
+        regime?.volatility ?? "normal",
+        timeSegment,
+        currentExecutionQuality,
+      );
 
       if (result.action !== "HOLD") {
         const priceToBeat = windowData?.prices.priceToBeat ?? null;
@@ -3362,6 +3579,7 @@ export class QmonEngine {
       ...population,
       qmons: updatedQmons,
       marketPaperSessionPnl: population.marketPaperSessionPnl + this.getPaperSessionPnlDelta(population, updatedQmons),
+      executionQuality: currentExecutionQuality,
       lastUpdated: now,
     };
     updatedPopulation = this.normalizePopulationExecutionRuntime(updatedPopulation, resolvedEvaluationOptions.executionMode);
@@ -3776,6 +3994,7 @@ export class QmonEngine {
     directionRegime: DirectionRegimeValue,
     volatilityRegime: VolatilityRegimeValue,
     timeSegment: TimeSegment,
+    executionQuality?: QmonExecutionQuality,
   ): EvaluationResult {
     const timeGate = this.checkTimeGate(qmon, timeSegment);
     const regimeGate = this.checkRegimeGate(qmon, directionRegime, volatilityRegime);
@@ -3831,6 +4050,23 @@ export class QmonEngine {
       };
     }
 
+    if (this.shouldQuarantineStrategy(qmon)) {
+      return {
+        qmonId: qmon.id,
+        action: "HOLD",
+        score: 0,
+        directionalAlpha: 0,
+        estimatedNetEvUsd: 0,
+        tradeabilityRejectReason: "performance-gate-blocked",
+        gates: {
+          trigger: triggerGate.passed,
+          time: timeGate.passed,
+          regime: regimeGate.passed,
+          threshold: false,
+        },
+      };
+    }
+
     const selectedAction =
       this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment).directionalAlpha >= (this.getQmonMinScoreBuy(qmon) ?? 0.25)
         ? "BUY_UP"
@@ -3846,6 +4082,7 @@ export class QmonEngine {
       directionRegime,
       volatilityRegime,
       timeSegment,
+      executionQuality,
     );
     const thresholdPassed = entryDecision.action !== "HOLD" && entryDecision.tradeabilityAssessment.shouldAllowEntry;
     const directionalAlpha = entryDecision.tradeabilityAssessment.directionalAlpha;

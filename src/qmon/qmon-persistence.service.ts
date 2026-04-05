@@ -13,6 +13,7 @@ import { join } from "node:path";
 import config from "../config.ts";
 import { generateQmonId } from "./qmon-genome.service.ts";
 import type {
+  QmonExecutionQuality,
   MarketKey,
   Qmon,
   QmonExecutionRoute,
@@ -163,6 +164,21 @@ export class QmonPersistenceService {
     return executionRuntime;
   }
 
+  private createDefaultExecutionQuality(): QmonExecutionQuality {
+    return {
+      resolvedOrderCount: 0,
+      filledOrderCount: 0,
+      rejectedOrderCount: 0,
+      timedOutOrderCount: 0,
+      slippageRejectedOrderCount: 0,
+      avgFilledPriceImpactBps: 0,
+      avgRejectedSlippageBps: 0,
+      fillRate: 0,
+      rejectionRate: 0,
+      stressScore: 0,
+    };
+  }
+
   private resolveExecutionState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
     let executionState: QmonExecutionRuntime["executionState"] = "paper";
 
@@ -278,6 +294,7 @@ export class QmonPersistenceService {
     const normalizedPopulation: QmonPopulation = {
       ...population,
       marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
+      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
       executionRuntime: this.normalizeExecutionRuntime(population, route, legacyLiveExecutionState),
     };
 
@@ -331,6 +348,7 @@ export class QmonPersistenceService {
       ...population,
       qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
       marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
+      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
     };
 
     return sanitizedPopulation;
@@ -374,6 +392,7 @@ export class QmonPersistenceService {
       seatLastCloseTimestamp: null,
       seatLastWindowStartMs: null,
       seatLastSettledWindowStartMs: null,
+      executionQuality: this.createDefaultExecutionQuality(),
       executionRuntime: this.createDefaultExecutionRuntime(route),
       lastUpdated: now,
     };
@@ -431,6 +450,7 @@ export class QmonPersistenceService {
         seatLastCloseTimestamp: null,
         seatLastWindowStartMs: null,
         seatLastSettledWindowStartMs: null,
+        executionQuality: this.createDefaultExecutionQuality(),
         executionRuntime: this.createDefaultExecutionRuntime("paper"),
       });
     }

@@ -523,6 +523,106 @@ test("QmonEngine deduplicates repeated trigger ids on one trade", () => {
   assert.equal(triggerBreakdown[0]?.tradeCount, 1);
 });
 
+test("QmonEngine blocks new entries when market execution quality is severely stressed", () => {
+  const stressedPopulation: QmonPopulation = {
+    ...createPopulation([createQmon()]),
+    executionQuality: {
+      resolvedOrderCount: 20,
+      filledOrderCount: 8,
+      rejectedOrderCount: 12,
+      timedOutOrderCount: 4,
+      slippageRejectedOrderCount: 8,
+      avgFilledPriceImpactBps: 260,
+      avgRejectedSlippageBps: 540,
+      fillRate: 0.4,
+      rejectionRate: 0.6,
+      stressScore: 1,
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(stressedPopulation), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.3, 0.7)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.3, 0.7, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
+test("QmonEngine ignores stressed execution quality until there is enough market evidence", () => {
+  const lowEvidencePopulation: QmonPopulation = {
+    ...createPopulation([createQmon()]),
+    executionQuality: {
+      resolvedOrderCount: 2,
+      filledOrderCount: 0,
+      rejectedOrderCount: 2,
+      timedOutOrderCount: 1,
+      slippageRejectedOrderCount: 2,
+      avgFilledPriceImpactBps: 0,
+      avgRejectedSlippageBps: 540,
+      fillRate: 0,
+      rejectionRate: 1,
+      stressScore: 1,
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(lowEvidencePopulation), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const openedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(openedQmon.position.action, "BUY_UP");
+  assert.equal(openedQmon.pendingOrder, null);
+  assert.equal(openedQmon.decisionHistory.length, 1);
+});
+
+test("QmonEngine quarantines persistently underperforming strategies", () => {
+  const underperformingQmon: Qmon = {
+    ...createQmon(),
+    windowsLived: 8,
+    paperWindowPnls: [-1, -1, -0.5, -0.3, -0.2, -0.4],
+    metrics: {
+      ...createQmon().metrics,
+      totalTrades: 8,
+      totalPnl: -4,
+      fitnessScore: -25,
+      paperWindowPnlSum: -3.4,
+      paperLongWindowPnlSum: -3.4,
+      winRate: 0.25,
+      winCount: 2,
+      maxDrawdown: 4,
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([underperformingQmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const blockedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(blockedQmon.position.action, null);
+  assert.equal(blockedQmon.pendingOrder, null);
+  assert.equal(blockedQmon.decisionHistory.length, 0);
+});
+
 test("QmonEngine blocks entries when the current time segment is disabled", () => {
   const timeLockedQmon: Qmon = {
     ...createQmon(),
