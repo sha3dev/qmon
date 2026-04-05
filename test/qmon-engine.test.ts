@@ -104,24 +104,25 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
     id: "QMON01",
     market: MARKET_KEY,
     genome: {
-      predictiveSignalGenes: [{ signalId: "edge", orientation: "aligned", weightTier: 3 }],
-      microstructureSignalGenes: [{ signalId: "imbalance", orientation: "aligned", weightTier: 2 }],
-      signalGenes: [
-        { signalId: "edge", weights: { _default: 3 } },
-        { signalId: "imbalance", weights: { _default: 2 } },
-      ],
-      triggerGenes: [{ triggerId: "consensus-flip", isEnabled: true }],
+      beliefWeights: {
+        spotOracleAlignment: 1.2,
+        resolutionMomentum: 0.9,
+        consensusPersistence: 1,
+        microstructureStability: 0.8,
+        bookFreshness: 0.7,
+        marketDivergence: 0.5,
+      },
       timeWindowGenes: [true, true, true],
       directionRegimeGenes: [true, true, true],
       volatilityRegimeGenes: [true, true, true],
       exchangeWeights: [0.25, 0.25, 0.25, 0.25],
       entryPolicy: {
-        minEdgeBps: 10,
-        minNetEvUsd: 0.01,
-        minConfirmations: 1,
+        confidenceThreshold: 0.6,
+        confirmationRequirement: 2,
         maxSpreadPenaltyBps: 100,
         maxSlippageBps: 1_500,
         minFillQuality: 0.2,
+        uncertaintyTolerance: 0.55,
       },
       executionPolicy: {
         sizeTier: 2,
@@ -129,16 +130,10 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
         cooldownProfile: "tight",
       },
       exitPolicy: {
-        extremeStopLossPct: 0.3,
-        extremeTakeProfitPct: 0.5,
-        thesisInvalidationPolicy: "hybrid",
+        thesisCollapseProbability: 0.4,
+        extremeDrawdownPct: 0.85,
       },
-      maxTradesPerWindow: 2,
-      maxSlippageBps: 1_500,
-      minScoreBuy: 0.7,
-      minScoreSell: 0.7,
-      stopLossPct: 0.3,
-      takeProfitPct: 0.5,
+      riskBudgetUsd: 1,
     },
     role,
     lifecycle: "active",
@@ -191,7 +186,7 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
 
 function createPresetQmon(): Qmon {
   const presetStrategyService = QmonPresetStrategyService.createDefault();
-  const presetStrategyDefinition = presetStrategyService.getPresetStrategyDefinition("edge-distance-confluence-01");
+  const presetStrategyDefinition = presetStrategyService.getPresetStrategyDefinition("divergence-capture-01");
 
   if (presetStrategyDefinition === null) {
     throw new Error("expected preset strategy definition");

@@ -14,18 +14,6 @@ export type MarketKey = `${string}-${string}`;
 
 export type HorizonLabel = "30s" | "2m" | "5m";
 
-export type TriggerGene = {
-  readonly triggerId: string;
-  readonly isEnabled: boolean;
-};
-
-export type SignalWeights = Readonly<Partial<Record<HorizonLabel | "_default", number>>>;
-
-export type SignalGene = {
-  readonly signalId: string;
-  readonly weights: SignalWeights;
-};
-
 export type TimeWindowGenes = readonly [boolean, boolean, boolean];
 
 export type DirectionRegimeGenes = readonly [boolean, boolean, boolean];
@@ -38,30 +26,23 @@ export type MicrostructureSignalId = "imbalance" | "microprice" | "bookDepth" | 
 
 export type QmonSignalId = PredictiveSignalId | MicrostructureSignalId;
 
-export type SignalOrientation = "aligned" | "inverse";
+export type BeliefKey =
+  | "spotOracleAlignment"
+  | "resolutionMomentum"
+  | "consensusPersistence"
+  | "microstructureStability"
+  | "bookFreshness"
+  | "marketDivergence";
 
-export type SignalWeightTier = 1 | 2 | 3;
-
-export type PredictiveSignalGene = {
-  readonly signalId: PredictiveSignalId;
-  readonly orientation: SignalOrientation;
-  readonly weightTier: SignalWeightTier;
-};
-
-export type MicrostructureSignalGene = {
-  readonly signalId: MicrostructureSignalId;
-  readonly orientation: SignalOrientation;
-  readonly weightTier: SignalWeightTier;
-};
+export type BeliefWeights = Readonly<Record<BeliefKey, number>>;
 
 export type EntryPolicy = {
-  readonly minEdgeBps: number;
-  readonly minNetEvUsd: number;
-  readonly minConfirmations: number;
+  readonly confidenceThreshold: number;
+  readonly confirmationRequirement: number;
   readonly maxSpreadPenaltyBps: number;
   readonly maxSlippageBps: number;
   readonly minFillQuality: number;
-  readonly allowNoTrigger: boolean; // Legacy compatibility field; runtime entry logic now enforces a hard trigger gate.
+  readonly uncertaintyTolerance: number;
 };
 
 export type ExecutionSizeTier = 1 | 2 | 3;
@@ -74,21 +55,13 @@ export type ExecutionPolicy = {
   readonly cooldownProfile: CooldownProfile;
 };
 
-export type ThesisInvalidationPolicy = "alpha-flip" | "microstructure-failure" | "hybrid";
-
 export type ExitPolicy = {
-  readonly extremeStopLossPct: number;
-  readonly extremeTakeProfitPct: number;
-  readonly thesisInvalidationPolicy: ThesisInvalidationPolicy;
-  readonly thesisCollapseProbability?: number;
-  readonly extremeDrawdownPct?: number;
+  readonly thesisCollapseProbability: number;
+  readonly extremeDrawdownPct: number;
 };
 
 export type QmonGenome = {
-  readonly predictiveSignalGenes: readonly PredictiveSignalGene[];
-  readonly microstructureSignalGenes: readonly MicrostructureSignalGene[];
-  readonly signalGenes: readonly SignalGene[];
-  readonly triggerGenes: readonly TriggerGene[];
+  readonly beliefWeights: BeliefWeights;
   readonly timeWindowGenes: TimeWindowGenes;
   readonly directionRegimeGenes: DirectionRegimeGenes;
   readonly volatilityRegimeGenes: VolatilityRegimeGenes;
@@ -96,12 +69,7 @@ export type QmonGenome = {
   readonly entryPolicy: EntryPolicy;
   readonly executionPolicy: ExecutionPolicy;
   readonly exitPolicy: ExitPolicy;
-  readonly maxTradesPerWindow: number;
-  readonly maxSlippageBps: number;
-  readonly minScoreBuy: number;
-  readonly minScoreSell: number;
-  readonly stopLossPct: number;
-  readonly takeProfitPct: number;
+  readonly riskBudgetUsd: number;
 };
 
 export type TradingAction = "BUY_UP" | "BUY_DOWN" | "HOLD";
@@ -419,30 +387,12 @@ export type QmonPresetStrategyDefinition = {
   readonly presetFamily: string;
   readonly strategyName: string;
   readonly strategyDescription: string;
-  readonly triggerIds: readonly string[];
+  readonly beliefWeights: BeliefWeights;
   readonly timeWindowGenes: TimeWindowGenes;
   readonly directionRegimeGenes: DirectionRegimeGenes;
   readonly volatilityRegimeGenes: VolatilityRegimeGenes;
   readonly entryPolicy: EntryPolicy;
   readonly executionPolicy: ExecutionPolicy;
   readonly exitPolicy: ExitPolicy;
-  readonly minScoreBuy: number;
-  readonly minScoreSell: number;
-  readonly minSignalCount: number;
-  readonly anchorPrice: number;
-  readonly slopeThreshold: number;
-  readonly edgeThreshold: number;
-  readonly distanceThreshold: number;
-  readonly spreadLimit: number;
-  readonly depthThreshold: number;
-  readonly imbalanceThreshold: number;
-  readonly stalenessLimit: number;
-  readonly pressureThreshold: number;
-  readonly alphaScale: number;
-};
-
-export type QmonPresetSignalEvaluation = {
-  readonly directionalAlpha: number;
-  readonly signalAgreementCount: number;
-  readonly dominantSignalGroup: DominantSignalGroup;
+  readonly riskBudgetUsd: number;
 };

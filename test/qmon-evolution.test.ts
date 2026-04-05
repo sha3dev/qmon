@@ -309,8 +309,8 @@ test("QmonEvolutionService never uses preset QMONs as parents and never replaces
     strategyKind: "preset",
     strategyName: "Preset Control",
     strategyDescription: "Preset strategy that must stay immutable in evolution.",
-    presetStrategyId: "late-threshold-sprint-01",
-    presetFamily: "late-threshold-sprint",
+    presetStrategyId: "consensus-resolver-01",
+    presetFamily: "consensus-resolver",
   });
   const weakPreset = createQmon(seededGenome, {
     id: "PRESET02",
@@ -324,8 +324,8 @@ test("QmonEvolutionService never uses preset QMONs as parents and never replaces
     strategyKind: "preset",
     strategyName: "Preset Loser",
     strategyDescription: "Preset strategy that must not be replaced by evolution.",
-    presetStrategyId: "late-threshold-sprint-02",
-    presetFamily: "late-threshold-sprint",
+    presetStrategyId: "consensus-resolver-02",
+    presetFamily: "consensus-resolver",
   });
   const geneticParent = createQmon(seededGenome, {
     id: "GEN01",
@@ -379,15 +379,11 @@ test("QmonEvolutionService never uses preset QMONs as parents and never replaces
   );
 });
 
-test("QmonEvolutionService biases offspring trigger and regime genes toward profitable parent breakdowns", () => {
+test("QmonEvolutionService biases offspring regime genes while keeping settlement genomes belief-driven", () => {
   const genomeService = QmonGenomeService.createDefault();
   const evolutionService = new QmonEvolutionService(genomeService);
   const parentGenome = {
     ...genomeService.generateSeededGenome("balanced"),
-    triggerGenes: genomeService.generateSeededGenome("balanced").triggerGenes.map((triggerGene) => ({
-      ...triggerGene,
-      isEnabled: triggerGene.triggerId === "consensus-flip",
-    })),
     directionRegimeGenes: [true, true, true] as const,
     volatilityRegimeGenes: [true, true, true] as const,
   };
@@ -444,7 +440,7 @@ test("QmonEvolutionService biases offspring trigger and regime genes toward prof
   const childQmon = evolutionResult.population.qmons.find((qmon) => qmon.id !== "PARENT_A" && qmon.id !== "PARENT_B");
 
   assert.ok(childQmon);
-  assert.equal(childQmon.genome.triggerGenes.some((triggerGene) => triggerGene.triggerId === "mispricing" && triggerGene.isEnabled), true);
+  assert.equal(Object.values(childQmon.genome.beliefWeights).some((beliefWeight) => Math.abs(beliefWeight) >= 0.25), true);
   assert.deepEqual(childQmon.genome.directionRegimeGenes, [false, false, true]);
   assert.deepEqual(childQmon.genome.volatilityRegimeGenes, [false, true, false]);
 });

@@ -31,7 +31,7 @@ import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMark
 
 const FAMILY_STATE_FILENAME = "family-state.json";
 const FAMILY_STATE_BACKUP_DIRNAME = "family-state-backups";
-const FAMILY_STATE_SCHEMA_VERSION = 2;
+const FAMILY_STATE_SCHEMA_VERSION = 3;
 
 /**
  * @section class

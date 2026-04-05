@@ -37,24 +37,25 @@ function createFamilyState(): QmonFamilyState {
             id: "QMON01",
             market: "btc-5m",
             genome: {
-              predictiveSignalGenes: [{ signalId: "edge", orientation: "aligned", weightTier: 2 }],
-              microstructureSignalGenes: [{ signalId: "imbalance", orientation: "aligned", weightTier: 1 }],
-              signalGenes: [
-                { signalId: "edge", weights: { _default: 2 } },
-                { signalId: "imbalance", weights: { _default: 1 } },
-              ],
-              triggerGenes: [{ triggerId: "consensus-flip", isEnabled: true }],
+              beliefWeights: {
+                spotOracleAlignment: 1.1,
+                resolutionMomentum: 0.8,
+                consensusPersistence: 0.9,
+                microstructureStability: 0.7,
+                bookFreshness: 0.6,
+                marketDivergence: 0.5,
+              },
               timeWindowGenes: [true, true, true],
               directionRegimeGenes: [true, true, true],
               volatilityRegimeGenes: [true, true, true],
               exchangeWeights: [0.25, 0.25, 0.25, 0.25],
               entryPolicy: {
-                minEdgeBps: 25,
-                minNetEvUsd: 0.05,
-                minConfirmations: 2,
+                confidenceThreshold: 0.6,
+                confirmationRequirement: 2,
                 maxSpreadPenaltyBps: 40,
                 maxSlippageBps: 300,
                 minFillQuality: 0.45,
+                uncertaintyTolerance: 0.45,
               },
               executionPolicy: {
                 sizeTier: 2,
@@ -62,16 +63,10 @@ function createFamilyState(): QmonFamilyState {
                 cooldownProfile: "balanced",
               },
               exitPolicy: {
-                extremeStopLossPct: 0.3,
-                extremeTakeProfitPct: 0.5,
-                thesisInvalidationPolicy: "hybrid",
+                thesisCollapseProbability: 0.4,
+                extremeDrawdownPct: 0.85,
               },
-              maxTradesPerWindow: 2,
-              maxSlippageBps: 300,
-              minScoreBuy: 0.5,
-              minScoreSell: 0.4,
-              stopLossPct: 0.3,
-              takeProfitPct: 0.5,
+              riskBudgetUsd: 1,
             },
             role: "champion",
             lifecycle: "active",
@@ -206,7 +201,7 @@ test("QmonPersistenceService round-trips the family state through a single atomi
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.grossAlphaCapture, 1.25);
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.regimeBreakdown?.[0]?.regime, "regime:flat|normal");
     assert.equal(loadedState.populations[0]?.qmons[0]?.metrics.triggerBreakdown?.[0]?.triggerId, "consensus-flip");
-    assert.equal(loadedState.strategySchemaVersion, 2);
+    assert.equal(loadedState.strategySchemaVersion, 3);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

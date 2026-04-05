@@ -34,7 +34,6 @@ type EvolutionResult = {
 type HydrateNewbornQmon = (newbornQmon: Qmon, currentWindowStartMs: number | null) => Qmon;
 
 type ParentPerformanceGuidance = {
-  readonly triggerIds: readonly string[];
   readonly directionRegimeGenes: readonly [boolean, boolean, boolean] | null;
   readonly volatilityRegimeGenes: readonly [boolean, boolean, boolean] | null;
 };
@@ -259,25 +258,6 @@ export class QmonEvolutionService {
     };
   }
 
-  private collectProfitableTriggerIds(parentQmons: readonly Qmon[]): readonly string[] {
-    const triggerPnlById = new Map<string, number>();
-
-    for (const parentQmon of parentQmons) {
-      for (const triggerSlice of parentQmon.metrics.triggerBreakdown ?? []) {
-        if (triggerSlice.tradeCount > 0 && triggerSlice.totalPnl > 0 && !triggerSlice.triggerId.startsWith("regime:")) {
-          triggerPnlById.set(triggerSlice.triggerId, (triggerPnlById.get(triggerSlice.triggerId) ?? 0) + triggerSlice.totalPnl);
-        }
-      }
-    }
-
-    const triggerIds = [...triggerPnlById.entries()]
-      .sort((leftEntry, rightEntry) => rightEntry[1] - leftEntry[1])
-      .slice(0, 2)
-      .map((triggerEntry) => triggerEntry[0]);
-
-    return triggerIds;
-  }
-
   private collectProfitableRegimeGenes(parentQmons: readonly Qmon[]): {
     readonly directionRegimeGenes: readonly [boolean, boolean, boolean] | null;
     readonly volatilityRegimeGenes: readonly [boolean, boolean, boolean] | null;
@@ -324,7 +304,6 @@ export class QmonEvolutionService {
     const parentQmons = [parentAQmon, parentBQmon];
     const regimeGenes = this.collectProfitableRegimeGenes(parentQmons);
     const parentPerformanceGuidance: ParentPerformanceGuidance = {
-      triggerIds: this.collectProfitableTriggerIds(parentQmons),
       directionRegimeGenes: regimeGenes.directionRegimeGenes,
       volatilityRegimeGenes: regimeGenes.volatilityRegimeGenes,
     };
@@ -332,23 +311,9 @@ export class QmonEvolutionService {
     return parentPerformanceGuidance;
   }
 
-  private applyTriggerGuidance(triggerGenes: readonly QmonGenome["triggerGenes"][number][], triggerIds: readonly string[]): readonly QmonGenome["triggerGenes"][number][] {
-    let guidedTriggerGenes = triggerGenes.map((triggerGene) => ({ ...triggerGene }));
-
-    if (triggerIds.length > 0) {
-      guidedTriggerGenes = guidedTriggerGenes.map((triggerGene) => ({
-        ...triggerGene,
-        isEnabled: triggerIds.includes(triggerGene.triggerId),
-      }));
-    }
-
-    return guidedTriggerGenes;
-  }
-
   private applyParentPerformanceGuidance(offspringGenome: QmonGenome, parentPerformanceGuidance: ParentPerformanceGuidance): QmonGenome {
     const guidedGenome: QmonGenome = {
       ...offspringGenome,
-      triggerGenes: this.applyTriggerGuidance(offspringGenome.triggerGenes, parentPerformanceGuidance.triggerIds),
       timeWindowGenes: offspringGenome.timeWindowGenes,
       directionRegimeGenes: parentPerformanceGuidance.directionRegimeGenes ?? offspringGenome.directionRegimeGenes,
       volatilityRegimeGenes: parentPerformanceGuidance.volatilityRegimeGenes ?? offspringGenome.volatilityRegimeGenes,
@@ -470,28 +435,27 @@ export class QmonEvolutionService {
     let differences = 0;
     let totalComparisons = 0;
 
-    // Compare signal genes
-    const signalsA = new Set(genomeA.predictiveSignalGenes.map((g: { signalId: string; orientation: string; weightTier: number }) => `${g.signalId}-${g.orientation}-${g.weightTier}`));
-    const signalsB = new Set(genomeB.predictiveSignalGenes.map((g: { signalId: string; orientation: string; weightTier: number }) => `${g.signalId}-${g.orientation}-${g.weightTier}`));
-    const signalUnion = new Set([...signalsA, ...signalsB]);
-    signalUnion.forEach((key) => {
+    for (const beliefKey of Object.keys(genomeA.beliefWeights)) {
       totalComparisons += 1;
-      if (!signalsA.has(key) || !signalsB.has(key)) differences += 1;
-    });
 
-    // Compare trigger genes
-    const triggersA = new Set(genomeA.triggerGenes.filter((t: { isEnabled: boolean }) => t.isEnabled).map((t: { triggerId: string }) => t.triggerId));
-    const triggersB = new Set(genomeB.triggerGenes.filter((t: { isEnabled: boolean }) => t.isEnabled).map((t: { triggerId: string }) => t.triggerId));
-    const triggerUnion = new Set([...triggersA, ...triggersB]);
-    triggerUnion.forEach((key) => {
-      totalComparisons += 1;
-      if (!triggersA.has(key) || !triggersB.has(key)) differences += 1;
-    });
+      if (Math.abs(genomeA.beliefWeights[beliefKey as keyof typeof genomeA.beliefWeights] - genomeB.beliefWeights[beliefKey as keyof typeof genomeB.beliefWeights]) > 0.2) {
+        differences += 1;
+      }
+    }
 
-    // Compare thresholds
-    if (Math.abs(genomeA.minScoreBuy - genomeB.minScoreBuy) > 0.1) differences += 1;
-    if (Math.abs(genomeA.minScoreSell - genomeB.minScoreSell) > 0.1) differences += 1;
-    totalComparisons += 2;
+    if (Math.abs(genomeA.entryPolicy.confidenceThreshold - genomeB.entryPolicy.confidenceThreshold) > 0.04) {
+      differences += 1;
+    }
+
+    if (Math.abs(genomeA.entryPolicy.uncertaintyTolerance - genomeB.entryPolicy.uncertaintyTolerance) > 0.08) {
+      differences += 1;
+    }
+
+    if (Math.abs(genomeA.riskBudgetUsd - genomeB.riskBudgetUsd) > 0.25) {
+      differences += 1;
+    }
+
+    totalComparisons += 3;
 
     return totalComparisons > 0 ? differences / totalComparisons : 0;
   }

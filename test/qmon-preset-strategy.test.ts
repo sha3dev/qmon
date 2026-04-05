@@ -14,26 +14,14 @@ test("QmonPresetStrategyService exposes the configured preset strategy count wit
     presetStrategyDefinitions.map((presetStrategyDefinition) =>
       JSON.stringify({
         presetFamily: presetStrategyDefinition.presetFamily,
-        triggerIds: presetStrategyDefinition.triggerIds,
+        beliefWeights: presetStrategyDefinition.beliefWeights,
         timeWindowGenes: presetStrategyDefinition.timeWindowGenes,
         directionRegimeGenes: presetStrategyDefinition.directionRegimeGenes,
         volatilityRegimeGenes: presetStrategyDefinition.volatilityRegimeGenes,
         entryPolicy: presetStrategyDefinition.entryPolicy,
         executionPolicy: presetStrategyDefinition.executionPolicy,
         exitPolicy: presetStrategyDefinition.exitPolicy,
-        minScoreBuy: presetStrategyDefinition.minScoreBuy,
-        minScoreSell: presetStrategyDefinition.minScoreSell,
-        minSignalCount: presetStrategyDefinition.minSignalCount,
-        anchorPrice: presetStrategyDefinition.anchorPrice,
-        slopeThreshold: presetStrategyDefinition.slopeThreshold,
-        edgeThreshold: presetStrategyDefinition.edgeThreshold,
-        distanceThreshold: presetStrategyDefinition.distanceThreshold,
-        spreadLimit: presetStrategyDefinition.spreadLimit,
-        depthThreshold: presetStrategyDefinition.depthThreshold,
-        imbalanceThreshold: presetStrategyDefinition.imbalanceThreshold,
-        stalenessLimit: presetStrategyDefinition.stalenessLimit,
-        pressureThreshold: presetStrategyDefinition.pressureThreshold,
-        alphaScale: presetStrategyDefinition.alphaScale,
+        riskBudgetUsd: presetStrategyDefinition.riskBudgetUsd,
       }),
     ),
   );
@@ -43,9 +31,9 @@ test("QmonPresetStrategyService exposes the configured preset strategy count wit
   assert.equal(strategyNames.size, presetStrategyDefinitions.length);
   assert.equal(strategyDescriptions.size, presetStrategyDefinitions.length);
   assert.equal(strategySignatures.size, presetStrategyDefinitions.length);
-  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "sma-crossover-follow"), true);
-  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "momentum-lookback-pulse"), true);
-  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "bollinger-zscore-reversion"), true);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "consensus-resolver"), true);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "trend-confirmation"), true);
+  assert.equal(presetStrategyDefinitions.some((presetStrategyDefinition) => presetStrategyDefinition.presetFamily === "divergence-capture"), true);
 });
 
 test("QmonPresetStrategyService builds compatibility genomes without losing strategy metadata lookup", () => {
@@ -61,6 +49,6 @@ test("QmonPresetStrategyService builds compatibility genomes without losing stra
 
   assert.ok(loadedPresetStrategyDefinition);
   assert.equal(loadedPresetStrategyDefinition.strategyName, presetStrategyDefinition.strategyName);
-  assert.equal(compatibilityGenome.entryPolicy.allowNoTrigger, false);
-  assert.equal(compatibilityGenome.triggerGenes.filter((triggerGene) => triggerGene.isEnabled).length > 0, true);
+  assert.equal(compatibilityGenome.entryPolicy.confidenceThreshold >= config.QMON_MIN_FINAL_OUTCOME_PROBABILITY - 0.06, true);
+  assert.equal(compatibilityGenome.riskBudgetUsd > 0, true);
 });

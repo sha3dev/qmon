@@ -243,8 +243,8 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.ok("strategyDescription" in firstQmon);
   assert.ok("presetStrategyId" in firstQmon);
   assert.ok("presetFamily" in firstQmon);
-  assert.ok("stopLossPct" in firstQmon.genome);
-  assert.ok("takeProfitPct" in firstQmon.genome);
+  assert.ok("beliefWeights" in firstQmon.genome);
+  assert.ok("riskBudgetUsd" in firstQmon.genome);
   assert.ok("paperWindowMedianPnl" in firstQmon.metrics);
   assert.ok("paperWindowPnlSum" in firstQmon.metrics);
   assert.ok("paperLongWindowPnlSum" in firstQmon.metrics);
