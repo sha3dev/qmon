@@ -307,6 +307,7 @@ export class QmonPersistenceService {
   private sanitizeQmonForPersistence(qmon: Qmon): Qmon {
     const sanitizedQmon: Qmon = {
       ...qmon,
+      shadowPosition: qmon.shadowPosition ?? null,
       metrics: this.normalizeQmonMetrics(qmon.metrics),
       decisionHistory: [],
     };
@@ -331,6 +332,10 @@ export class QmonPersistenceService {
       regimeBreakdown: metrics.regimeBreakdown ?? [],
       triggerBreakdown: metrics.triggerBreakdown ?? [],
       totalEstimatedNetEvUsd: metrics.totalEstimatedNetEvUsd ?? 0,
+      shadowResolvedCount: metrics.shadowResolvedCount ?? 0,
+      shadowCorrectCount: metrics.shadowCorrectCount ?? 0,
+      shadowBrierScoreSum: metrics.shadowBrierScoreSum ?? 0,
+      shadowNetPnl: metrics.shadowNetPnl ?? 0,
     };
 
     return normalizedMetrics;

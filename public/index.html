@@ -1397,11 +1397,11 @@
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);" x-show="(selectedQmon.metrics.triggerBreakdown || []).length > 0">
-          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">TRIGGER BREAKDOWN</div>
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">ENTRY DRIVER BREAKDOWN</div>
           <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead>
               <tr style="border-bottom:1px solid var(--border);">
-                <th style="text-align:left; padding:4px 6px; color:var(--text-muted); font-size:8px; font-weight:600;">TRIGGER</th>
+                <th style="text-align:left; padding:4px 6px; color:var(--text-muted); font-size:8px; font-weight:600;">DRIVER</th>
                 <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">TRADES</th>
                 <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">PNL</th>
                 <th style="text-align:right; padding:4px 4px; color:var(--text-muted); font-size:8px; font-weight:600;">EV</th>
@@ -1421,14 +1421,14 @@
         </div>
 
         <div class="modal-section" style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
-          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">SIGNAL QUALITY POLICY</div>
+          <div class="modal-section-title" style="font-size:10px; font-weight:700; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.8px; margin-bottom:8px;">ENTRY GATING MODEL</div>
           <div style="padding:8px; border-radius:4px; background:rgba(124,77,255,0.08); border:1px solid rgba(124,77,255,0.2);">
-            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">STRICT AGREEMENT + FAMILY RULES</div>
+            <div style="font-size:8px; color:var(--accent); font-weight:600; margin-bottom:3px;">BELIEF ALIGNMENT + EXECUTION FILTERS</div>
             <div style="font-size:8px; color:var(--text-secondary); line-height:1.3; margin-bottom:6px;">
-              Genetic QMONs need enough valid signal votes before alpha is accepted. Preset QMONs use fixed family rules plus the same hard trigger/time/regime gates.
+              Genetic QMONs need enough aligned belief evidence before entry is accepted. Preset QMONs inject fixed family priors and still respect the same time, regime, sizing, and execution-quality checks.
             </div>
             <div style="font-size:8px; color:var(--text-muted);">
-              <em>Walk-forward and champion readiness still decide whether a strategy is allowed to drive the seat.</em>
+              <em>Legacy discrete trigger gating is disabled. Walk-forward and champion readiness still decide whether a strategy is allowed to drive the seat.</em>
             </div>
           </div>
         </div>
@@ -3104,22 +3104,6 @@
           return `${enteredDate.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })} · ${this.timeInPosition(enteredAt)}`;
         },
 
-        sigLabel(id) {
-          const labels = {
-            'oracle-lag': 'ORA',
-            'velocity': 'VEL',
-            'momentum': 'MOM',
-            'meanReversion': 'REV',
-            'market-pressure': 'PRESS',
-            'book-pressure': 'BOOK',
-            'consensus-level': 'CONS',
-            'consensus-velocity': 'C-VEL',
-            'volatilityRegime': 'VOL',
-            'spread-widening': 'SPRD'
-          };
-          return labels[id] || id.slice(0, 6);
-        },
-
         triggerLabel(id) {
           if (!id) {
             return '—';
@@ -3156,14 +3140,6 @@
           const w = gene.weights;
           const horizonKeys = ['30s', '2m', '5m'];
           return horizonKeys.some(k => w[k] !== undefined && Math.abs(w[k]) > 0.01);
-        },
-
-        getScalarGenes(genes) {
-          return (genes || []).filter(g => !this.isHorizonGene(g) && this.isActiveGene(g.weights));
-        },
-
-        getHorizonGenes(genes) {
-          return (genes || []).filter(g => this.isHorizonGene(g));
         },
 
         getInactiveScalarCount(genes) {

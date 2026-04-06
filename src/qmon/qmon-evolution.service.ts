@@ -254,6 +254,10 @@ export class QmonEvolutionService {
       regimeBreakdown: [],
       triggerBreakdown: [],
       totalEstimatedNetEvUsd: 0,
+      shadowResolvedCount: 0,
+      shadowCorrectCount: 0,
+      shadowBrierScoreSum: 0,
+      shadowNetPnl: 0,
       lastUpdate: timestamp,
     };
   }

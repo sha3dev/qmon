@@ -43,6 +43,7 @@ import type {
   QmonPosition,
   QmonPresetStrategyDefinition,
   QmonRealWalkForwardGate,
+  QmonShadowPosition,
   QmonStrategyKind,
   RegimePerformanceSlice,
   TimeSegment,
@@ -688,6 +689,7 @@ export class QmonEngine {
       parentIds,
       createdAt: now,
       position: this.createEmptyPosition(),
+      shadowPosition: null,
       pendingOrder: null,
       metrics: this.createEmptyMetrics(now),
       decisionHistory: [],
@@ -723,6 +725,7 @@ export class QmonEngine {
       parentIds: [],
       createdAt: now,
       position: this.createEmptyPosition(),
+      shadowPosition: null,
       pendingOrder: null,
       metrics: this.createEmptyMetrics(now),
       decisionHistory: [],
@@ -812,6 +815,10 @@ export class QmonEngine {
       regimeBreakdown: [],
       triggerBreakdown: [],
       totalEstimatedNetEvUsd: 0,
+      shadowResolvedCount: 0,
+      shadowCorrectCount: 0,
+      shadowBrierScoreSum: 0,
+      shadowNetPnl: 0,
       lastUpdate: timestamp,
     };
   }
@@ -2076,6 +2083,7 @@ export class QmonEngine {
       predictedSlippageBps,
       predictedFillQuality: adjustedFillQuality,
       riskBudgetUsd,
+      affordableShareCount,
       signalAgreementCount: directionalAlphaResult.signalAgreementCount,
       dominantSignalGroup: directionalAlphaResult.dominantSignalGroup,
       tradeabilityRejectReason,
@@ -2087,7 +2095,7 @@ export class QmonEngine {
    * Compute size from a fixed worst-case risk budget.
    */
   private computeEntryShareCount(_qmon: Qmon, tokenPrice: number | null, _tradeabilityAssessment: TradeabilityAssessment): number | null {
-    return this.computePositionSizeFromRiskBudget(tokenPrice, _tradeabilityAssessment.riskBudgetUsd);
+    return _tradeabilityAssessment.affordableShareCount ?? this.computePositionSizeFromRiskBudget(tokenPrice, _tradeabilityAssessment.riskBudgetUsd);
   }
 
   /**
@@ -2101,7 +2109,7 @@ export class QmonEngine {
     volatilityRegime: VolatilityRegimeValue,
     timeSegment: TimeSegment,
     executionQuality: QmonExecutionQuality | undefined,
-  ): { action: TradingAction; tradeabilityAssessment: TradeabilityAssessment } {
+  ): { action: TradingAction; shadowAction: PendingOrderAction; tradeabilityAssessment: TradeabilityAssessment } {
     const directionalAlphaResult = this.computeDirectionalAlpha(qmon, signalValues, directionRegime, volatilityRegime, timeSegment);
     const buyUpAssessment = this.assessTradeability(
       qmon,
@@ -2141,8 +2149,119 @@ export class QmonEngine {
 
     return {
       action,
+      shadowAction: shouldPreferBuyUp ? "BUY_UP" : "BUY_DOWN",
       tradeabilityAssessment,
     };
+  }
+
+  /**
+   * Update one cached shadow hypothesis using the already-computed entry assessment.
+   */
+  private updateShadowPosition(
+    qmon: Qmon,
+    result: EvaluationResult,
+    marketSignals: Record<string, number | null | Record<string, number | null>>,
+    marketStartMs: number | null,
+    marketEndMs: number | null,
+    priceToBeat: number | null,
+    now: number,
+  ): Qmon {
+    const shouldTrackShadow = result.action === "HOLD";
+    const shadowAction = result.shadowAction ?? null;
+    const tradeabilityAssessment = result.tradeabilityAssessment ?? null;
+    const entryPrice = shadowAction === null ? null : this.getLimitPriceForAction(marketSignals, shadowAction);
+    const requestedShares = tradeabilityAssessment?.affordableShareCount ?? null;
+    const currentShadow = qmon.shadowPosition ?? null;
+    const hasResolvableWindowMetadata = marketEndMs !== null && priceToBeat !== null;
+    const hasValidShadowCandidate =
+      shouldTrackShadow &&
+      hasResolvableWindowMetadata &&
+      shadowAction !== null &&
+      tradeabilityAssessment !== null &&
+      entryPrice !== null &&
+      requestedShares !== null;
+    const shouldReplaceShadow =
+      hasValidShadowCandidate &&
+      (
+        currentShadow === null ||
+        currentShadow.marketStartMs !== marketStartMs ||
+        tradeabilityAssessment.finalOutcomeProbability > currentShadow.finalOutcomeProbability ||
+        (
+          tradeabilityAssessment.finalOutcomeProbability === currentShadow.finalOutcomeProbability &&
+          tradeabilityAssessment.estimatedNetEvUsd > currentShadow.estimatedNetEvUsd
+        )
+      );
+    let updatedQmon = qmon;
+
+    if (shouldReplaceShadow && shadowAction !== null && tradeabilityAssessment !== null && entryPrice !== null && requestedShares !== null) {
+      const nextShadowPosition: QmonShadowPosition = {
+        action: shadowAction,
+        createdAt: now,
+        marketStartMs,
+        marketEndMs,
+        priceToBeat,
+        entryPrice,
+        requestedShares,
+        directionalAlpha: tradeabilityAssessment.directionalAlpha,
+        finalOutcomeProbability: tradeabilityAssessment.finalOutcomeProbability,
+        marketImpliedProbability: tradeabilityAssessment.marketImpliedProbability,
+        estimatedEdgeBps: tradeabilityAssessment.estimatedEdgeBps,
+        estimatedNetEvUsd: tradeabilityAssessment.estimatedNetEvUsd,
+        tradeabilityRejectReason: tradeabilityAssessment.tradeabilityRejectReason,
+        signalAgreementCount: tradeabilityAssessment.signalAgreementCount,
+        dominantSignalGroup: tradeabilityAssessment.dominantSignalGroup,
+      };
+
+      updatedQmon = {
+        ...qmon,
+        shadowPosition: nextShadowPosition,
+      };
+    }
+
+    return updatedQmon;
+  }
+
+  /**
+   * Resolve one shadow hypothesis once the market window has fully settled.
+   */
+  private resolveShadowPosition(qmon: Qmon, chainlinkPrice: number | null, now: number): Qmon {
+    const shadowPosition = qmon.shadowPosition ?? null;
+    const hasSettledShadow =
+      shadowPosition !== null &&
+      shadowPosition.marketEndMs !== null &&
+      shadowPosition.priceToBeat !== null &&
+      shadowPosition.entryPrice !== null &&
+      chainlinkPrice !== null &&
+      now >= shadowPosition.marketEndMs;
+    let updatedQmon = qmon;
+
+    if (hasSettledShadow && shadowPosition !== null) {
+      const isWinningOutcome =
+        shadowPosition.action === "BUY_UP"
+          ? chainlinkPrice >= shadowPosition.priceToBeat
+          : chainlinkPrice < shadowPosition.priceToBeat;
+      const resolvedOutcome = isWinningOutcome ? 1 : 0;
+      const netShares = this.executionService.calculateNetTakerBuyShares(shadowPosition.requestedShares, shadowPosition.entryPrice);
+      const entryCost = this.computeWorstCaseEntryLossUsd(shadowPosition.requestedShares, shadowPosition.entryPrice);
+      const shadowPnl = netShares * resolvedOutcome - entryCost;
+      const shadowBrierScore = (shadowPosition.finalOutcomeProbability - resolvedOutcome) ** 2;
+      const currentMetrics = qmon.metrics;
+
+      updatedQmon = {
+        ...qmon,
+        shadowPosition: null,
+        metrics: {
+          ...currentMetrics,
+          shadowResolvedCount: (currentMetrics.shadowResolvedCount ?? 0) + 1,
+          shadowCorrectCount: (currentMetrics.shadowCorrectCount ?? 0) + (isWinningOutcome ? 1 : 0),
+          shadowBrierScoreSum: (currentMetrics.shadowBrierScoreSum ?? 0) + shadowBrierScore,
+          shadowNetPnl: (currentMetrics.shadowNetPnl ?? 0) + shadowPnl,
+          lastUpdate: now,
+        },
+      };
+    }
+
+    return updatedQmon;
   }
 
   /**
@@ -3517,6 +3636,7 @@ export class QmonEngine {
       // Track window age for every QMON regardless of position state
       const prevWindowStart = qmon.currentWindowStart;
       qmon = this.updateWindowAge(qmon, marketStartMs);
+      qmon = this.resolveShadowPosition(qmon, chainlinkPrice, now);
       const isWindowChange = qmon.currentWindowStart !== prevWindowStart && prevWindowStart !== null;
       if (isWindowChange) {
         isNewWindow = true;
@@ -3617,6 +3737,15 @@ export class QmonEngine {
         regime?.volatility ?? "normal",
         timeSegment,
         currentExecutionQuality,
+      );
+      qmonForEval = this.updateShadowPosition(
+        qmonForEval,
+        result,
+        marketSignals,
+        windowData?.prices.marketStartMs ?? null,
+        windowData?.prices.marketEndMs ?? null,
+        windowData?.prices.priceToBeat ?? null,
+        now,
       );
 
       if (result.action !== "HOLD") {
@@ -4090,6 +4219,7 @@ export class QmonEngine {
       return {
         qmonId: qmon.id,
         action: "HOLD",
+        shadowAction: null,
         score: 0,
         directionalAlpha: 0,
         estimatedNetEvUsd: 0,
@@ -4107,6 +4237,7 @@ export class QmonEngine {
       return {
         qmonId: qmon.id,
         action: "HOLD",
+        shadowAction: null,
         score: 0,
         directionalAlpha: 0,
         estimatedNetEvUsd: 0,
@@ -4124,6 +4255,7 @@ export class QmonEngine {
       return {
         qmonId: qmon.id,
         action: "HOLD",
+        shadowAction: null,
         score: 0,
         directionalAlpha: 0,
         estimatedNetEvUsd: 0,
@@ -4141,6 +4273,7 @@ export class QmonEngine {
       return {
         qmonId: qmon.id,
         action: "HOLD",
+        shadowAction: null,
         score: 0,
         directionalAlpha: 0,
         estimatedNetEvUsd: 0,
@@ -4169,6 +4302,7 @@ export class QmonEngine {
     return {
       qmonId: qmon.id,
       action: thresholdPassed ? entryDecision.action : "HOLD",
+      shadowAction: entryDecision.shadowAction,
       score: directionalAlpha,
       directionalAlpha,
       estimatedNetEvUsd: entryDecision.tradeabilityAssessment.estimatedNetEvUsd,

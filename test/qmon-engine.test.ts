@@ -151,6 +151,7 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
       marketStartMs: null,
       marketEndMs: null,
     },
+    shadowPosition: null,
     pendingOrder: null,
     metrics: {
       totalTrades: 0,
@@ -169,6 +170,10 @@ function createQmon(role: "candidate" | "champion" = "candidate"): Qmon {
       winCount: 0,
       avgScore: 0,
       maxDrawdown: 0,
+      shadowResolvedCount: 0,
+      shadowCorrectCount: 0,
+      shadowBrierScoreSum: 0,
+      shadowNetPnl: 0,
       lastUpdate: 1,
     },
     decisionHistory: [],
@@ -381,6 +386,73 @@ test("QmonEngine keeps paper entry pending until the simulated wait elapses", ()
   assert.equal(filledQmon.position.action, "BUY_UP");
   assert.equal(filledQmon.pendingOrder, null);
   assert.equal(filledQmon.decisionHistory.length, 1);
+});
+
+test("QmonEngine resolves one shadow hypothesis for a filtered no-trade without replaying the market", () => {
+  const qmon = {
+    ...createQmon(),
+    genome: {
+      ...createQmon().genome,
+      entryPolicy: {
+        ...createQmon().genome.entryPolicy,
+        confidenceThreshold: 0.95,
+      },
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([qmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 5_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const qmonWithShadow = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.notEqual(qmonWithShadow.shadowPosition, null);
+  assert.equal(qmonWithShadow.position.action, null);
+  assert.equal(qmonWithShadow.metrics.shadowResolvedCount, 0);
+
+  withMockNow(6_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs, 101_000), createRegimes(), [], snapshots);
+  });
+
+  const resolvedShadowQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(resolvedShadowQmon.shadowPosition, null);
+  assert.equal(resolvedShadowQmon.metrics.shadowResolvedCount, 1);
+  assert.equal(resolvedShadowQmon.metrics.shadowCorrectCount, 1);
+  assert.equal((resolvedShadowQmon.metrics.shadowNetPnl ?? 0) > 0, true);
+  assert.equal((resolvedShadowQmon.metrics.shadowBrierScoreSum ?? 1) < 0.2, true);
+});
+
+test("QmonEngine does not duplicate shadow evidence for entries that already execute in paper", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 5_000;
+  const snapshots = [createSnapshot(0.1, 0.9)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+
+  const queuedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(queuedQmon.shadowPosition, null);
+
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], snapshots);
+  });
+  withMockNow(6_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.8, 0.2, marketStartMs, marketEndMs, 101_000), createRegimes(), [], snapshots);
+  });
+
+  const tradedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(tradedQmon.shadowPosition, null);
+  assert.equal(tradedQmon.metrics.shadowResolvedCount, 0);
+  assert.equal(tradedQmon.metrics.shadowNetPnl, 0);
 });
 
 test("QmonEngine tracks exposure ticks and trades-per-window metrics", () => {

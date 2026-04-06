@@ -58,6 +58,7 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
       marketStartMs: null,
       marketEndMs: null,
     },
+    shadowPosition: null,
     pendingOrder: null,
     metrics: {
       totalTrades: 16,
@@ -106,6 +107,10 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
         },
       ],
       totalEstimatedNetEvUsd: 4,
+      shadowResolvedCount: 0,
+      shadowCorrectCount: 0,
+      shadowBrierScoreSum: 0,
+      shadowNetPnl: 0,
       lastUpdate: 1,
     },
     decisionHistory: [],
@@ -464,6 +469,23 @@ test("QmonChampionService caps estimated EV contribution in fitness", () => {
     Number(((inflatedEvQmon.metrics.fitnessScore ?? 0) - (realisticEvQmon.metrics.fitnessScore ?? 0)).toFixed(2)),
     2.5,
   );
+});
+
+test("QmonChampionService uses shadow evidence to rank equally realized candidates", () => {
+  const championService = new QmonChampionService();
+  const baselineQmon = championService.refreshMetrics(createChampionCandidate("BASELINE", 0.75, 0.2));
+  const shadowQmon = championService.refreshMetrics({
+    ...createChampionCandidate("SHADOW01", 0.75, 0.2),
+    metrics: {
+      ...createChampionCandidate("SHADOW01", 0.75, 0.2).metrics,
+      shadowResolvedCount: 12,
+      shadowCorrectCount: 9,
+      shadowBrierScoreSum: 1.2,
+      shadowNetPnl: 6,
+    },
+  });
+
+  assert.equal((shadowQmon.metrics.fitnessScore ?? 0) > (baselineQmon.metrics.fitnessScore ?? 0), true);
 });
 
 test("QmonChampionService selects the best eligible champion by the new score priority", () => {

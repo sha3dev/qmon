@@ -39,6 +39,10 @@ const CHAMPION_MIN_NET_PNL_PER_TRADE = 0.1;
 const CHAMPION_INCUMBENT_REPLACEMENT_MARGIN = 25;
 const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
 const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
+const CHAMPION_SHADOW_MIN_SAMPLE = 8;
+const CHAMPION_SHADOW_NET_PNL_WEIGHT = 0.2;
+const CHAMPION_SHADOW_ACCURACY_WEIGHT = 18;
+const CHAMPION_SHADOW_BRIER_PENALTY = 10;
 
 type ChampionInputs = {
   readonly championScore: number | null;
@@ -217,6 +221,25 @@ export class QmonChampionService {
     return estimatedEvBonus;
   }
 
+  private calculateShadowFitnessAdjustment(qmon: Qmon): number {
+    const shadowResolvedCount = qmon.metrics.shadowResolvedCount ?? 0;
+    const shadowCorrectCount = qmon.metrics.shadowCorrectCount ?? 0;
+    const shadowBrierScoreSum = qmon.metrics.shadowBrierScoreSum ?? 0;
+    const shadowNetPnl = qmon.metrics.shadowNetPnl ?? 0;
+    const shadowEvidence = Math.min(shadowResolvedCount / CHAMPION_SHADOW_MIN_SAMPLE, 1);
+    const shadowAccuracy = shadowResolvedCount > 0 ? shadowCorrectCount / shadowResolvedCount : 0.5;
+    const shadowMeanBrierScore = shadowResolvedCount > 0 ? shadowBrierScoreSum / shadowResolvedCount : 0.25;
+    const shadowFitnessAdjustment =
+      shadowEvidence *
+      (
+        shadowNetPnl * CHAMPION_SHADOW_NET_PNL_WEIGHT +
+        Math.max(0, shadowAccuracy - 0.5) * CHAMPION_SHADOW_ACCURACY_WEIGHT -
+        Math.max(0, shadowMeanBrierScore - 0.25) * CHAMPION_SHADOW_BRIER_PENALTY
+      );
+
+    return shadowFitnessAdjustment;
+  }
+
   private hasConsistentTradeState(qmon: Qmon): boolean {
     const hasOpenPosition = qmon.position.action !== null;
     const hasPositionFields = qmon.position.enteredAt !== null || qmon.position.entryPrice !== null || qmon.position.shareCount !== null;
@@ -265,6 +288,7 @@ export class QmonChampionService {
     const tradesPerWindow = qmon.metrics.tradesPerWindow ?? (qmon.windowsLived > 0 ? qmon.metrics.totalTrades / qmon.windowsLived : qmon.metrics.totalTrades);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
+    const shadowFitnessAdjustment = this.calculateShadowFitnessAdjustment(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
     const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
     const frictionPenalty =
@@ -280,7 +304,14 @@ export class QmonChampionService {
       Math.max(0, paperWindowPnlSum * CHAMPION_RECENT_SUM_WEIGHT) +
       Math.max(0, netPnlPerTrade * CHAMPION_NET_PNL_PER_TRADE_WEIGHT);
 
-    const fitnessScore = qmon.metrics.totalPnl + estimatedEvBonus + robustnessBonus + consistencyBonus - frictionPenalty - instabilityPenalty;
+    const fitnessScore =
+      qmon.metrics.totalPnl +
+      estimatedEvBonus +
+      shadowFitnessAdjustment +
+      robustnessBonus +
+      consistencyBonus -
+      frictionPenalty -
+      instabilityPenalty;
     const championEligibilityReasons: string[] = [];
 
     if (qmon.lifecycle !== "active") {

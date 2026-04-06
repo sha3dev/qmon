@@ -101,10 +101,29 @@ export type TradeabilityAssessment = {
   readonly predictedSlippageBps: number;
   readonly predictedFillQuality: number;
   readonly riskBudgetUsd: number;
+  readonly affordableShareCount: number | null;
   readonly signalAgreementCount: number;
   readonly dominantSignalGroup: DominantSignalGroup;
   readonly tradeabilityRejectReason: string | null;
   readonly shouldAllowEntry: boolean;
+};
+
+export type QmonShadowPosition = {
+  readonly action: PendingOrderAction;
+  readonly createdAt: number;
+  readonly marketStartMs: number | null;
+  readonly marketEndMs: number | null;
+  readonly priceToBeat: number | null;
+  readonly entryPrice: number | null;
+  readonly requestedShares: number;
+  readonly directionalAlpha: number;
+  readonly finalOutcomeProbability: number;
+  readonly marketImpliedProbability: number;
+  readonly estimatedEdgeBps: number;
+  readonly estimatedNetEvUsd: number;
+  readonly tradeabilityRejectReason: string | null;
+  readonly signalAgreementCount: number | null;
+  readonly dominantSignalGroup: DominantSignalGroup;
 };
 
 export type QmonPendingOrder = {
@@ -250,6 +269,10 @@ export type QmonMetrics = {
   readonly regimeBreakdown?: readonly RegimePerformanceSlice[];
   readonly triggerBreakdown?: readonly TriggerPerformanceSlice[];
   readonly totalEstimatedNetEvUsd?: number;
+  readonly shadowResolvedCount?: number;
+  readonly shadowCorrectCount?: number;
+  readonly shadowBrierScoreSum?: number;
+  readonly shadowNetPnl?: number;
   readonly lastUpdate: number;
 };
 
@@ -268,6 +291,7 @@ export type Qmon = {
   readonly parentIds: readonly QmonId[];
   readonly createdAt: number;
   readonly position: QmonPosition;
+  readonly shadowPosition?: QmonShadowPosition | null;
   readonly pendingOrder: QmonPendingOrder | null;
   readonly metrics: QmonMetrics;
   readonly decisionHistory: readonly QmonDecision[];
@@ -355,6 +379,7 @@ export type GateResult = {
 export type EvaluationResult = {
   readonly qmonId: QmonId;
   readonly action: TradingAction;
+  readonly shadowAction?: PendingOrderAction | null;
   readonly score: number;
   readonly directionalAlpha?: number;
   readonly estimatedNetEvUsd?: number;
