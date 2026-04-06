@@ -43,6 +43,17 @@ const CHAMPION_SHADOW_MIN_SAMPLE = 8;
 const CHAMPION_SHADOW_NET_PNL_WEIGHT = 0.2;
 const CHAMPION_SHADOW_ACCURACY_WEIGHT = 18;
 const CHAMPION_SHADOW_BRIER_PENALTY = 10;
+const CHAMPION_SHADOW_ELIGIBILITY_MIN_SAMPLE = 24;
+const CHAMPION_SHADOW_ELIGIBILITY_MIN_ACCURACY = 0.55;
+const CHAMPION_SHADOW_ELIGIBILITY_MAX_BRIER = 0.24;
+
+type ShadowValidationEvidence = {
+  readonly hasValidatedShadowEvidence: boolean;
+  readonly shadowAccuracy: number;
+  readonly shadowMeanBrierScore: number;
+  readonly shadowResolvedCount: number;
+  readonly shadowNetPnl: number;
+};
 
 type ChampionInputs = {
   readonly championScore: number | null;
@@ -240,6 +251,28 @@ export class QmonChampionService {
     return shadowFitnessAdjustment;
   }
 
+  private calculateShadowValidationEvidence(qmon: Qmon): ShadowValidationEvidence {
+    const shadowResolvedCount = qmon.metrics.shadowResolvedCount ?? 0;
+    const shadowCorrectCount = qmon.metrics.shadowCorrectCount ?? 0;
+    const shadowBrierScoreSum = qmon.metrics.shadowBrierScoreSum ?? 0;
+    const shadowNetPnl = qmon.metrics.shadowNetPnl ?? 0;
+    const shadowAccuracy = shadowResolvedCount > 0 ? shadowCorrectCount / shadowResolvedCount : 0.5;
+    const shadowMeanBrierScore = shadowResolvedCount > 0 ? shadowBrierScoreSum / shadowResolvedCount : 0.25;
+    const hasValidatedShadowEvidence =
+      shadowResolvedCount >= CHAMPION_SHADOW_ELIGIBILITY_MIN_SAMPLE &&
+      shadowNetPnl > 0 &&
+      shadowAccuracy >= CHAMPION_SHADOW_ELIGIBILITY_MIN_ACCURACY &&
+      shadowMeanBrierScore <= CHAMPION_SHADOW_ELIGIBILITY_MAX_BRIER;
+
+    return {
+      hasValidatedShadowEvidence,
+      shadowAccuracy,
+      shadowMeanBrierScore,
+      shadowResolvedCount,
+      shadowNetPnl,
+    };
+  }
+
   private hasConsistentTradeState(qmon: Qmon): boolean {
     const hasOpenPosition = qmon.position.action !== null;
     const hasPositionFields = qmon.position.enteredAt !== null || qmon.position.entryPrice !== null || qmon.position.shareCount !== null;
@@ -289,6 +322,7 @@ export class QmonChampionService {
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const shadowFitnessAdjustment = this.calculateShadowFitnessAdjustment(qmon);
+    const shadowValidationEvidence = this.calculateShadowValidationEvidence(qmon);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
     const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
     const frictionPenalty =
@@ -317,28 +351,28 @@ export class QmonChampionService {
     if (qmon.lifecycle !== "active") {
       championEligibilityReasons.push("inactive");
     }
-    if (qmon.paperWindowPnls.length < PAPER_CHAMPION_HISTORY_WINDOW) {
+    if (qmon.paperWindowPnls.length < PAPER_CHAMPION_HISTORY_WINDOW && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-windows");
     }
-    if (paperWindowPnlSum <= 0) {
+    if (paperWindowPnlSum <= 0 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("non-positive-sum");
     }
-    if ((paperWindowMedianPnl ?? 0) < CHAMPION_MIN_WINDOW_MEDIAN_PNL) {
+    if ((paperWindowMedianPnl ?? 0) < CHAMPION_MIN_WINDOW_MEDIAN_PNL && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("non-positive-median");
     }
     if (qmon.metrics.totalPnl <= 0) {
       championEligibilityReasons.push("non-positive-pnl");
     }
-    if (qmon.metrics.winRate < CHAMPION_MIN_WIN_RATE) {
+    if (qmon.metrics.winRate < CHAMPION_MIN_WIN_RATE && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("low-win-rate");
     }
-    if (qmon.metrics.totalTrades < 10) {
+    if (qmon.metrics.totalTrades < 10 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-trades");
     }
     if (fitnessScore <= CHAMPION_MIN_FITNESS_SCORE) {
       championEligibilityReasons.push("low-fitness");
     }
-    if (paperLongWindowPnlSum <= 0) {
+    if (paperLongWindowPnlSum <= 0 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("non-positive-long-window-sum");
     }
     if (negativeWindowRateLast10 > CHAMPION_MAX_NEGATIVE_WINDOW_RATE) {
@@ -366,7 +400,7 @@ export class QmonChampionService {
     const longPositive = paperLongWindowPnlSum > 0;
     const positivePeriodCount = [recentPositive, mediumPositive, longPositive].filter(Boolean).length;
 
-    if (positivePeriodCount < 2) {
+    if (positivePeriodCount < 2 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("fails-out-of-sample-validation");
     }
 

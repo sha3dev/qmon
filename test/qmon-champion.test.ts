@@ -432,6 +432,56 @@ test("QmonChampionService rejects high-pnl candidates with too few trades", () =
   assert.equal(lowSampleQmon.metrics.championEligibilityReasons.includes("insufficient-trades"), true);
 });
 
+test("QmonChampionService allows validated shadow evidence to satisfy sparse-history gates", () => {
+  const championService = new QmonChampionService();
+  const shadowValidatedQmon = championService.refreshMetrics({
+    ...createChampionCandidate("SHADOWPASS", 1, 0.1),
+    metrics: {
+      ...createChampionCandidate("SHADOWPASS", 1, 0.1).metrics,
+      totalTrades: 3,
+      winCount: 3,
+      winRate: 1,
+      totalPnl: 18,
+      peakTotalPnl: 18,
+      shadowResolvedCount: 30,
+      shadowCorrectCount: 19,
+      shadowBrierScoreSum: 5.4,
+      shadowNetPnl: 12,
+    },
+    paperWindowPnls: [],
+  });
+
+  assert.equal(shadowValidatedQmon.metrics.isChampionEligible, true);
+  assert.equal(shadowValidatedQmon.metrics.championEligibilityReasons.includes("insufficient-trades"), false);
+  assert.equal(shadowValidatedQmon.metrics.championEligibilityReasons.includes("non-positive-sum"), false);
+  assert.equal(shadowValidatedQmon.metrics.championEligibilityReasons.includes("fails-out-of-sample-validation"), false);
+});
+
+test("QmonChampionService keeps sparse-history gates when shadow evidence is too weak", () => {
+  const championService = new QmonChampionService();
+  const weakShadowQmon = championService.refreshMetrics({
+    ...createChampionCandidate("SHADOWFAIL", 1, 0.1),
+    metrics: {
+      ...createChampionCandidate("SHADOWFAIL", 1, 0.1).metrics,
+      totalTrades: 3,
+      winCount: 3,
+      winRate: 1,
+      totalPnl: 18,
+      peakTotalPnl: 18,
+      shadowResolvedCount: 12,
+      shadowCorrectCount: 7,
+      shadowBrierScoreSum: 3.6,
+      shadowNetPnl: 4,
+    },
+    paperWindowPnls: [],
+  });
+
+  assert.equal(weakShadowQmon.metrics.isChampionEligible, false);
+  assert.equal(weakShadowQmon.metrics.championEligibilityReasons.includes("insufficient-trades"), true);
+  assert.equal(weakShadowQmon.metrics.championEligibilityReasons.includes("non-positive-sum"), true);
+  assert.equal(weakShadowQmon.metrics.championEligibilityReasons.includes("fails-out-of-sample-validation"), true);
+});
+
 test("QmonChampionService rejects candidates with excessive fees or drawdown", () => {
   const championService = new QmonChampionService();
   const expensiveQmon = championService.refreshMetrics({
