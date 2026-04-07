@@ -29,7 +29,7 @@ import type { ExecutionMode, RuntimeExecutionStatus } from "./app-runtime.types.
 const MAX_BUFFER_SIZE = 700;
 
 /** Minimum interval between repeated all-market walk-forward gate warnings. */
-const WALK_FORWARD_BLOCKED_LOG_INTERVAL_MS = 60_000;
+const WALK_FORWARD_BLOCKED_LOG_INTERVAL_MS = 600_000;
 
 /**
  * @section class
