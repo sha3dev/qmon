@@ -4,9 +4,9 @@ import type { ServerType } from "@hono/node-server";
  * @section imports:externals
  */
 
+import type { SignatureType } from "@polymarket/order-utils";
 import type { Snapshot } from "@sha3/polymarket-snapshot";
 import { SnapshotService } from "@sha3/polymarket-snapshot";
-import type { SignatureType } from "@polymarket/order-utils";
 
 /**
  * @section imports:internals
@@ -15,14 +15,8 @@ import type { SignatureType } from "@polymarket/order-utils";
 import config from "../config.ts";
 import { HttpServerService } from "../http/http-server.service.ts";
 import logger from "../logger.ts";
-import {
-  QmonEngine,
-  QmonLiveExecutionService,
-  QmonLiveStatePersistenceService,
-  QmonPersistenceService,
-  type QmonPopulation,
-  QmonValidationLogService,
-} from "../qmon/index.ts";
+import { QmonEngine, QmonLiveExecutionService, QmonLiveStatePersistenceService, QmonPersistenceService, QmonValidationLogService } from "../qmon/index.ts";
+import type { QmonPopulation } from "../qmon/index.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
 import type { StructuredSignalResult } from "../signal/signal.types.ts";
 import type { ExecutionMode, RuntimeExecutionStatus } from "./app-runtime.types.ts";
@@ -33,6 +27,9 @@ import type { ExecutionMode, RuntimeExecutionStatus } from "./app-runtime.types.
 
 /** Maximum number of snapshots to retain in the rolling buffer. */
 const MAX_BUFFER_SIZE = 700;
+
+/** Minimum interval between repeated all-market walk-forward gate warnings. */
+const WALK_FORWARD_BLOCKED_LOG_INTERVAL_MS = 60_000;
 
 /**
  * @section class
@@ -52,6 +49,7 @@ export class ServiceRuntime {
   private readonly runtimeExecutionModeState: { mode: ExecutionMode };
   private readonly buffer: Snapshot[];
   private lastPersistAt: number;
+  private lastWalkForwardBlockedLogAt: number;
   private snapshotQueue: Promise<void>;
   private isRealEmergencyHaltActive: boolean;
 
@@ -77,6 +75,7 @@ export class ServiceRuntime {
     this.runtimeExecutionModeState = runtimeExecutionModeState;
     this.buffer = [];
     this.lastPersistAt = 0;
+    this.lastWalkForwardBlockedLogAt = 0;
     this.snapshotQueue = Promise.resolve();
     this.isRealEmergencyHaltActive = false;
   }
@@ -96,11 +95,8 @@ export class ServiceRuntime {
     const familyStateBackupPath = existingState !== null ? await qmonPersistence.backupFamilyState(existingState) : null;
     const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
     const normalizedExistingState =
-      existingState !== null
-        ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_EXECUTION_MODE, legacyLiveExecutionState)
-        : null;
-    const initialFamilyState =
-      normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_EXECUTION_MODE) : null;
+      existingState !== null ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_EXECUTION_MODE, legacyLiveExecutionState) : null;
+    const initialFamilyState = normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_EXECUTION_MODE) : null;
     const qmonEngine = existingState
       ? new QmonEngine(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, initialFamilyState ?? undefined, signalEngine, undefined, qmonValidationLogService)
       : QmonEngine.createDefault(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, signalEngine, qmonValidationLogService);
@@ -119,9 +115,7 @@ export class ServiceRuntime {
     qmonEngine.applyExecutionRoutes(config.QMON_EXECUTION_MODE, Date.now());
 
     if (!existingState && legacyLiveExecutionState !== null) {
-      qmonEngine.setFamilyState(
-        qmonPersistence.normalizeFamilyState(qmonEngine.getFamilyState(), config.QMON_EXECUTION_MODE, legacyLiveExecutionState),
-      );
+      qmonEngine.setFamilyState(qmonPersistence.normalizeFamilyState(qmonEngine.getFamilyState(), config.QMON_EXECUTION_MODE, legacyLiveExecutionState));
       logger.info("QMON legacy live execution state migrated into family state");
     }
 
@@ -365,9 +359,7 @@ export class ServiceRuntime {
     const realSessionPnl = this.getRealSessionPnl(latestStructuredSignals);
     const maxSessionLossUsd = config.QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD;
     const shouldTriggerEmergencyHalt =
-      this.runtimeExecutionModeState.mode === "real" &&
-      !this.isRealEmergencyHaltActive &&
-      realSessionPnl <= -maxSessionLossUsd;
+      this.runtimeExecutionModeState.mode === "real" && !this.isRealEmergencyHaltActive && realSessionPnl <= -maxSessionLossUsd;
 
     if (shouldTriggerEmergencyHalt) {
       this.isRealEmergencyHaltActive = true;
@@ -394,8 +386,20 @@ export class ServiceRuntime {
         }
       }
 
-      if (!hasRealMarketRoute && !this.hasActiveRealRisk()) {
+      const now = Date.now();
+      const hasActiveRealRisk = this.hasActiveRealRisk();
+      const shouldReportWalkForwardBlock =
+        !hasRealMarketRoute &&
+        !hasActiveRealRisk &&
+        (this.lastWalkForwardBlockedLogAt === 0 || now - this.lastWalkForwardBlockedLogAt >= WALK_FORWARD_BLOCKED_LOG_INTERVAL_MS);
+
+      if (shouldReportWalkForwardBlock) {
+        this.lastWalkForwardBlockedLogAt = now;
         logger.warn("QMON walk-forward gate currently blocks real routing for every market; waiting for a validated champion to re-arm per market");
+      }
+
+      if (hasRealMarketRoute || hasActiveRealRisk) {
+        this.lastWalkForwardBlockedLogAt = 0;
       }
     }
   }

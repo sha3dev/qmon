@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import { ServiceRuntime } from "../src/app/service-runtime.service.ts";
 import { HttpServerService } from "../src/http/http-server.service.ts";
+import logger from "../src/logger.ts";
 import { QmonReplayHistoryService } from "../src/qmon/qmon-replay-history.service.ts";
 import { SignalBookParser } from "../src/signal/signal-book-parser.service.ts";
 
@@ -348,15 +349,7 @@ test("ServiceRuntime switches runtime to paper after the real emergency loss cap
       ],
     }),
   };
-  const serviceRuntime = new ServiceRuntime(
-    {} as never,
-    {} as never,
-    fakeQmonEngine as never,
-    {} as never,
-    {} as never,
-    null,
-    runtimeExecutionModeState,
-  );
+  const serviceRuntime = new ServiceRuntime({} as never, {} as never, fakeQmonEngine as never, {} as never, {} as never, null, runtimeExecutionModeState);
 
   (serviceRuntime as unknown as { applyRealEmergencyHalt(latestStructuredSignals: unknown): void }).applyRealEmergencyHalt({
     eth: {
@@ -414,15 +407,7 @@ test("ServiceRuntime keeps live routing armed after an emergency halt trigger wh
       ],
     }),
   };
-  const serviceRuntime = new ServiceRuntime(
-    {} as never,
-    {} as never,
-    fakeQmonEngine as never,
-    {} as never,
-    {} as never,
-    null,
-    runtimeExecutionModeState,
-  );
+  const serviceRuntime = new ServiceRuntime({} as never, {} as never, fakeQmonEngine as never, {} as never, {} as never, null, runtimeExecutionModeState);
 
   (serviceRuntime as unknown as { applyRealEmergencyHalt(latestStructuredSignals: unknown): void }).applyRealEmergencyHalt({
     eth: {
@@ -439,4 +424,54 @@ test("ServiceRuntime keeps live routing armed after an emergency halt trigger wh
 
   assert.equal(runtimeExecutionModeState.mode, "real");
   assert.equal(appliedExecutionMode, null);
+});
+
+test("ServiceRuntime throttles repeated all-market walk-forward gate warnings", () => {
+  const warnMessages: string[] = [];
+  const mutableLogger = logger as { warn: (...args: readonly unknown[]) => void };
+  const originalWarn = mutableLogger.warn;
+  const originalDateNow = Date.now;
+  const runtimeExecutionModeState: { mode: "paper" | "real" } = {
+    mode: "real",
+  };
+  const fakeQmonEngine = {
+    getFamilyState: () => ({
+      populations: [
+        {
+          market: "eth-5m",
+          seatPosition: {
+            action: null,
+          },
+          seatPendingOrder: null,
+          executionRuntime: {
+            route: "paper",
+            pendingIntent: null,
+            orderId: null,
+            confirmedVenueSeat: null,
+            pendingVenueOrders: [],
+          },
+        },
+      ],
+    }),
+  };
+  const serviceRuntime = new ServiceRuntime({} as never, {} as never, fakeQmonEngine as never, {} as never, {} as never, null, runtimeExecutionModeState);
+  let currentNow = 1_000;
+
+  mutableLogger.warn = (...args: readonly unknown[]): void => {
+    warnMessages.push(args.map((arg) => String(arg)).join(" "));
+  };
+  Date.now = () => currentNow;
+
+  try {
+    (serviceRuntime as unknown as { applyRealWalkForwardRouteGuard(): void }).applyRealWalkForwardRouteGuard();
+    currentNow += 1_000;
+    (serviceRuntime as unknown as { applyRealWalkForwardRouteGuard(): void }).applyRealWalkForwardRouteGuard();
+    currentNow += 60_000;
+    (serviceRuntime as unknown as { applyRealWalkForwardRouteGuard(): void }).applyRealWalkForwardRouteGuard();
+  } finally {
+    mutableLogger.warn = originalWarn;
+    Date.now = originalDateNow;
+  }
+
+  assert.equal(warnMessages.length, 2);
 });
