@@ -44,6 +44,9 @@ function createSignals(
   chainlinkPrice = 100_000,
   edge = 0.2,
   distance = 0.2,
+  spread = 0,
+  bookDepth = 0,
+  imbalance = signalValue,
 ): StructuredSignalResult {
   return {
     btc: {
@@ -54,13 +57,13 @@ function createSignals(
         meanReversion: { "30s": null, "2m": null, "5m": null },
         oracleLag: signalValue,
         dispersion: 0,
-        imbalance: signalValue,
+        imbalance,
         microprice: 0,
         staleness: 0,
         acceleration: 0,
         volatilityRegime: 0,
-        spread: 0,
-        bookDepth: 0,
+        spread,
+        bookDepth,
         crossAssetMomentum: 0,
       },
       windows: {
@@ -942,6 +945,51 @@ test("QmonEngine reports position-size-invalid when the risk budget cannot fund 
   assert.equal(tradeabilityAssessment.tradeabilityRejectReason, "position-size-invalid");
   assert.equal(updatedQmon.position.action, null);
   assert.equal(updatedQmon.pendingOrder, null);
+});
+
+test("QmonEngine keeps high-conviction entries tradeable under moderate self-stress", () => {
+  const qmon = createQmon();
+  const stressedQmon: Qmon = {
+    ...qmon,
+    metrics: {
+      ...qmon.metrics,
+      feeRatio: 0.8,
+      recentAvgSlippageBps: 200,
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([stressedQmon])), undefined, undefined, undefined, false, false);
+  const inspectedEngine = qmonEngine as unknown as {
+    getMarketSignals: typeof qmonEngine["getMarketSignals"];
+    computeDirectionalAlpha: typeof qmonEngine["computeDirectionalAlpha"];
+    assessTradeability: typeof qmonEngine["assessTradeability"];
+  };
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+  const marketSignals = inspectedEngine.getMarketSignals(
+    MARKET_KEY,
+    createSignals(0.95, 0.1, 0.9, marketStartMs, marketEndMs, 100_000, 0.3, 0.3, 0.1, 1, 0.95),
+    stressedQmon,
+    entrySnapshots,
+  );
+  const directionalAlphaResult = inspectedEngine.computeDirectionalAlpha(stressedQmon, marketSignals, "flat", "normal", "mid");
+  const tradeabilityAssessment = inspectedEngine.assessTradeability(
+    stressedQmon,
+    "BUY_UP",
+    directionalAlphaResult,
+    marketSignals,
+    ["consensus-flip"],
+    0.1,
+    undefined,
+  );
+
+  assert.equal(tradeabilityAssessment.shouldAllowEntry, true);
+  assert.equal(tradeabilityAssessment.tradeabilityRejectReason, null);
+  assert.equal(tradeabilityAssessment.predictedSlippageBps < config.QMON_MAX_ENTRY_SLIPPAGE_BPS, true);
+  assert.equal(
+    tradeabilityAssessment.finalOutcomeProbability >= Math.max(stressedQmon.genome.entryPolicy.confidenceThreshold, config.QMON_MIN_FINAL_OUTCOME_PROBABILITY),
+    true,
+  );
 });
 
 test("QmonEngine settles the champion seat without mutating the champion paper position", () => {

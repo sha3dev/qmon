@@ -84,8 +84,12 @@ const MIN_POSITION_NOTIONAL_USD = 1;
  */
 const ENTRY_COOLDOWN_MS = 30_000;
 const STOP_LOSS_MIN_HOLD_MS = 60_000;
-const EXECUTION_QUALITY_STRESS_FILL_QUALITY = 0.2;
-const EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS = 80;
+const EXECUTION_QUALITY_STRESS_FILL_QUALITY = 0.14;
+const EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS = 45;
+const EXECUTION_QUALITY_SELF_FEE_STRESS_WEIGHT = 0.55;
+const EXECUTION_QUALITY_SELF_SLIPPAGE_STRESS_WEIGHT = 0.15;
+const EXECUTION_QUALITY_SELF_SLIPPAGE_SCALE_BPS = 300;
+const EXECUTION_QUALITY_STRESS_CONFIDENCE_PENALTY = 0.03;
 const EXECUTION_QUALITY_STRESS_EMA_ALPHA = 0.2;
 const EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE = 12;
 const PERFORMANCE_QUARANTINE_MIN_WINDOWS = 6;
@@ -2000,7 +2004,7 @@ export class QmonEngine {
     action: PendingOrderAction,
     directionalAlphaResult: DirectionalAlphaResult,
     signalValues: Record<string, number | null | Record<string, number | null>>,
-    firedTriggerIds: readonly string[],
+    _firedTriggerIds: readonly string[],
     limitPrice: number | null,
     executionQuality: QmonExecutionQuality | undefined,
   ): TradeabilityAssessment {
@@ -2011,7 +2015,14 @@ export class QmonEngine {
     const marketStressScore = (executionQuality?.stressScore ?? 0) * marketStressEvidence;
     const qmonFeeRatio = Math.max(qmon.metrics.feeRatio ?? 0, 0);
     const qmonRecentSlippageBps = Math.max(qmon.metrics.recentAvgSlippageBps ?? 0, 0);
-    const qmonStressScore = Math.max(0, Math.min(1, qmonFeeRatio * 0.8 + Math.min(qmonRecentSlippageBps / 200, 1) * 0.2));
+    const qmonStressScore = Math.max(
+      0,
+      Math.min(
+        1,
+        qmonFeeRatio * EXECUTION_QUALITY_SELF_FEE_STRESS_WEIGHT +
+          Math.min(qmonRecentSlippageBps / EXECUTION_QUALITY_SELF_SLIPPAGE_SCALE_BPS, 1) * EXECUTION_QUALITY_SELF_SLIPPAGE_STRESS_WEIGHT,
+      ),
+    );
     const combinedStressScore = Math.max(marketStressScore, qmonStressScore);
     const directionMultiplier = action === "BUY_UP" ? 1 : -1;
     const adjustedFillQuality = Math.max(
@@ -2044,7 +2055,10 @@ export class QmonEngine {
       0,
       Math.min(1, disagreementPenalty * 0.45 + combinedStressScore * 0.25 + Math.max(spreadSignalValue, 0) * 0.2 + Math.max(-bookDepthSignalValue, 0) * 0.1),
     );
-    const requiredFinalOutcomeProbability = Math.min(0.99, Math.max(entryPolicy.confidenceThreshold, config.QMON_MIN_FINAL_OUTCOME_PROBABILITY) + combinedStressScore * 0.05);
+    const requiredFinalOutcomeProbability = Math.min(
+      0.99,
+      Math.max(entryPolicy.confidenceThreshold, config.QMON_MIN_FINAL_OUTCOME_PROBABILITY) + combinedStressScore * EXECUTION_QUALITY_STRESS_CONFIDENCE_PENALTY,
+    );
     const riskBudgetUsd = qmon.genome.riskBudgetUsd;
     const estimatedNetEvUsd = grossEvUsd - estimatedFeeUsd - slippageCostUsd - spreadPenaltyUsd;
     const affordableShareCount = this.computePositionSizeFromRiskBudget(limitPrice, riskBudgetUsd);
