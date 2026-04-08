@@ -538,6 +538,22 @@ test("QmonChampionService uses shadow evidence to rank equally realized candidat
   assert.equal((shadowQmon.metrics.fitnessScore ?? 0) > (baselineQmon.metrics.fitnessScore ?? 0), true);
 });
 
+test("QmonChampionService prefers recently active champions over equally strong idle ones", () => {
+  const championService = new QmonChampionService();
+  const activeQmon = championService.refreshMetrics({
+    ...createChampionCandidate("ACTIVE01", 0.75, 0.2),
+    paperWindowPnls: [0.6, 0.55, 0.7, 0, 0, 0.65],
+  });
+  const idleQmon = championService.refreshMetrics({
+    ...createChampionCandidate("IDLEALT1", 0.75, 0.2),
+    paperWindowPnls: [0.6, 0.55, 0.7, 0, 0, 0],
+  });
+
+  assert.equal(activeQmon.metrics.isChampionEligible, true);
+  assert.equal(idleQmon.metrics.isChampionEligible, true);
+  assert.equal((activeQmon.metrics.championScore ?? 0) > (idleQmon.metrics.championScore ?? 0), true);
+});
+
 test("QmonChampionService selects the best eligible champion by the new score priority", () => {
   const championService = new QmonChampionService();
   const steadyQmon = championService.refreshMetrics({
@@ -727,12 +743,12 @@ test("QmonChampionService keeps a healthy idle incumbent when no replacement is 
   assert.equal(finalizedPopulation.activeChampionQmonId, "INCUMBENT");
 });
 
-test("QmonChampionService keeps an idle incumbent indefinitely while it remains healthy", () => {
+test("QmonChampionService drops an incumbent that stays fully idle across recent windows", () => {
   const championService = new QmonChampionService();
   const idleChampion = championService.refreshMetrics({
     ...createChampionCandidate("IDLE001", 0.7, 0.2),
     role: "champion",
-    paperWindowPnls: [0.8, 0, 0, 0, 0],
+    paperWindowPnls: [0, 0, 0, 0, 0],
   });
   const finalizedPopulation = championService.finalizePopulation(
     {
@@ -773,5 +789,5 @@ test("QmonChampionService keeps an idle incumbent indefinitely while it remains 
     },
   );
 
-  assert.equal(finalizedPopulation.activeChampionQmonId, "IDLE001");
+  assert.equal(finalizedPopulation.activeChampionQmonId, null);
 });

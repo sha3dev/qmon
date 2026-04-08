@@ -25,6 +25,7 @@ const CHAMPION_RECENT_MEDIAN_WEIGHT = 50;
 const CHAMPION_NET_PNL_PER_TRADE_WEIGHT = 180;
 const CHAMPION_REGIME_COVERAGE_WEIGHT = 40;
 const CHAMPION_DISCIPLINE_WEIGHT = 20;
+const CHAMPION_RECENT_ACTIVE_WINDOW_WEIGHT = 12;
 const CHAMPION_FEE_RATIO_PENALTY = 320;
 const CHAMPION_SLIPPAGE_RATIO_PENALTY = 180;
 const CHAMPION_AVG_SLIPPAGE_PENALTY = 8;
@@ -37,6 +38,7 @@ const CHAMPION_MAX_EXPOSURE_RATIO = 0.8;
 const CHAMPION_MAX_TRADES_PER_WINDOW = 1.5;
 const CHAMPION_MIN_NET_PNL_PER_TRADE = 0.1;
 const CHAMPION_INCUMBENT_REPLACEMENT_MARGIN = 25;
+const CHAMPION_INCUMBENT_MIN_ACTIVE_RECENT_WINDOWS = 1;
 const CHAMPION_ESTIMATED_EV_BONUS_WEIGHT = 0.05;
 const CHAMPION_ESTIMATED_EV_BONUS_CAP = 3;
 const CHAMPION_SHADOW_MIN_SAMPLE = 8;
@@ -129,6 +131,12 @@ export class QmonChampionService {
     const paperWindowPnlSum = this.getRecentChampionWindowPnls(paperWindowPnls).reduce((totalPnl, paperWindowPnl) => totalPnl + paperWindowPnl, 0);
 
     return paperWindowPnlSum;
+  }
+
+  private calculateRecentActiveWindowCount(paperWindowPnls: readonly number[]): number {
+    const recentActiveWindowCount = this.getRecentChampionWindowPnls(paperWindowPnls).filter((paperWindowPnl) => paperWindowPnl !== 0).length;
+
+    return recentActiveWindowCount;
   }
 
   private calculatePaperLongWindowPnlSum(paperWindowPnls: readonly number[]): number {
@@ -323,8 +331,12 @@ export class QmonChampionService {
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const shadowFitnessAdjustment = this.calculateShadowFitnessAdjustment(qmon);
     const shadowValidationEvidence = this.calculateShadowValidationEvidence(qmon);
+    const recentActiveWindowCount = this.calculateRecentActiveWindowCount(qmon.paperWindowPnls);
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
-    const robustnessBonus = positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT + noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT;
+    const robustnessBonus =
+      positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT +
+      noTradeDisciplineScore * CHAMPION_DISCIPLINE_WEIGHT +
+      recentActiveWindowCount * CHAMPION_RECENT_ACTIVE_WINDOW_WEIGHT;
     const frictionPenalty =
       feeRatio * CHAMPION_FEE_RATIO_PENALTY + slippageRatio * CHAMPION_SLIPPAGE_RATIO_PENALTY + recentAvgSlippageBps / CHAMPION_AVG_SLIPPAGE_PENALTY;
     const instabilityPenalty =
@@ -505,12 +517,14 @@ export class QmonChampionService {
   }
 
   private shouldRetainIncumbentChampion(incumbentChampion: Qmon): boolean {
+    const recentActiveWindowCount = this.calculateRecentActiveWindowCount(incumbentChampion.paperWindowPnls);
     const shouldRetain =
       incumbentChampion.lifecycle === "active" &&
       this.hasConsistentTradeState(incumbentChampion) &&
       incumbentChampion.metrics.totalPnl > 0 &&
       incumbentChampion.metrics.winRate >= CHAMPION_MIN_WIN_RATE &&
       incumbentChampion.metrics.totalTrades >= 10 &&
+      recentActiveWindowCount >= CHAMPION_INCUMBENT_MIN_ACTIVE_RECENT_WINDOWS &&
       (incumbentChampion.metrics.feeRatio ?? 0) <= CHAMPION_MAX_FEE_RATIO &&
       incumbentChampion.metrics.maxDrawdown <= CHAMPION_MAX_DRAWDOWN;
 
