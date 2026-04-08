@@ -319,7 +319,7 @@ test("ServiceRuntime persists critical mutations immediately even without checkp
   }
 });
 
-test("ServiceRuntime switches runtime to paper after the real emergency loss cap is breached and all seats are flat", () => {
+test("ServiceRuntime re-arms real routing after the real emergency loss cap is breached and all seats are flat", () => {
   let appliedExecutionMode: "paper" | "real" | null = null;
   const runtimeExecutionModeState: { mode: "paper" | "real" } = {
     mode: "real",
@@ -364,12 +364,13 @@ test("ServiceRuntime switches runtime to paper after the real emergency loss cap
     },
   });
 
-  assert.equal(runtimeExecutionModeState.mode, "paper");
-  assert.equal(appliedExecutionMode, "paper");
+  assert.equal(runtimeExecutionModeState.mode, "real");
+  assert.equal(appliedExecutionMode, "real");
   assert.equal(
     (serviceRuntime as unknown as { readonly runtimeExecutionModeState: { readonly mode: "paper" | "real" } }).runtimeExecutionModeState.mode,
-    "paper",
+    "real",
   );
+  assert.equal((serviceRuntime as unknown as { readonly isRealEmergencyHaltActive: boolean }).isRealEmergencyHaltActive, false);
 });
 
 test("ServiceRuntime keeps live routing armed after an emergency halt trigger while a venue seat is still open", () => {

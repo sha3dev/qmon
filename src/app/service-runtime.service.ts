@@ -369,9 +369,9 @@ export class ServiceRuntime {
     }
 
     if (this.isRealEmergencyHaltActive && this.runtimeExecutionModeState.mode === "real" && !this.hasActiveRealRisk()) {
-      this.runtimeExecutionModeState.mode = "paper";
-      this.qmonEngine.applyExecutionRoutes("paper", Date.now());
-      logger.error("QMON real emergency halt fully disarmed live routing after flattening all seats; runtime switched to paper mode");
+      this.isRealEmergencyHaltActive = false;
+      this.qmonEngine.applyExecutionRoutes("real", Date.now());
+      logger.warn("QMON real emergency halt disarmed after flattening all seats; runtime kept in real mode and routes were re-armed");
     }
   }
 
