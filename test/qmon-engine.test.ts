@@ -5,7 +5,7 @@ import config from "../src/config.ts";
 import { QmonChampionService } from "../src/qmon/qmon-champion.service.ts";
 import { QmonEngine } from "../src/qmon/qmon-engine.service.ts";
 import { QmonPresetStrategyService } from "../src/qmon/qmon-preset-strategy.service.ts";
-import type { DirectionRegimeValue, MarketKey, Qmon, QmonFamilyState, QmonPopulation, VolatilityRegimeValue } from "../src/qmon/qmon.types.ts";
+import type { DirectionRegimeValue, MarketKey, Qmon, QmonDecision, QmonFamilyState, QmonPopulation, VolatilityRegimeValue } from "../src/qmon/qmon.types.ts";
 import type { RegimeResult } from "../src/regime/regime.types.ts";
 import { SignalEngine } from "../src/signal/signal-engine.service.ts";
 import type { Snapshot, StructuredSignalResult } from "../src/signal/signal.types.ts";
@@ -239,6 +239,76 @@ function createPopulation(qmons: readonly Qmon[], activeChampionQmonId: string |
     seatLastCloseTimestamp: null,
     seatLastWindowStartMs: null,
     seatLastSettledWindowStartMs: null,
+  };
+}
+
+function attachSettledTrades(
+  qmon: Qmon,
+  trades: readonly {
+    readonly entryCashflow: number;
+    readonly exitCashflow: number;
+    readonly estimatedNetEvUsd: number;
+  }[],
+): Qmon {
+  const decisionHistory: QmonDecision[] = [];
+  let timestamp = 10;
+
+  for (const trade of trades) {
+    decisionHistory.push({
+      timestamp,
+      market: qmon.market,
+      action: "BUY_UP",
+      cashflow: trade.entryCashflow,
+      modelScore: 0.8,
+      triggeredBy: ["test-entry"],
+      fee: 0.01,
+      executionPrice: 0.2,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.8,
+      finalOutcomeProbability: 0.7,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 5000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    timestamp += 1;
+    decisionHistory.push({
+      timestamp,
+      market: qmon.market,
+      action: "HOLD",
+      cashflow: trade.exitCashflow,
+      modelScore: 0.4,
+      triggeredBy: ["test-exit"],
+      fee: 0.01,
+      executionPrice: 0.4,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.4,
+      finalOutcomeProbability: 0.6,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 4000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    timestamp += 1;
+  }
+
+  return {
+    ...qmon,
+    decisionHistory,
   };
 }
 
@@ -1361,7 +1431,11 @@ test("QmonEngine keeps real-routed seat entries pending instead of filling them 
 test("QmonEngine downgrades a non-production-ready champion market to paper when real routing is requested", () => {
   const championService = new QmonChampionService();
   const championQmon = championService.refreshMetrics({
-    ...createQmon("champion"),
+    ...attachSettledTrades(createQmon("champion"), [
+      { entryCashflow: -1, exitCashflow: 2.1, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.2, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.3, estimatedNetEvUsd: 2 },
+    ]),
     paperWindowPnls: [0.6, 0.7, 0.8, 0.9, 0.6],
     paperWindowSlippageBps: [10, 10, 10, 10, 10],
     metrics: {
@@ -1392,10 +1466,25 @@ test("QmonEngine downgrades a non-production-ready champion market to paper when
       ],
     },
   });
+  const population = {
+    ...createPopulation([championQmon], championQmon.id),
+    executionQuality: {
+      resolvedOrderCount: 30,
+      filledOrderCount: 5,
+      rejectedOrderCount: 25,
+      timedOutOrderCount: 0,
+      slippageRejectedOrderCount: 20,
+      avgFilledPriceImpactBps: 20,
+      avgRejectedSlippageBps: 120,
+      fillRate: 0.16,
+      rejectionRate: 0.84,
+      stressScore: 0.8,
+    },
+  };
   const qmonEngine = new QmonEngine(
     ["btc"],
     ["5m"],
-    createFamilyState(createPopulation([championQmon], championQmon.id)),
+    createFamilyState(population),
     undefined,
     undefined,
     undefined,
@@ -1405,17 +1494,22 @@ test("QmonEngine downgrades a non-production-ready champion market to paper when
 
   qmonEngine.applyExecutionRoutes("real", 2);
 
-  const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+  const updatedPopulation = mustValue(qmonEngine.getPopulation(MARKET_KEY));
 
-  assert.equal(population.executionRuntime?.route, "paper");
-  assert.equal(population.realWalkForwardGate?.isPassed, false);
-  assert.equal(population.realWalkForwardGate?.rejectReason, "champion-not-production-ready");
+  assert.equal(updatedPopulation.executionRuntime?.route, "paper");
+  assert.equal(updatedPopulation.realWalkForwardGate?.isPassed, false);
+  assert.equal(updatedPopulation.realWalkForwardGate?.rejectReason, "market-not-production-healthy");
+  assert.equal(updatedPopulation.marketHealth?.state, "blocked");
 });
 
 test("QmonEngine arms real routing when the champion passes the walk-forward gate", () => {
   const championService = new QmonChampionService();
   const championQmon = championService.refreshMetrics({
-    ...createQmon("champion"),
+    ...attachSettledTrades(createQmon("champion"), [
+      { entryCashflow: -1, exitCashflow: 2.1, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.2, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.3, estimatedNetEvUsd: 2 },
+    ]),
     windowsLived: 20,
     paperWindowPnls: [0.8, 0.7, 0.9, 0.6, 0.8, 0.7],
     paperWindowSlippageBps: [12, 11, 12, 13, 10, 12],
@@ -1445,10 +1539,25 @@ test("QmonEngine arms real routing when the champion passes the walk-forward gat
       ],
     },
   });
+  const population = {
+    ...createPopulation([championQmon], championQmon.id),
+    executionQuality: {
+      resolvedOrderCount: 30,
+      filledOrderCount: 18,
+      rejectedOrderCount: 12,
+      timedOutOrderCount: 0,
+      slippageRejectedOrderCount: 4,
+      avgFilledPriceImpactBps: 12,
+      avgRejectedSlippageBps: 40,
+      fillRate: 0.6,
+      rejectionRate: 0.4,
+      stressScore: 0.2,
+    },
+  };
   const qmonEngine = new QmonEngine(
     ["btc"],
     ["5m"],
-    createFamilyState(createPopulation([championQmon], championQmon.id)),
+    createFamilyState(population),
     undefined,
     undefined,
     undefined,
@@ -1458,11 +1567,12 @@ test("QmonEngine arms real routing when the champion passes the walk-forward gat
 
   qmonEngine.applyExecutionRoutes("real", 2);
 
-  const population = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+  const updatedPopulation = mustValue(qmonEngine.getPopulation(MARKET_KEY));
 
-  assert.equal(population.executionRuntime?.route, "real");
-  assert.equal(population.realWalkForwardGate?.isPassed, true);
-  assert.equal(population.realWalkForwardGate?.rejectReason, null);
+  assert.equal(updatedPopulation.executionRuntime?.route, "real");
+  assert.equal(updatedPopulation.realWalkForwardGate?.isPassed, true);
+  assert.equal(updatedPopulation.realWalkForwardGate?.rejectReason, null);
+  assert.equal(updatedPopulation.marketHealth?.state, "healthy");
 });
 
 test("QmonEngine reports cache hits and avoids global metric refresh churn on repeated ticks", () => {

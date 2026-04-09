@@ -5,12 +5,23 @@
 import { appendFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import type { QmonEvaluationFunnel, QmonMarketHealth, QmonMarketHealthState } from "./qmon.types.ts";
+
 /**
  * @section consts
  */
 
 const MAX_RECENT_EVENT_CACHE_SIZE = 5000;
 const MAX_HYDRATION_DAYS = 30;
+const RECENT_MARKET_HEALTH_EVENT_LIMIT = 200;
+const MARKET_HEALTH_MIN_SETTLED_TRADES = 3;
+const MARKET_HEALTH_BLOCKED_FILL_RATE = 0.3;
+const MARKET_HEALTH_HEALTHY_FILL_RATE = 0.45;
+const MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE = 0.7;
+const MARKET_HEALTH_HEALTHY_SLIPPAGE_REJECTION_RATE = 0.55;
+const MARKET_HEALTH_MIN_WIN_RATE = 0.45;
+const MARKET_HEALTH_BLOCKED_WIN_RATE = 0.35;
+const MARKET_HEALTH_MIN_EV_REALIZATION_RATIO = 0.1;
 const RANGE_TO_DAYS = {
   "24h": 1,
   "7d": 7,
@@ -76,6 +87,7 @@ type DiagnosticsAggregate = {
   championChangeCount: number;
   qmonBornCount: number;
   qmonDiedCount: number;
+  recentPositionOpenedEstimatedEvUsd: number;
 };
 
 type DiagnosticsDailySummary = {
@@ -107,6 +119,13 @@ export type DiagnosticsMarketSummary = {
   readonly slippageRejectedCount: number;
   readonly entryFillBelowMinimumCount: number;
   readonly championChangeCount: number;
+  readonly marketHealth: QmonMarketHealth;
+  readonly conversion: {
+    readonly candidateToOpenedRate: number;
+    readonly openedToProfitableSettledRate: number;
+    readonly estimatedEvToRealizedPnlRatio: number | null;
+  };
+  readonly rejectionFunnel?: QmonEvaluationFunnel | null;
   readonly flags: readonly DiagnosticsFlag[];
   readonly noisyQmons: readonly { qmonId: string; eventCount: number; expireCount: number; warningCount: number }[];
 };
@@ -246,6 +265,7 @@ export class QmonValidationLogService {
       championChangeCount: 0,
       qmonBornCount: 0,
       qmonDiedCount: 0,
+      recentPositionOpenedEstimatedEvUsd: 0,
     };
 
     return aggregate;
@@ -443,6 +463,7 @@ export class QmonValidationLogService {
 
     if (event.eventType === "position-opened") {
       nextAggregate.positionOpenedCount += 1;
+      nextAggregate.recentPositionOpenedEstimatedEvUsd += typeof event.estimatedNetEvUsd === "number" ? event.estimatedNetEvUsd : 0;
 
       if (event.isSeat) {
         nextAggregate.seatPositionOpenedCount += 1;
@@ -556,6 +577,7 @@ export class QmonValidationLogService {
     mergedAggregate.championChangeCount += right.championChangeCount;
     mergedAggregate.qmonBornCount += right.qmonBornCount;
     mergedAggregate.qmonDiedCount += right.qmonDiedCount;
+    mergedAggregate.recentPositionOpenedEstimatedEvUsd += right.recentPositionOpenedEstimatedEvUsd;
 
     for (const [eventType, count] of Object.entries(right.eventTypeCounts)) {
       mergedAggregate.eventTypeCounts[eventType] = (mergedAggregate.eventTypeCounts[eventType] ?? 0) + count;
@@ -995,10 +1017,187 @@ export class QmonValidationLogService {
     return avgPriceImpactBps;
   }
 
+  private calculateCandidateToOpenedRate(aggregate: DiagnosticsAggregate): number {
+    const candidateToOpenedRate = aggregate.orderCreatedCount > 0 ? aggregate.positionOpenedCount / aggregate.orderCreatedCount : 0;
+
+    return candidateToOpenedRate;
+  }
+
+  private calculateOpenedToProfitableSettledRate(aggregate: DiagnosticsAggregate): number {
+    const openedToProfitableSettledRate = aggregate.positionClosedCount > 0 ? aggregate.winningCloseCount / aggregate.positionClosedCount : 0;
+
+    return openedToProfitableSettledRate;
+  }
+
+  private calculateEstimatedEvToRealizedPnlRatio(aggregate: DiagnosticsAggregate): number | null {
+    const estimatedEvToRealizedPnlRatio =
+      aggregate.recentPositionOpenedEstimatedEvUsd > 0 ? aggregate.totalRealizedPnl / aggregate.recentPositionOpenedEstimatedEvUsd : null;
+
+    return estimatedEvToRealizedPnlRatio;
+  }
+
+  private buildMarketHealthFromInputs(
+    fillRate: number,
+    slippageRejectionRate: number,
+    recentCandidateCount: number,
+    recentExpiredOrderCount: number,
+    recentSettledTradeCount: number,
+    recentSettledNetPnl: number,
+    recentSettledWinRate: number,
+    recentEstimatedEvUsd: number,
+    candidateToOpenedRate: number,
+    openedToProfitableSettledRate: number,
+  ): QmonMarketHealth {
+    const recentEvRealizationRatio = recentEstimatedEvUsd > 0 ? recentSettledNetPnl / recentEstimatedEvUsd : null;
+    const hasExecutionEvidence =
+      recentSettledTradeCount > 0 ||
+      recentEstimatedEvUsd > 0 ||
+      recentCandidateCount > 0 ||
+      recentExpiredOrderCount > 0 ||
+      candidateToOpenedRate > 0 ||
+      fillRate > 0 ||
+      slippageRejectionRate > 0;
+    const hasSufficientExecutionSample = recentCandidateCount >= MARKET_HEALTH_MIN_SETTLED_TRADES;
+    const hasSufficientSlippageSample = recentExpiredOrderCount >= MARKET_HEALTH_MIN_SETTLED_TRADES;
+    let marketHealthState: QmonMarketHealthState = "observation-only";
+    let reason: string | null = "insufficient-recent-settlements";
+
+    if (
+      (hasSufficientExecutionSample && fillRate <= MARKET_HEALTH_BLOCKED_FILL_RATE) ||
+      (hasSufficientSlippageSample && slippageRejectionRate >= MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE) ||
+      (
+        recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES &&
+        recentSettledNetPnl < 0 &&
+        recentSettledWinRate <= MARKET_HEALTH_BLOCKED_WIN_RATE
+      ) ||
+      (recentEvRealizationRatio !== null && recentEvRealizationRatio < 0)
+    ) {
+      marketHealthState = "blocked";
+      reason =
+        hasSufficientExecutionSample && fillRate <= MARKET_HEALTH_BLOCKED_FILL_RATE
+          ? "low-fill-rate"
+          : hasSufficientSlippageSample && slippageRejectionRate >= MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE
+            ? "slippage-rejection-cluster"
+            : recentEvRealizationRatio !== null && recentEvRealizationRatio < 0
+              ? "negative-ev-realization"
+              : "negative-recent-settled-pnl";
+    } else if (
+      recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES &&
+      (!hasExecutionEvidence || fillRate >= MARKET_HEALTH_HEALTHY_FILL_RATE) &&
+      (!hasSufficientSlippageSample || slippageRejectionRate <= MARKET_HEALTH_HEALTHY_SLIPPAGE_REJECTION_RATE) &&
+      recentSettledNetPnl > 0 &&
+      recentSettledWinRate >= MARKET_HEALTH_MIN_WIN_RATE &&
+      (recentEvRealizationRatio === null || recentEvRealizationRatio >= MARKET_HEALTH_MIN_EV_REALIZATION_RATIO)
+    ) {
+      marketHealthState = "healthy";
+      reason = null;
+    } else if (recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES) {
+      reason = recentSettledNetPnl <= 0 ? "weak-recent-settled-pnl" : "needs-more-observation";
+    }
+
+    return {
+      state: marketHealthState,
+      fillRate,
+      slippageRejectionRate,
+      recentSettledTradeCount,
+      recentSettledNetPnl,
+      recentSettledWinRate,
+      recentEstimatedEvUsd,
+      recentEvRealizationRatio,
+      candidateToOpenedRate,
+      openedToProfitableSettledRate,
+      reason,
+    };
+  }
+
+  private buildAggregateMarketHealth(aggregate: DiagnosticsAggregate): QmonMarketHealth {
+    const fillRate = this.calculateFillRate(aggregate);
+    const slippageRejectionRate = aggregate.orderExpiredCount > 0 ? aggregate.slippageRejectedCount / aggregate.orderExpiredCount : 0;
+    const recentSettledTradeCount = aggregate.positionClosedCount;
+    const recentSettledNetPnl = aggregate.totalRealizedPnl;
+    const recentSettledWinRate = aggregate.positionClosedCount > 0 ? aggregate.winningCloseCount / aggregate.positionClosedCount : 0;
+    const recentEstimatedEvUsd = aggregate.recentPositionOpenedEstimatedEvUsd;
+    const candidateToOpenedRate = this.calculateCandidateToOpenedRate(aggregate);
+    const openedToProfitableSettledRate = this.calculateOpenedToProfitableSettledRate(aggregate);
+    const marketHealth = this.buildMarketHealthFromInputs(
+      fillRate,
+      slippageRejectionRate,
+      aggregate.orderCreatedCount,
+      aggregate.orderExpiredCount,
+      recentSettledTradeCount,
+      recentSettledNetPnl,
+      recentSettledWinRate,
+      recentEstimatedEvUsd,
+      candidateToOpenedRate,
+      openedToProfitableSettledRate,
+    );
+
+    return marketHealth;
+  }
+
+  private buildRecentEventMarketHealth(marketEvents: readonly ValidationLogEvent[]): QmonMarketHealth {
+    let positionOpenedCount = 0;
+    let positionClosedCount = 0;
+    let winningCloseCount = 0;
+    let totalRealizedPnl = 0;
+    let orderCreatedCount = 0;
+    let orderExpiredCount = 0;
+    let slippageRejectedCount = 0;
+    let estimatedEvUsd = 0;
+
+    for (const marketEvent of marketEvents) {
+      if (marketEvent.eventType === "paper-order-created") {
+        orderCreatedCount += 1;
+      }
+
+      if (marketEvent.eventType === "paper-order-expired") {
+        orderExpiredCount += 1;
+      }
+
+      if (marketEvent.eventType === "validation-warning" && marketEvent.warningCode === "slippage-rejected") {
+        slippageRejectedCount += 1;
+      }
+
+      if (marketEvent.eventType === "position-opened") {
+        positionOpenedCount += 1;
+        estimatedEvUsd += typeof marketEvent.estimatedNetEvUsd === "number" ? marketEvent.estimatedNetEvUsd : 0;
+      }
+
+      if (marketEvent.eventType === "position-closed") {
+        positionClosedCount += 1;
+
+        if (typeof marketEvent.netPnl === "number") {
+          totalRealizedPnl += marketEvent.netPnl;
+
+          if (marketEvent.netPnl >= 0) {
+            winningCloseCount += 1;
+          }
+        }
+      }
+    }
+
+    const effectiveCandidateCount = Math.max(orderCreatedCount, positionOpenedCount);
+    const effectiveFillRate = effectiveCandidateCount > 0 ? positionOpenedCount / effectiveCandidateCount : 0;
+
+    return this.buildMarketHealthFromInputs(
+      effectiveFillRate,
+      orderExpiredCount > 0 ? slippageRejectedCount / orderExpiredCount : 0,
+      effectiveCandidateCount,
+      orderExpiredCount,
+      positionClosedCount,
+      totalRealizedPnl,
+      positionClosedCount > 0 ? winningCloseCount / positionClosedCount : 0,
+      estimatedEvUsd,
+      effectiveFillRate,
+      positionClosedCount > 0 ? winningCloseCount / positionClosedCount : 0,
+    );
+  }
+
   private buildFlags(market: string | null, aggregate: DiagnosticsAggregate): readonly DiagnosticsFlag[] {
     const flags: DiagnosticsFlag[] = [];
     const orderFailureRate = this.calculateOrderFailureRate(aggregate);
     const fillRate = this.calculateFillRate(aggregate);
+    const marketHealth = this.buildAggregateMarketHealth(aggregate);
 
     if (aggregate.orderCreatedCount >= 20 && orderFailureRate >= 0.7) {
       flags.push({
@@ -1045,6 +1244,15 @@ export class QmonValidationLogService {
       });
     }
 
+    if (market !== null && marketHealth.state !== "healthy") {
+      flags.push({
+        key: `market-health-${marketHealth.state}-${market}`,
+        severity: "warn",
+        message: `Market health is ${marketHealth.state}${marketHealth.reason === null ? "" : ` (${marketHealth.reason})`}`,
+        market,
+      });
+    }
+
     return flags;
   }
 
@@ -1079,6 +1287,7 @@ export class QmonValidationLogService {
 
   private buildMarketSummary(market: string, aggregate: DiagnosticsAggregate): DiagnosticsMarketSummary {
     const warningCount = Object.values(aggregate.warningCounts).reduce((runningCount, count) => runningCount + count, 0);
+    const marketHealth = this.buildAggregateMarketHealth(aggregate);
     const marketSummary: DiagnosticsMarketSummary = {
       market,
       totalEvents: aggregate.totalEvents,
@@ -1094,6 +1303,13 @@ export class QmonValidationLogService {
       slippageRejectedCount: aggregate.slippageRejectedCount,
       entryFillBelowMinimumCount: aggregate.entryFillBelowMinimumCount,
       championChangeCount: aggregate.championChangeCount,
+      marketHealth,
+      conversion: {
+        candidateToOpenedRate: this.calculateCandidateToOpenedRate(aggregate),
+        openedToProfitableSettledRate: this.calculateOpenedToProfitableSettledRate(aggregate),
+        estimatedEvToRealizedPnlRatio: this.calculateEstimatedEvToRealizedPnlRatio(aggregate),
+      },
+      rejectionFunnel: null,
       flags: this.buildFlags(market, aggregate),
       noisyQmons: this.buildNoisyQmons(aggregate),
     };
@@ -1362,8 +1578,17 @@ export class QmonValidationLogService {
     const aggregateByRange = await this.readAggregateForRange(range);
     const marketAggregate = aggregateByRange.markets[market] ?? this.createAggregateFromRange();
     const marketSummary = this.buildMarketSummary(market, marketAggregate);
+    const recentMarketEvents = await this.readEventsFromRange({
+      market,
+      range,
+      limit: RECENT_MARKET_HEALTH_EVENT_LIMIT,
+    });
+    const marketHealth = this.buildRecentEventMarketHealth(recentMarketEvents);
 
-    return marketSummary;
+    return {
+      ...marketSummary,
+      marketHealth,
+    };
   }
 
   public async readDiagnosticEvents(

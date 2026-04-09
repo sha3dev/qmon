@@ -36,6 +36,18 @@ test("QmonValidationLogService reports order failure rate and taker CPnL rows", 
         action: "BUY_UP",
         priceImpactBps: 12,
       });
+      validationLogService.logPositionOpened({
+        market: "btc-5m",
+        qmonId: "QMON01",
+        action: "BUY_UP",
+        entryPrice: 0.1,
+        executionPrice: 0.1,
+        shareCount: 5,
+        fee: 0.1,
+        cashflow: -0.6,
+        estimatedNetEvUsd: 1,
+        isSeat: false,
+      });
       validationLogService.logPaperOrderCreated({
         market: "btc-5m",
         qmonId: "QMON01",
@@ -75,9 +87,11 @@ test("QmonValidationLogService reports order failure rate and taker CPnL rows", 
     assert.equal(marketSummary.orderFailureRate, 0.5);
     assert.equal(marketSummary.fillRate, 0.5);
     assert.equal(marketSummary.seatRealizedPnl, 2.9);
-    assert.equal(cpnlLogRows.length, 1);
+    assert.equal(marketSummary.marketHealth.state, "observation-only");
+    assert.equal(marketSummary.conversion.candidateToOpenedRate, 0.5);
+    assert.equal(cpnlLogRows.length, 2);
     assert.equal(cpnlLogRows[0]?.detail.includes("TAKER"), true);
-    assert.equal(cpnlLogRows[0]?.cashflow, 3.4);
+    assert.equal(cpnlLogRows[1]?.cashflow, 3.4);
   } finally {
     await rm(diagnosticsDir, { recursive: true, force: true });
   }
@@ -177,6 +191,62 @@ test("QmonValidationLogService ignores tradeability warnings in diagnostics aggr
     assert.equal(overview.totals.warningCount, 1);
     assert.equal(marketSummary.warningCount, 1);
     assert.equal(marketSummary.slippageRejectedCount, 1);
+  } finally {
+    await rm(diagnosticsDir, { recursive: true, force: true });
+  }
+});
+
+test("QmonValidationLogService computes market health from recent realized diagnostics", async () => {
+  const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
+  const validationLogService = new QmonValidationLogService(diagnosticsDir);
+  const mockNow = Date.now();
+
+  try {
+    withMockNow(mockNow, () => {
+      for (let tradeIndex = 0; tradeIndex < 3; tradeIndex += 1) {
+        validationLogService.logPaperOrderCreated({
+          market: "eth-5m",
+          qmonId: `QMON0${tradeIndex}`,
+          action: "BUY_UP",
+        });
+        validationLogService.logPositionOpened({
+          market: "eth-5m",
+          qmonId: `QMON0${tradeIndex}`,
+          action: "BUY_UP",
+          entryPrice: 0.2,
+          executionPrice: 0.2,
+          shareCount: 10,
+          fee: 0.1,
+          cashflow: -2.1,
+          estimatedNetEvUsd: 2,
+          isSeat: false,
+        });
+        validationLogService.logPositionClosed({
+          market: "eth-5m",
+          qmonId: `QMON0${tradeIndex}`,
+          action: "BUY_UP",
+          reason: "market-settled",
+          entryPrice: 0.2,
+          exitPrice: 0.6,
+          executionPrice: 0.6,
+          shareCount: 10,
+          grossPnl: 4,
+          fee: 0.1,
+          netPnl: 3.9,
+          cashflow: 5.9,
+          estimatedNetEvUsd: 2,
+          isSeat: false,
+        });
+      }
+    });
+
+    await validationLogService.flush();
+
+    const marketSummary = await validationLogService.readMarketDiagnostics("eth-5m", "24h");
+
+    assert.equal(marketSummary.marketHealth.state, "healthy");
+    assert.equal(marketSummary.conversion.openedToProfitableSettledRate, 1);
+    assert.equal((marketSummary.conversion.estimatedEvToRealizedPnlRatio ?? 0) > 1, true);
   } finally {
     await rm(diagnosticsDir, { recursive: true, force: true });
   }

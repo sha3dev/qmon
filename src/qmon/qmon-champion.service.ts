@@ -3,7 +3,7 @@
  */
 
 import config from "../config.ts";
-import type { Qmon, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSlice, TriggerPerformanceSlice } from "./qmon.types.ts";
+import type { Qmon, QmonDecision, QmonMarketHealth, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSlice, TriggerPerformanceSlice } from "./qmon.types.ts";
 
 /**
  * @section consts
@@ -52,6 +52,10 @@ const CHAMPION_MIN_PRODUCTION_NET_PNL = config.QMON_REAL_MIN_WF_NET_PNL_USD;
 const CHAMPION_MAX_PRODUCTION_DRAWDOWN = config.QMON_REAL_MAX_WF_DRAWDOWN_USD;
 const CHAMPION_MAX_PRODUCTION_FEE_RATIO = config.QMON_REAL_MAX_WF_FEE_RATIO;
 const CHAMPION_MAX_PRODUCTION_SLIPPAGE_BPS = config.QMON_REAL_MAX_WF_SLIPPAGE_BPS;
+const CHAMPION_RECENT_SETTLED_TRADE_WINDOW = 4;
+const CHAMPION_MIN_RECENT_SETTLED_TRADES = 3;
+const CHAMPION_MIN_RECENT_SETTLED_WIN_RATE = 0.45;
+const CHAMPION_MIN_RECENT_EV_REALIZATION_RATIO = 0.1;
 
 type ShadowValidationEvidence = {
   readonly hasValidatedShadowEvidence: boolean;
@@ -77,6 +81,11 @@ type ChampionInputs = {
   readonly tradesPerWindow: number;
   readonly grossAlphaCapture: number;
   readonly noTradeDisciplineScore: number;
+  readonly recentSettledTradeCount: number;
+  readonly recentSettledNetPnl: number;
+  readonly recentSettledWinRate: number;
+  readonly recentEstimatedEvUsd: number;
+  readonly recentEvRealizationRatio: number | null;
   readonly regimeBreakdown: readonly RegimePerformanceSlice[];
   readonly triggerBreakdown: readonly TriggerPerformanceSlice[];
   readonly maxDrawdown: number;
@@ -308,7 +317,72 @@ export class QmonChampionService {
     return isTradeStateConsistent;
   }
 
-  private buildChampionInputs(qmon: Qmon): ChampionInputs {
+  private buildRecentSettledTrades(qmon: Qmon): readonly {
+    readonly closeDecision: QmonDecision;
+    readonly netPnl: number;
+    readonly estimatedNetEvUsd: number;
+  }[] {
+    const recentSettledTrades: {
+      readonly closeDecision: QmonDecision;
+      readonly netPnl: number;
+      readonly estimatedNetEvUsd: number;
+    }[] = [];
+    let openDecision: QmonDecision | null = null;
+
+    for (const decision of qmon.decisionHistory) {
+      if (decision.action === "BUY_UP" || decision.action === "BUY_DOWN") {
+        openDecision = decision;
+      } else if (decision.action === "HOLD" && openDecision !== null) {
+        recentSettledTrades.push({
+          closeDecision: decision,
+          netPnl: openDecision.cashflow + decision.cashflow,
+          estimatedNetEvUsd: openDecision.estimatedNetEvUsd ?? decision.estimatedNetEvUsd ?? 0,
+        });
+        openDecision = null;
+      }
+    }
+
+    return recentSettledTrades.slice(-CHAMPION_RECENT_SETTLED_TRADE_WINDOW);
+  }
+
+  private calculateRecentSettledTradeCount(qmon: Qmon): number {
+    const recentSettledTradeCount = this.buildRecentSettledTrades(qmon).length;
+
+    return recentSettledTradeCount;
+  }
+
+  private calculateRecentSettledNetPnl(qmon: Qmon): number {
+    const recentSettledNetPnl = this.buildRecentSettledTrades(qmon).reduce((runningPnl, settledTrade) => runningPnl + settledTrade.netPnl, 0);
+
+    return recentSettledNetPnl;
+  }
+
+  private calculateRecentSettledWinRate(qmon: Qmon): number {
+    const recentSettledTrades = this.buildRecentSettledTrades(qmon);
+    const recentSettledWinRate =
+      recentSettledTrades.length > 0 ? recentSettledTrades.filter((settledTrade) => settledTrade.netPnl >= 0).length / recentSettledTrades.length : 0;
+
+    return recentSettledWinRate;
+  }
+
+  private calculateRecentEstimatedEvUsd(qmon: Qmon): number {
+    const recentEstimatedEvUsd = this.buildRecentSettledTrades(qmon).reduce(
+      (runningEstimatedEvUsd, settledTrade) => runningEstimatedEvUsd + settledTrade.estimatedNetEvUsd,
+      0,
+    );
+
+    return recentEstimatedEvUsd;
+  }
+
+  private calculateRecentEvRealizationRatio(qmon: Qmon): number | null {
+    const recentEstimatedEvUsd = this.calculateRecentEstimatedEvUsd(qmon);
+    const recentSettledNetPnl = this.calculateRecentSettledNetPnl(qmon);
+    const recentEvRealizationRatio = recentEstimatedEvUsd > 0 ? recentSettledNetPnl / recentEstimatedEvUsd : null;
+
+    return recentEvRealizationRatio;
+  }
+
+  private buildChampionInputs(qmon: Qmon, marketHealth?: QmonMarketHealth): ChampionInputs {
     const paperWindowPnlSum = this.calculatePaperWindowPnlSum(qmon.paperWindowPnls);
     const paperLongWindowPnlSum = this.calculatePaperLongWindowPnlSum(qmon.paperWindowPnls);
     const paperWindowMedianPnl = this.calculatePaperWindowMedianPnl(qmon.paperWindowPnls);
@@ -332,6 +406,11 @@ export class QmonChampionService {
     const marketExposureRatio = qmon.metrics.marketExposureRatio ?? 0;
     const tradesPerWindow = qmon.metrics.tradesPerWindow ?? (qmon.windowsLived > 0 ? qmon.metrics.totalTrades / qmon.windowsLived : qmon.metrics.totalTrades);
     const noTradeDisciplineScore = this.calculateNoTradeDisciplineScore(qmon);
+    const recentSettledTradeCount = this.calculateRecentSettledTradeCount(qmon);
+    const recentSettledNetPnl = this.calculateRecentSettledNetPnl(qmon);
+    const recentSettledWinRate = this.calculateRecentSettledWinRate(qmon);
+    const recentEstimatedEvUsd = this.calculateRecentEstimatedEvUsd(qmon);
+    const recentEvRealizationRatio = this.calculateRecentEvRealizationRatio(qmon);
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const shadowFitnessAdjustment = this.calculateShadowFitnessAdjustment(qmon);
     const shadowValidationEvidence = this.calculateShadowValidationEvidence(qmon);
@@ -385,6 +464,27 @@ export class QmonChampionService {
     if (qmon.metrics.totalTrades < CHAMPION_MIN_PRODUCTION_TRADES && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-trades");
     }
+    if (marketHealth !== undefined && recentSettledTradeCount < CHAMPION_MIN_RECENT_SETTLED_TRADES) {
+      championEligibilityReasons.push("insufficient-recent-settled-trades");
+    }
+    if (marketHealth !== undefined && recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES && recentSettledNetPnl <= 0) {
+      championEligibilityReasons.push("negative-recent-settled-pnl");
+    }
+    if (
+      marketHealth !== undefined &&
+      recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES &&
+      recentSettledWinRate < CHAMPION_MIN_RECENT_SETTLED_WIN_RATE
+    ) {
+      championEligibilityReasons.push("low-recent-settled-win-rate");
+    }
+    if (
+      marketHealth !== undefined &&
+      recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES &&
+      recentEvRealizationRatio !== null &&
+      recentEvRealizationRatio < CHAMPION_MIN_RECENT_EV_REALIZATION_RATIO
+    ) {
+      championEligibilityReasons.push("poor-ev-realization");
+    }
     if (fitnessScore <= CHAMPION_MIN_FITNESS_SCORE) {
       championEligibilityReasons.push("low-fitness");
     }
@@ -425,6 +525,12 @@ export class QmonChampionService {
       championEligibilityReasons.push("fails-out-of-sample-validation");
     }
 
+    if (marketHealth !== undefined && marketHealth.state === "blocked") {
+      championEligibilityReasons.push("market-health-blocked");
+    } else if (marketHealth !== undefined && marketHealth.state === "observation-only") {
+      championEligibilityReasons.push("market-health-observation-only");
+    }
+
     if (!this.hasConsistentTradeState(qmon)) {
       championEligibilityReasons.push("inconsistent-state");
     }
@@ -453,6 +559,11 @@ export class QmonChampionService {
       tradesPerWindow,
       grossAlphaCapture,
       noTradeDisciplineScore,
+      recentSettledTradeCount,
+      recentSettledNetPnl,
+      recentSettledWinRate,
+      recentEstimatedEvUsd,
+      recentEvRealizationRatio,
       regimeBreakdown,
       triggerBreakdown,
       maxDrawdown,
@@ -577,8 +688,8 @@ export class QmonChampionService {
    * @section public:methods
    */
 
-  public refreshMetrics(qmon: Qmon): Qmon {
-    const championInputs = this.buildChampionInputs(qmon);
+  public refreshMetrics(qmon: Qmon, marketHealth?: QmonMarketHealth): Qmon {
+    const championInputs = this.buildChampionInputs(qmon, marketHealth);
     const refreshedQmon: Qmon = {
       ...qmon,
       metrics: {
@@ -596,6 +707,11 @@ export class QmonChampionService {
         slippageRatio: championInputs.slippageRatio,
         grossAlphaCapture: championInputs.grossAlphaCapture,
         noTradeDisciplineScore: championInputs.noTradeDisciplineScore,
+        recentSettledTradeCount: championInputs.recentSettledTradeCount,
+        recentSettledNetPnl: championInputs.recentSettledNetPnl,
+        recentSettledWinRate: championInputs.recentSettledWinRate,
+        recentEstimatedEvUsd: championInputs.recentEstimatedEvUsd,
+        recentEvRealizationRatio: championInputs.recentEvRealizationRatio,
         regimeBreakdown: championInputs.regimeBreakdown,
         triggerBreakdown: championInputs.triggerBreakdown,
         maxDrawdown: championInputs.maxDrawdown,
@@ -629,8 +745,9 @@ export class QmonChampionService {
     qmons: readonly Qmon[],
     emptyPosition: QmonPosition,
     shouldPreserveSeatState = false,
+    marketHealth?: QmonMarketHealth,
   ): QmonPopulation {
-    const finalizedPaperQmons = this.finalizePaperWindowHistory(qmons);
+    const finalizedPaperQmons = this.finalizePaperWindowHistory(qmons).map((qmon) => this.refreshMetrics(qmon, marketHealth));
     const preservedChampion =
       population.activeChampionQmonId !== null ? (finalizedPaperQmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null) : null;
     const selectedChampion = this.selectActiveChampion(finalizedPaperQmons);
@@ -650,6 +767,7 @@ export class QmonChampionService {
       seatPendingOrder: shouldPreserveSeatState ? population.seatPendingOrder : null,
       seatLastCloseTimestamp: shouldPreserveSeatState ? population.seatLastCloseTimestamp : null,
       seatLastWindowStartMs: nextWindowStartMs,
+      marketHealth: marketHealth ?? population.marketHealth,
     };
 
     return finalizedPopulation;

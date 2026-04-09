@@ -31,12 +31,15 @@ import type {
   PendingOrderAction,
   Qmon,
   QmonDecision,
+  QmonEvaluationFunnel,
   QmonExecutionQuality,
   QmonExecutionRoute,
   QmonExecutionRuntime,
   QmonFamilyState,
   QmonGenome,
   QmonId,
+  QmonMarketHealth,
+  QmonMarketHealthState,
   QmonMetrics,
   QmonPendingOrder,
   QmonPopulation,
@@ -92,6 +95,15 @@ const EXECUTION_QUALITY_SELF_SLIPPAGE_SCALE_BPS = 300;
 const EXECUTION_QUALITY_STRESS_CONFIDENCE_PENALTY = 0.03;
 const EXECUTION_QUALITY_STRESS_EMA_ALPHA = 0.2;
 const EXECUTION_QUALITY_STRESS_MIN_SAMPLE_SIZE = 12;
+const MARKET_HEALTH_MIN_SETTLED_TRADES = 3;
+const MARKET_HEALTH_BLOCKED_FILL_RATE = 0.3;
+const MARKET_HEALTH_HEALTHY_FILL_RATE = 0.45;
+const MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE = 0.7;
+const MARKET_HEALTH_HEALTHY_SLIPPAGE_REJECTION_RATE = 0.55;
+const MARKET_HEALTH_MIN_RECENT_WIN_RATE = 0.45;
+const MARKET_HEALTH_BLOCKED_RECENT_WIN_RATE = 0.35;
+const MARKET_HEALTH_MIN_EV_REALIZATION_RATIO = 0.1;
+const MARKET_HEALTH_RECENT_SETTLED_TRADE_WINDOW = 4;
 const PERFORMANCE_QUARANTINE_MIN_WINDOWS = 6;
 const PERFORMANCE_QUARANTINE_MIN_TRADES = 6;
 const PERFORMANCE_QUARANTINE_MAX_WIN_RATE = 0.35;
@@ -464,6 +476,8 @@ export class QmonEngine {
       rejectReason = null;
     } else if (championQmon === null) {
       rejectReason = "no-active-champion";
+    } else if ((population.marketHealth?.state ?? "observation-only") !== "healthy") {
+      rejectReason = "market-not-production-healthy";
     } else if (!(championQmon.metrics.isChampionEligible && (championQmon.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0)) {
       rejectReason = "champion-not-production-ready";
     }
@@ -538,8 +552,18 @@ export class QmonEngine {
    * Keep each population aligned with the canonical execution runtime model.
    */
   private normalizePopulationExecutionRuntime(population: QmonPopulation, routeOverride?: QmonExecutionRoute): QmonPopulation {
-    const realWalkForwardGate = this.buildRealWalkForwardGate(population);
-    const route = this.resolvePopulationExecutionRoute(population, routeOverride, realWalkForwardGate);
+    const normalizedPopulation = {
+      ...population,
+      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
+      evaluationFunnel: population.evaluationFunnel ?? this.createDefaultEvaluationFunnel(),
+    };
+    const marketHealth = this.buildMarketHealth(normalizedPopulation);
+    const populationWithHealth = {
+      ...normalizedPopulation,
+      marketHealth,
+    };
+    const realWalkForwardGate = this.buildRealWalkForwardGate(populationWithHealth);
+    const route = this.resolvePopulationExecutionRoute(populationWithHealth, routeOverride, realWalkForwardGate);
     const currentExecutionRuntime = population.executionRuntime ?? this.createDefaultExecutionRuntime(route);
     const normalizedExecutionRuntime: QmonExecutionRuntime = {
       route,
@@ -556,8 +580,7 @@ export class QmonEngine {
     };
 
     return {
-      ...population,
-      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
+      ...populationWithHealth,
       realWalkForwardGate,
       executionRuntime: {
         ...normalizedExecutionRuntime,
@@ -811,7 +834,41 @@ export class QmonEngine {
       shadowCorrectCount: 0,
       shadowBrierScoreSum: 0,
       shadowNetPnl: 0,
+      recentSettledTradeCount: 0,
+      recentSettledNetPnl: 0,
+      recentSettledWinRate: 0,
+      recentEstimatedEvUsd: 0,
+      recentEvRealizationRatio: null,
       lastUpdate: timestamp,
+    };
+  }
+
+  private createDefaultEvaluationFunnel(): QmonEvaluationFunnel {
+    return {
+      evaluatedCount: 0,
+      triggerGateRejectedCount: 0,
+      timeGateRejectedCount: 0,
+      regimeGateRejectedCount: 0,
+      performanceGateRejectedCount: 0,
+      tradeabilityRejectedCount: 0,
+      tradeabilityRejectCounts: {},
+      thresholdPassedCount: 0,
+    };
+  }
+
+  private createDefaultMarketHealth(): QmonMarketHealth {
+    return {
+      state: "observation-only",
+      fillRate: 0,
+      slippageRejectionRate: 0,
+      recentSettledTradeCount: 0,
+      recentSettledNetPnl: 0,
+      recentSettledWinRate: 0,
+      recentEstimatedEvUsd: 0,
+      recentEvRealizationRatio: null,
+      candidateToOpenedRate: 0,
+      openedToProfitableSettledRate: 0,
+      reason: "insufficient-recent-settlements",
     };
   }
 
@@ -899,6 +956,163 @@ export class QmonEngine {
     return nextExecutionQuality;
   }
 
+  private buildRecentSettledTrades(qmon: Qmon): readonly {
+    readonly netPnl: number;
+    readonly estimatedNetEvUsd: number;
+  }[] {
+    const recentSettledTrades: {
+      readonly netPnl: number;
+      readonly estimatedNetEvUsd: number;
+    }[] = [];
+    let openDecision: QmonDecision | null = null;
+
+    for (const decision of qmon.decisionHistory) {
+      if (decision.action === "BUY_UP" || decision.action === "BUY_DOWN") {
+        openDecision = decision;
+      } else if (decision.action === "HOLD" && openDecision !== null) {
+        recentSettledTrades.push({
+          netPnl: openDecision.cashflow + decision.cashflow,
+          estimatedNetEvUsd: openDecision.estimatedNetEvUsd ?? decision.estimatedNetEvUsd ?? 0,
+        });
+        openDecision = null;
+      }
+    }
+
+    return recentSettledTrades.slice(-MARKET_HEALTH_RECENT_SETTLED_TRADE_WINDOW);
+  }
+
+  private buildMarketHealth(population: QmonPopulation): QmonMarketHealth {
+    let recentSettledTradeCount = 0;
+    let recentSettledNetPnl = 0;
+    let recentSettledWinningTradeCount = 0;
+    let recentEstimatedEvUsd = 0;
+    let positionOpenedCount = 0;
+
+    for (const qmon of population.qmons) {
+      const recentSettledTrades = this.buildRecentSettledTrades(qmon);
+
+      for (const recentSettledTrade of recentSettledTrades) {
+        recentSettledTradeCount += 1;
+        recentSettledNetPnl += recentSettledTrade.netPnl;
+        recentEstimatedEvUsd += recentSettledTrade.estimatedNetEvUsd;
+
+        if (recentSettledTrade.netPnl >= 0) {
+          recentSettledWinningTradeCount += 1;
+        }
+      }
+
+      for (const decision of qmon.decisionHistory) {
+        if (decision.action === "BUY_UP" || decision.action === "BUY_DOWN") {
+          positionOpenedCount += 1;
+        }
+      }
+    }
+
+    const fillRate = population.executionQuality?.fillRate ?? 0;
+    const slippageRejectionRate =
+      (population.executionQuality?.rejectedOrderCount ?? 0) > 0
+        ? (population.executionQuality?.slippageRejectedOrderCount ?? 0) / Math.max(population.executionQuality?.rejectedOrderCount ?? 0, 1)
+        : 0;
+    const recentSettledWinRate = recentSettledTradeCount > 0 ? recentSettledWinningTradeCount / recentSettledTradeCount : 0;
+    const recentEvRealizationRatio = recentEstimatedEvUsd > 0 ? recentSettledNetPnl / recentEstimatedEvUsd : null;
+    const candidateToOpenedRate =
+      (population.evaluationFunnel?.evaluatedCount ?? 0) > 0 ? positionOpenedCount / Math.max(population.evaluationFunnel?.evaluatedCount ?? 0, 1) : 0;
+    const openedToProfitableSettledRate = recentSettledTradeCount > 0 ? recentSettledWinningTradeCount / recentSettledTradeCount : 0;
+    const hasExecutionEvidence =
+      recentSettledTradeCount > 0 || recentEstimatedEvUsd > 0 || candidateToOpenedRate > 0 || fillRate > 0 || slippageRejectionRate > 0;
+    let marketHealthState: QmonMarketHealthState = "observation-only";
+    let reason: string | null = "insufficient-recent-settlements";
+
+    if (
+      (hasExecutionEvidence && fillRate <= MARKET_HEALTH_BLOCKED_FILL_RATE) ||
+      (hasExecutionEvidence && slippageRejectionRate >= MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE) ||
+      (
+        recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES &&
+        recentSettledNetPnl < 0 &&
+        recentSettledWinRate <= MARKET_HEALTH_BLOCKED_RECENT_WIN_RATE
+      ) ||
+      (recentEvRealizationRatio !== null && recentEvRealizationRatio < 0)
+    ) {
+      marketHealthState = "blocked";
+      reason =
+        fillRate <= MARKET_HEALTH_BLOCKED_FILL_RATE
+          ? "low-fill-rate"
+          : slippageRejectionRate >= MARKET_HEALTH_BLOCKED_SLIPPAGE_REJECTION_RATE
+            ? "slippage-rejection-cluster"
+            : recentEvRealizationRatio !== null && recentEvRealizationRatio < 0
+              ? "negative-ev-realization"
+              : "negative-recent-settled-pnl";
+    } else if (
+      recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES &&
+      fillRate >= MARKET_HEALTH_HEALTHY_FILL_RATE &&
+      slippageRejectionRate <= MARKET_HEALTH_HEALTHY_SLIPPAGE_REJECTION_RATE &&
+      recentSettledNetPnl > 0 &&
+      recentSettledWinRate >= MARKET_HEALTH_MIN_RECENT_WIN_RATE &&
+      (recentEvRealizationRatio === null || recentEvRealizationRatio >= MARKET_HEALTH_MIN_EV_REALIZATION_RATIO)
+    ) {
+      marketHealthState = "healthy";
+      reason = null;
+    } else if (recentSettledTradeCount >= MARKET_HEALTH_MIN_SETTLED_TRADES) {
+      reason = recentSettledNetPnl <= 0 ? "weak-recent-settled-pnl" : "needs-more-observation";
+    }
+
+    return {
+      state: marketHealthState,
+      fillRate,
+      slippageRejectionRate,
+      recentSettledTradeCount,
+      recentSettledNetPnl,
+      recentSettledWinRate,
+      recentEstimatedEvUsd,
+      recentEvRealizationRatio,
+      candidateToOpenedRate,
+      openedToProfitableSettledRate,
+      reason,
+    };
+  }
+
+  private updateEvaluationFunnel(population: QmonPopulation, evaluationResult: EvaluationResult): QmonPopulation {
+    const currentEvaluationFunnel = population.evaluationFunnel ?? this.createDefaultEvaluationFunnel();
+    const nextTradeabilityRejectCounts = { ...currentEvaluationFunnel.tradeabilityRejectCounts };
+    let triggerGateRejectedCount = currentEvaluationFunnel.triggerGateRejectedCount;
+    let timeGateRejectedCount = currentEvaluationFunnel.timeGateRejectedCount;
+    let regimeGateRejectedCount = currentEvaluationFunnel.regimeGateRejectedCount;
+    let performanceGateRejectedCount = currentEvaluationFunnel.performanceGateRejectedCount;
+    let tradeabilityRejectedCount = currentEvaluationFunnel.tradeabilityRejectedCount;
+    let thresholdPassedCount = currentEvaluationFunnel.thresholdPassedCount;
+    const evaluatedCount = currentEvaluationFunnel.evaluatedCount + 1;
+    const tradeabilityRejectReason = evaluationResult.tradeabilityRejectReason ?? null;
+
+    if (tradeabilityRejectReason === "trigger-gate-blocked") {
+      triggerGateRejectedCount += 1;
+    } else if (tradeabilityRejectReason === "time-gate-blocked") {
+      timeGateRejectedCount += 1;
+    } else if (tradeabilityRejectReason === "regime-gate-blocked") {
+      regimeGateRejectedCount += 1;
+    } else if (tradeabilityRejectReason === "performance-gate-blocked") {
+      performanceGateRejectedCount += 1;
+    } else if (tradeabilityRejectReason !== null) {
+      tradeabilityRejectedCount += 1;
+      nextTradeabilityRejectCounts[tradeabilityRejectReason] = (nextTradeabilityRejectCounts[tradeabilityRejectReason] ?? 0) + 1;
+    } else {
+      thresholdPassedCount += 1;
+    }
+
+    return {
+      ...population,
+      evaluationFunnel: {
+        evaluatedCount,
+        triggerGateRejectedCount,
+        timeGateRejectedCount,
+        regimeGateRejectedCount,
+        performanceGateRejectedCount,
+        tradeabilityRejectedCount,
+        tradeabilityRejectCounts: nextTradeabilityRejectCounts,
+        thresholdPassedCount,
+      },
+    };
+  }
+
   /**
    * Create an empty population-level seat position.
    */
@@ -919,6 +1133,8 @@ export class QmonEngine {
       seatLastWindowStartMs: null,
       seatLastSettledWindowStartMs: null,
       executionQuality: this.createDefaultExecutionQuality(),
+      marketHealth: this.createDefaultMarketHealth(),
+      evaluationFunnel: this.createDefaultEvaluationFunnel(),
       realWalkForwardGate: {
         isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
         isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
@@ -955,6 +1171,8 @@ export class QmonEngine {
           seatLastWindowStartMs: null,
           seatLastSettledWindowStartMs: null,
           executionQuality: this.createDefaultExecutionQuality(),
+          marketHealth: this.createDefaultMarketHealth(),
+          evaluationFunnel: this.createDefaultEvaluationFunnel(),
           realWalkForwardGate: {
             isEnabled: config.QMON_REAL_REQUIRE_WALK_FORWARD,
             isPassed: !config.QMON_REAL_REQUIRE_WALK_FORWARD,
@@ -3528,7 +3746,7 @@ export class QmonEngine {
    * Persist the canonical real-execution runtime for one market.
    */
   public setRealExecutionRuntime(market: MarketKey, executionRuntime: QmonExecutionRuntime, timestamp: number): void {
-    const population = this.getPopulation(market);
+    let population = this.getPopulation(market);
 
     if (population === null) {
       return;
@@ -3571,7 +3789,7 @@ export class QmonEngine {
    * Get QMONs for a specific market.
    */
   public getQmonsForMarket(market: MarketKey): readonly Qmon[] {
-    const population = this.getPopulation(market);
+    let population = this.getPopulation(market);
     return population?.qmons ?? [];
   }
 
@@ -3648,7 +3866,7 @@ export class QmonEngine {
     snapshots?: readonly Snapshot[],
     evaluationOptions?: Partial<EvaluationOptions>,
   ): EvaluationResult[] {
-    const population = this.getPopulation(market);
+    let population = this.getPopulation(market);
     const resolvedEvaluationOptions: EvaluationOptions = {
       shouldBlockEntries: evaluationOptions?.shouldBlockEntries ?? false,
       shouldBlockSeatEntries: evaluationOptions?.shouldBlockSeatEntries ?? evaluationOptions?.shouldBlockEntries ?? false,
@@ -3797,6 +4015,7 @@ export class QmonEngine {
         timeSegment,
         currentExecutionQuality,
       );
+      population = this.updateEvaluationFunnel(population, result);
       qmonForEval = this.updateShadowPosition(
         qmonForEval,
         result,
@@ -3895,6 +4114,7 @@ export class QmonEngine {
         updatedPopulation.qmons,
         this.createEmptyPosition(),
         shouldPreserveSeatState,
+        updatedPopulation.marketHealth,
       );
       this.logChampionChanged(market, previousChampionQmon, this.findChampionQmon(updatedPopulation));
       this.logChampionLostReadiness(market, previousChampionQmon, this.findChampionQmon(updatedPopulation));

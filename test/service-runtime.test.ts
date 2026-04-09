@@ -170,6 +170,10 @@ test("ServiceRuntime serves diagnostics overview payloads", async () => {
   assert.ok("totals" in json);
   assert.ok(Array.isArray(json.markets));
   assert.ok(Array.isArray(json.flags));
+  if ((json.markets?.length ?? 0) > 0) {
+    assert.ok("marketHealth" in json.markets[0]);
+    assert.ok("rejectionFunnel" in json.markets[0]);
+  }
 
   await new Promise((resolve, reject) => {
     server.close((error) => {
@@ -204,6 +208,8 @@ test("ServiceRuntime serves market diagnostics payloads", async () => {
   assert.equal(response.status, 200);
   assert.equal(json.market, "btc-5m");
   assert.ok("fillRate" in json);
+  assert.ok("marketHealth" in json);
+  assert.ok("rejectionFunnel" in json);
   assert.ok(Array.isArray(json.flags));
 
   await new Promise((resolve, reject) => {
@@ -241,6 +247,8 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.equal(response.status, 200);
   assert.ok(firstPopulation);
   assert.ok("realWalkForwardGate" in firstPopulation);
+  assert.ok("marketHealth" in firstPopulation);
+  assert.ok("evaluationFunnel" in firstPopulation);
   assert.ok(firstQmon);
   assert.ok("strategyKind" in firstQmon);
   assert.ok("strategyName" in firstQmon);
@@ -262,6 +270,8 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.ok("totalFeesPaid" in firstQmon.metrics);
   assert.ok("isChampionEligible" in firstQmon.metrics);
   assert.ok("championEligibilityReasons" in firstQmon.metrics);
+  assert.ok("recentSettledTradeCount" in firstQmon.metrics);
+  assert.ok("recentEvRealizationRatio" in firstQmon.metrics);
 
   await new Promise((resolve, reject) => {
     server.close((error) => {

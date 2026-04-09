@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { QmonChampionService } from "../src/qmon/qmon-champion.service.ts";
-import type { MarketKey, Qmon } from "../src/qmon/qmon.types.ts";
+import type { MarketKey, Qmon, QmonDecision, QmonMarketHealth } from "../src/qmon/qmon.types.ts";
 
 const MARKET_KEY = "btc-5m" as const satisfies MarketKey;
 
@@ -123,6 +123,92 @@ function createChampionCandidate(id: string, winRate: number, totalFeesPaid: num
     currentWindowSlippageTotalBps: 0,
     currentWindowSlippageFillCount: 0,
     lastCloseTimestamp: null,
+  };
+}
+
+function attachRecentSettledTrades(
+  qmon: Qmon,
+  trades: readonly {
+    readonly entryCashflow: number;
+    readonly exitCashflow: number;
+    readonly estimatedNetEvUsd: number;
+  }[],
+): Qmon {
+  const decisionHistory: QmonDecision[] = [];
+  let timestamp = 10;
+
+  for (const trade of trades) {
+    decisionHistory.push({
+      timestamp,
+      market: qmon.market,
+      action: "BUY_UP",
+      cashflow: trade.entryCashflow,
+      modelScore: 0.8,
+      triggeredBy: ["test-entry"],
+      fee: 0.01,
+      executionPrice: 0.2,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.8,
+      finalOutcomeProbability: 0.7,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 5000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    timestamp += 1;
+    decisionHistory.push({
+      timestamp,
+      market: qmon.market,
+      action: "HOLD",
+      cashflow: trade.exitCashflow,
+      modelScore: 0.4,
+      triggeredBy: ["test-exit"],
+      fee: 0.01,
+      executionPrice: 0.4,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.4,
+      finalOutcomeProbability: 0.6,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 4000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    timestamp += 1;
+  }
+
+  return {
+    ...qmon,
+    decisionHistory,
+  };
+}
+
+function createMarketHealth(state: QmonMarketHealth["state"], reason: string | null = null): QmonMarketHealth {
+  return {
+    state,
+    fillRate: state === "healthy" ? 0.7 : 0.25,
+    slippageRejectionRate: state === "healthy" ? 0.2 : 0.8,
+    recentSettledTradeCount: state === "healthy" ? 4 : 4,
+    recentSettledNetPnl: state === "healthy" ? 2 : -2,
+    recentSettledWinRate: state === "healthy" ? 0.75 : 0.25,
+    recentEstimatedEvUsd: 4,
+    recentEvRealizationRatio: state === "healthy" ? 0.5 : -0.5,
+    candidateToOpenedRate: state === "healthy" ? 0.5 : 0.1,
+    openedToProfitableSettledRate: state === "healthy" ? 0.75 : 0.25,
+    reason,
   };
 }
 
@@ -506,6 +592,53 @@ test("QmonChampionService migrates production-readiness checks into champion eli
   assert.equal(expensiveQmon.metrics.isChampionEligible, false);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-fee-ratio"), true);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-drawdown"), true);
+});
+
+test("QmonChampionService rejects candidates with poor recent realized quality despite strong lifetime stats", () => {
+  const championService = new QmonChampionService();
+  const staleWinnerQmon = championService.refreshMetrics(
+    attachRecentSettledTrades(createChampionCandidate("RECENT_BAD", 0.8, 0.2), [
+      { entryCashflow: -1, exitCashflow: 0.2, estimatedNetEvUsd: 3 },
+      { entryCashflow: -1, exitCashflow: 0.3, estimatedNetEvUsd: 3 },
+      { entryCashflow: -1, exitCashflow: 0.4, estimatedNetEvUsd: 3 },
+    ]),
+    createMarketHealth("healthy"),
+  );
+
+  assert.equal(staleWinnerQmon.metrics.isChampionEligible, false);
+  assert.equal(staleWinnerQmon.metrics.championEligibilityReasons.includes("negative-recent-settled-pnl"), true);
+  assert.equal(staleWinnerQmon.metrics.championEligibilityReasons.includes("low-recent-settled-win-rate"), true);
+});
+
+test("QmonChampionService rejects candidates with poor EV realization", () => {
+  const championService = new QmonChampionService();
+  const miscalibratedQmon = championService.refreshMetrics(
+    attachRecentSettledTrades(createChampionCandidate("MISPRICED", 0.8, 0.2), [
+      { entryCashflow: -1, exitCashflow: 0.8, estimatedNetEvUsd: 8 },
+      { entryCashflow: -1, exitCashflow: 0.7, estimatedNetEvUsd: 8 },
+      { entryCashflow: -1, exitCashflow: 0.9, estimatedNetEvUsd: 8 },
+    ]),
+    createMarketHealth("healthy"),
+  );
+
+  assert.equal(miscalibratedQmon.metrics.isChampionEligible, false);
+  assert.equal(miscalibratedQmon.metrics.championEligibilityReasons.includes("poor-ev-realization"), true);
+});
+
+test("QmonChampionService blocks champion eligibility when market health is not ready", () => {
+  const championService = new QmonChampionService();
+  const healthyRecentQmon = attachRecentSettledTrades(createChampionCandidate("MARKET_BLOCK", 0.8, 0.2), [
+    { entryCashflow: -1, exitCashflow: 2.2, estimatedNetEvUsd: 2 },
+    { entryCashflow: -1, exitCashflow: 2.1, estimatedNetEvUsd: 2 },
+    { entryCashflow: -1, exitCashflow: 2.3, estimatedNetEvUsd: 2 },
+  ]);
+  const observationOnlyQmon = championService.refreshMetrics(healthyRecentQmon, createMarketHealth("observation-only", "needs-more-observation"));
+  const blockedQmon = championService.refreshMetrics(healthyRecentQmon, createMarketHealth("blocked", "negative-ev-realization"));
+
+  assert.equal(observationOnlyQmon.metrics.isChampionEligible, false);
+  assert.equal(observationOnlyQmon.metrics.championEligibilityReasons.includes("market-health-observation-only"), true);
+  assert.equal(blockedQmon.metrics.isChampionEligible, false);
+  assert.equal(blockedQmon.metrics.championEligibilityReasons.includes("market-health-blocked"), true);
 });
 
 test("QmonChampionService caps estimated EV contribution in fitness", () => {

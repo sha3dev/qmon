@@ -8,7 +8,7 @@ import { createAdaptorServer } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { Hono } from "hono";
 import type { QmonDashboardPayload, RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
-import type { DiagnosticCategory, DiagnosticRange, QmonEngine, QmonValidationLogService } from "../qmon/index.ts";
+import type { DiagnosticCategory, DiagnosticRange, MarketKey, QmonEngine, QmonValidationLogService } from "../qmon/index.ts";
 import { RegimeEngine } from "../regime/regime-engine.service.ts";
 import type { RegimeEvent, RegimeResult } from "../regime/regime.types.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
@@ -233,6 +233,11 @@ export class HttpServerService {
         positionHoldTicks: qmonMetrics.positionHoldTicks ?? 0,
         tradesPerWindow: qmonMetrics.tradesPerWindow ?? 0,
         isChampionEligible: qmonMetrics.isChampionEligible ?? false,
+        recentSettledTradeCount: qmonMetrics.recentSettledTradeCount ?? 0,
+        recentSettledNetPnl: qmonMetrics.recentSettledNetPnl ?? 0,
+        recentSettledWinRate: qmonMetrics.recentSettledWinRate ?? 0,
+        recentEstimatedEvUsd: qmonMetrics.recentEstimatedEvUsd ?? 0,
+        recentEvRealizationRatio: qmonMetrics.recentEvRealizationRatio ?? null,
       },
       paperWindowBaselinePnl: qmon.paperWindowBaselinePnl,
       windowsLived: qmon.windowsLived,
@@ -260,6 +265,8 @@ export class HttpServerService {
       seatLastSettledWindowStartMs: population.seatLastSettledWindowStartMs,
       realWalkForwardGate: population.realWalkForwardGate ?? null,
       executionRuntime: population.executionRuntime ?? null,
+      marketHealth: population.marketHealth ?? null,
+      evaluationFunnel: population.evaluationFunnel ?? null,
       qmons: qmons.map((qmon) => this.buildQmonSummary(qmon as Record<string, unknown>)),
     };
 
@@ -520,8 +527,24 @@ export class HttpServerService {
 
       const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
       const diagnosticsOverview = await this.qmonValidationLogService.readDiagnosticsOverview(diagnosticsRange);
+      const populationByMarket = new Map((this.qmonEngine?.getFamilyState().populations ?? []).map((population) => [population.market, population]));
+      const enrichedMarkets = diagnosticsOverview.markets.map((marketSummary) => {
+        const population = populationByMarket.get(marketSummary.market);
 
-      return context.json(diagnosticsOverview, 200);
+        return {
+          ...marketSummary,
+          marketHealth: population?.marketHealth ?? marketSummary.marketHealth,
+          rejectionFunnel: population?.evaluationFunnel ?? marketSummary.rejectionFunnel ?? null,
+        };
+      });
+
+      return context.json(
+        {
+          ...diagnosticsOverview,
+          markets: enrichedMarkets,
+        },
+        200,
+      );
     });
 
     app.get("/api/qmons/diagnostics/market", async (context) => {
@@ -537,8 +560,16 @@ export class HttpServerService {
 
       const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
       const marketDiagnostics = await this.qmonValidationLogService.readMarketDiagnostics(market, diagnosticsRange);
+      const population = this.qmonEngine?.getPopulation(market as MarketKey);
 
-      return context.json(marketDiagnostics, 200);
+      return context.json(
+        {
+          ...marketDiagnostics,
+          marketHealth: population?.marketHealth ?? marketDiagnostics.marketHealth,
+          rejectionFunnel: population?.evaluationFunnel ?? marketDiagnostics.rejectionFunnel ?? null,
+        },
+        200,
+      );
     });
 
     app.get("/api/qmons/diagnostics/events", async (context) => {

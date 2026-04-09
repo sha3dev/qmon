@@ -82,6 +82,33 @@ export type DominantSignalGroup = "predictive" | "microstructure" | "mixed" | "n
 
 export type QmonExecutionRoute = "paper" | "real";
 
+export type QmonMarketHealthState = "healthy" | "observation-only" | "blocked";
+
+export type QmonMarketHealth = {
+  readonly state: QmonMarketHealthState;
+  readonly fillRate: number;
+  readonly slippageRejectionRate: number;
+  readonly recentSettledTradeCount: number;
+  readonly recentSettledNetPnl: number;
+  readonly recentSettledWinRate: number;
+  readonly recentEstimatedEvUsd: number;
+  readonly recentEvRealizationRatio: number | null;
+  readonly candidateToOpenedRate: number;
+  readonly openedToProfitableSettledRate: number;
+  readonly reason: string | null;
+};
+
+export type QmonEvaluationFunnel = {
+  readonly evaluatedCount: number;
+  readonly triggerGateRejectedCount: number;
+  readonly timeGateRejectedCount: number;
+  readonly regimeGateRejectedCount: number;
+  readonly performanceGateRejectedCount: number;
+  readonly tradeabilityRejectedCount: number;
+  readonly tradeabilityRejectCounts: Readonly<Record<string, number>>;
+  readonly thresholdPassedCount: number;
+};
+
 export type QmonExecutionState =
   | "paper"
   | "real-armed"
@@ -273,6 +300,11 @@ export type QmonMetrics = {
   readonly shadowCorrectCount?: number;
   readonly shadowBrierScoreSum?: number;
   readonly shadowNetPnl?: number;
+  readonly recentSettledTradeCount?: number;
+  readonly recentSettledNetPnl?: number;
+  readonly recentSettledWinRate?: number;
+  readonly recentEstimatedEvUsd?: number;
+  readonly recentEvRealizationRatio?: number | null;
   readonly lastUpdate: number;
 };
 
@@ -322,6 +354,8 @@ export type QmonPopulation = {
   readonly executionQuality?: QmonExecutionQuality;
   readonly executionRuntime?: QmonExecutionRuntime;
   readonly realWalkForwardGate?: QmonRealWalkForwardGate;
+  readonly marketHealth?: QmonMarketHealth;
+  readonly evaluationFunnel?: QmonEvaluationFunnel;
 };
 
 export type QmonExecutionQuality = {
