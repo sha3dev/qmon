@@ -635,8 +635,8 @@ test("QmonChampionService blocks champion eligibility when market health is not 
   const observationOnlyQmon = championService.refreshMetrics(healthyRecentQmon, createMarketHealth("observation-only", "needs-more-observation"));
   const blockedQmon = championService.refreshMetrics(healthyRecentQmon, createMarketHealth("blocked", "negative-ev-realization"));
 
-  assert.equal(observationOnlyQmon.metrics.isChampionEligible, false);
-  assert.equal(observationOnlyQmon.metrics.championEligibilityReasons.includes("market-health-observation-only"), true);
+  assert.equal(observationOnlyQmon.metrics.isChampionEligible, true);
+  assert.equal(observationOnlyQmon.metrics.championEligibilityReasons.includes("market-health-observation-only"), false);
   assert.equal(blockedQmon.metrics.isChampionEligible, false);
   assert.equal(blockedQmon.metrics.championEligibilityReasons.includes("market-health-blocked"), true);
 });

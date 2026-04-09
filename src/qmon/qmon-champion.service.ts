@@ -464,22 +464,22 @@ export class QmonChampionService {
     if (qmon.metrics.totalTrades < CHAMPION_MIN_PRODUCTION_TRADES && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-trades");
     }
-    if (marketHealth !== undefined && recentSettledTradeCount < CHAMPION_MIN_RECENT_SETTLED_TRADES) {
+    if (marketHealth?.state === "healthy" && recentSettledTradeCount < CHAMPION_MIN_RECENT_SETTLED_TRADES) {
       championEligibilityReasons.push("insufficient-recent-settled-trades");
     }
-    if (marketHealth !== undefined && recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES && recentSettledNetPnl <= 0) {
+    if (marketHealth !== undefined && recentSettledTradeCount > 0 && recentSettledNetPnl <= 0) {
       championEligibilityReasons.push("negative-recent-settled-pnl");
     }
     if (
       marketHealth !== undefined &&
-      recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES &&
+      recentSettledTradeCount > 0 &&
       recentSettledWinRate < CHAMPION_MIN_RECENT_SETTLED_WIN_RATE
     ) {
       championEligibilityReasons.push("low-recent-settled-win-rate");
     }
     if (
       marketHealth !== undefined &&
-      recentSettledTradeCount >= CHAMPION_MIN_RECENT_SETTLED_TRADES &&
+      recentSettledTradeCount > 0 &&
       recentEvRealizationRatio !== null &&
       recentEvRealizationRatio < CHAMPION_MIN_RECENT_EV_REALIZATION_RATIO
     ) {
@@ -527,8 +527,6 @@ export class QmonChampionService {
 
     if (marketHealth !== undefined && marketHealth.state === "blocked") {
       championEligibilityReasons.push("market-health-blocked");
-    } else if (marketHealth !== undefined && marketHealth.state === "observation-only") {
-      championEligibilityReasons.push("market-health-observation-only");
     }
 
     if (!this.hasConsistentTradeState(qmon)) {
