@@ -464,18 +464,6 @@ export class QmonEngine {
       rejectReason = null;
     } else if (championQmon === null) {
       rejectReason = "no-active-champion";
-    } else if (tradeCount < config.QMON_REAL_MIN_WF_TRADES) {
-      rejectReason = "walk-forward-insufficient-trades";
-    } else if (netPnlUsd < config.QMON_REAL_MIN_WF_NET_PNL_USD) {
-      rejectReason = "walk-forward-net-pnl-too-low";
-    } else if (maxDrawdownUsd > config.QMON_REAL_MAX_WF_DRAWDOWN_USD) {
-      rejectReason = "walk-forward-drawdown-too-high";
-    } else if (feeRatio > config.QMON_REAL_MAX_WF_FEE_RATIO) {
-      rejectReason = "walk-forward-fee-ratio-too-high";
-    } else if (recentAvgSlippageBps > config.QMON_REAL_MAX_WF_SLIPPAGE_BPS) {
-      rejectReason = "walk-forward-slippage-too-high";
-    } else if ((championQmon.metrics.paperWindowPnlSum ?? 0) <= 0 || (championQmon.metrics.negativeWindowRateLast10 ?? 1) > 0.4) {
-      rejectReason = "walk-forward-rolling-deterioration";
     } else if (!(championQmon.metrics.isChampionEligible && (championQmon.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0)) {
       rejectReason = "champion-not-production-ready";
     }
@@ -1173,6 +1161,63 @@ export class QmonEngine {
         parentIds: [...parentIds],
         generation,
         replacementCount,
+      });
+    }
+  }
+
+  /**
+   * Resolve the current champion QMON for one population snapshot.
+   */
+  private findChampionQmon(population: QmonPopulation): Qmon | null {
+    let championQmon: Qmon | null = null;
+
+    if (population.activeChampionQmonId !== null) {
+      championQmon = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) ?? null;
+    }
+
+    return championQmon;
+  }
+
+  /**
+   * Log when champion ownership changes for one market.
+   */
+  private logChampionChanged(market: MarketKey, previousChampionQmon: Qmon | null, nextChampionQmon: Qmon | null): void {
+    const previousChampionQmonId = previousChampionQmon?.id ?? null;
+    const nextChampionQmonId = nextChampionQmon?.id ?? null;
+    const shouldLogChampionChange = previousChampionQmonId !== nextChampionQmonId;
+
+    if (this.validationLogService !== null && shouldLogChampionChange) {
+      this.validationLogService.logChampionChanged({
+        market,
+        qmonId: nextChampionQmonId ?? previousChampionQmonId,
+        previousChampionQmonId,
+        nextChampionQmonId,
+        previousChampionScore: previousChampionQmon?.metrics.championScore ?? null,
+        nextChampionScore: nextChampionQmon?.metrics.championScore ?? null,
+        previousChampionEligibilityReasons: previousChampionQmon?.metrics.championEligibilityReasons ?? [],
+        nextChampionEligibilityReasons: nextChampionQmon?.metrics.championEligibilityReasons ?? [],
+      });
+    }
+  }
+
+  /**
+   * Log when the active champion loses readiness without necessarily changing id.
+   */
+  private logChampionLostReadiness(market: MarketKey, previousChampionQmon: Qmon | null, nextChampionQmon: Qmon | null): void {
+    const isSameChampion =
+      previousChampionQmon !== null && nextChampionQmon !== null && previousChampionQmon.id === nextChampionQmon.id;
+    const wasPreviouslyEligible = previousChampionQmon?.metrics.isChampionEligible === true;
+    const isCurrentlyEligible = isSameChampion && nextChampionQmon.metrics.isChampionEligible === true;
+    const shouldLogChampionReadinessLoss = wasPreviouslyEligible && !isCurrentlyEligible;
+    const affectedChampionQmon = isSameChampion ? nextChampionQmon : previousChampionQmon;
+
+    if (this.validationLogService !== null && shouldLogChampionReadinessLoss && affectedChampionQmon !== null) {
+      this.validationLogService.logChampionLostReadiness({
+        market,
+        qmonId: affectedChampionQmon.id,
+        previousChampionScore: previousChampionQmon?.metrics.championScore ?? null,
+        nextChampionScore: nextChampionQmon?.metrics.championScore ?? null,
+        championEligibilityReasons: nextChampionQmon?.metrics.championEligibilityReasons ?? ["lost-active-champion"],
       });
     }
   }
@@ -3843,6 +3888,7 @@ export class QmonEngine {
     if (isNewWindow) {
       const shouldPreserveSeatState =
         resolvedEvaluationOptions.executionMode === "real" && (updatedPopulation.seatPosition.action !== null || updatedPopulation.seatPendingOrder !== null);
+      const previousChampionQmon = this.findChampionQmon(updatedPopulation);
 
       updatedPopulation = this.championService.finalizePopulation(
         updatedPopulation,
@@ -3850,6 +3896,8 @@ export class QmonEngine {
         this.createEmptyPosition(),
         shouldPreserveSeatState,
       );
+      this.logChampionChanged(market, previousChampionQmon, this.findChampionQmon(updatedPopulation));
+      this.logChampionLostReadiness(market, previousChampionQmon, this.findChampionQmon(updatedPopulation));
       const evolutionResult =
         this.isEvolutionEnabled && !resolvedEvaluationOptions.shouldSkipEvolution
           ? this.evolutionService.evolvePopulation(

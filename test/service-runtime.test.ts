@@ -1,7 +1,11 @@
 import * as assert from "node:assert/strict";
+import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { ServiceRuntime } from "../src/index.ts";
+import { QmonPersistenceService } from "../src/qmon/index.ts";
 
 test("ServiceRuntime serves the QMON stats API", async () => {
   const serviceRuntime = await ServiceRuntime.createDefault();
@@ -258,6 +262,105 @@ test("ServiceRuntime serves champion readiness metrics on the QMON payload", asy
   assert.ok("totalFeesPaid" in firstQmon.metrics);
   assert.ok("isChampionEligible" in firstQmon.metrics);
   assert.ok("championEligibilityReasons" in firstQmon.metrics);
+
+  await new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve(undefined);
+    });
+  });
+});
+
+test("ServiceRuntime preserves persisted family state and diagnostics across restart", async () => {
+  const runtimeDir = await mkdtemp(join(tmpdir(), "qmon-runtime-"));
+  const dataDir = join(runtimeDir, "data");
+  const diagnosticsDir = join(dataDir, "qmon-diagnostics");
+  await ServiceRuntime.createDefault({
+    dataDir,
+    diagnosticsDir,
+  });
+  const persistenceService = QmonPersistenceService.createDefault(dataDir);
+  const persistedState = await persistenceService.load();
+
+  if (persistedState === null) {
+    throw new Error("expected persisted family state");
+  }
+
+  const firstPopulation = persistedState.populations[0];
+  const firstQmon = firstPopulation?.qmons[0];
+
+  if (firstPopulation === undefined || firstQmon === undefined) {
+    throw new Error("expected initialized population");
+  }
+
+  const updatedState = {
+    ...persistedState,
+    populations: persistedState.populations.map((population, populationIndex) => {
+      let updatedPopulation = population;
+
+      if (populationIndex === 0) {
+        updatedPopulation = {
+          ...population,
+          qmons: population.qmons.map((qmon, qmonIndex) =>
+            qmonIndex === 0
+              ? {
+                  ...qmon,
+                  windowsLived: 17,
+                  paperWindowPnls: [0.6, 0.7, 0.8, 0.9, 1],
+                  paperWindowSlippageBps: [10, 10, 11, 12, 12],
+                  metrics: {
+                    ...qmon.metrics,
+                    totalTrades: 11,
+                    totalPnl: 4.5,
+                    winRate: 0.7,
+                    winCount: 8,
+                  },
+                }
+              : qmon,
+          ),
+          activeChampionQmonId: firstQmon.id,
+        };
+      }
+
+      return updatedPopulation;
+    }),
+  };
+
+  await persistenceService.save(updatedState);
+  await mkdir(join(diagnosticsDir, "events", "2026-04-09"), { recursive: true });
+  await writeFile(join(diagnosticsDir, "events", "2026-04-09", "eth-5m.jsonl"), "{\"eventType\":\"champion-changed\"}\n", "utf-8");
+
+  const secondRuntime = await ServiceRuntime.createDefault({
+    dataDir,
+    diagnosticsDir,
+  });
+  const server = secondRuntime.buildServer();
+
+  await new Promise((resolve) => {
+    server.listen(0, () => {
+      resolve(undefined);
+    });
+  });
+
+  const address = server.address();
+
+  if (!address || typeof address === "string") {
+    throw new Error("failed to bind test server");
+  }
+
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/qmons`);
+  const json = await response.json();
+  const preservedQmon = json.populations?.[0]?.qmons?.find((qmon: { id: string }) => qmon.id === firstQmon.id);
+
+  assert.equal(response.status, 200);
+  assert.equal(preservedQmon?.windowsLived, 17);
+  assert.equal(preservedQmon?.metrics?.totalTrades, 11);
+  assert.equal(preservedQmon?.metrics?.totalPnl, 4.5);
+  await access(join(diagnosticsDir, "events", "2026-04-09", "eth-5m.jsonl"));
 
   await new Promise((resolve, reject) => {
     server.close((error) => {

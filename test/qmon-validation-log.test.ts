@@ -307,3 +307,40 @@ test("QmonValidationLogService clears persisted diagnostics state", async () => 
     await rm(diagnosticsDir, { recursive: true, force: true });
   }
 });
+
+test("QmonValidationLogService tracks champion lifecycle diagnostics", async () => {
+  const diagnosticsDir = await mkdtemp(join(tmpdir(), "qmon-diagnostics-"));
+  const validationLogService = new QmonValidationLogService(diagnosticsDir);
+  const mockNow = Date.now();
+
+  try {
+    withMockNow(mockNow, () => {
+      validationLogService.logChampionChanged({
+        market: "eth-5m",
+        qmonId: "QMON_NEXT",
+        previousChampionQmonId: "QMON_PREV",
+        nextChampionQmonId: "QMON_NEXT",
+        previousChampionScore: 180,
+        nextChampionScore: 210,
+      });
+      validationLogService.logChampionLostReadiness({
+        market: "eth-5m",
+        qmonId: "QMON_NEXT",
+        previousChampionScore: 210,
+        nextChampionScore: null,
+        championEligibilityReasons: ["high-fee-ratio", "non-positive-pnl"],
+      });
+    });
+
+    await validationLogService.flush();
+
+    const marketSummary = await validationLogService.readMarketDiagnostics("eth-5m", "24h");
+    const diagnosticEvents = await validationLogService.readDiagnosticEvents("eth-5m", undefined, "24h", 10);
+
+    assert.equal(marketSummary.championChangeCount, 1);
+    assert.equal(diagnosticEvents.some((event) => event.eventType === "champion-changed"), true);
+    assert.equal(diagnosticEvents.some((event) => event.eventType === "champion-lost-readiness" && event.severity === "warn"), true);
+  } finally {
+    await rm(diagnosticsDir, { recursive: true, force: true });
+  }
+});

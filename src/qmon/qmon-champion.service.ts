@@ -2,6 +2,7 @@
  * @section imports:internals
  */
 
+import config from "../config.ts";
 import type { Qmon, QmonPopulation, QmonPosition, QmonRole, RegimePerformanceSlice, TriggerPerformanceSlice } from "./qmon.types.ts";
 
 /**
@@ -15,8 +16,6 @@ const PAPER_CHAMPION_MEDIUM_HISTORY_WINDOW = 15;
 const CHAMPION_MIN_FITNESS_SCORE = 150;
 const CHAMPION_MIN_WIN_RATE = 0.55;
 const CHAMPION_MAX_NEGATIVE_WINDOW_RATE = 0.4;
-const CHAMPION_MAX_FEE_RATIO = 0.65;
-const CHAMPION_MAX_DRAWDOWN = 5;
 const CHAMPION_MIN_WINDOW_MEDIAN_PNL = 0.5;
 const CHAMPION_MIN_REGIME_COVERAGE = 2;
 const CHAMPION_LONG_SUM_WEIGHT = 24;
@@ -48,6 +47,11 @@ const CHAMPION_SHADOW_BRIER_PENALTY = 10;
 const CHAMPION_SHADOW_ELIGIBILITY_MIN_SAMPLE = 24;
 const CHAMPION_SHADOW_ELIGIBILITY_MIN_ACCURACY = 0.55;
 const CHAMPION_SHADOW_ELIGIBILITY_MAX_BRIER = 0.24;
+const CHAMPION_MIN_PRODUCTION_TRADES = config.QMON_REAL_MIN_WF_TRADES;
+const CHAMPION_MIN_PRODUCTION_NET_PNL = config.QMON_REAL_MIN_WF_NET_PNL_USD;
+const CHAMPION_MAX_PRODUCTION_DRAWDOWN = config.QMON_REAL_MAX_WF_DRAWDOWN_USD;
+const CHAMPION_MAX_PRODUCTION_FEE_RATIO = config.QMON_REAL_MAX_WF_FEE_RATIO;
+const CHAMPION_MAX_PRODUCTION_SLIPPAGE_BPS = config.QMON_REAL_MAX_WF_SLIPPAGE_BPS;
 
 type ShadowValidationEvidence = {
   readonly hasValidatedShadowEvidence: boolean;
@@ -378,7 +382,7 @@ export class QmonChampionService {
     if (qmon.metrics.winRate < CHAMPION_MIN_WIN_RATE && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("low-win-rate");
     }
-    if (qmon.metrics.totalTrades < 10 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
+    if (qmon.metrics.totalTrades < CHAMPION_MIN_PRODUCTION_TRADES && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-trades");
     }
     if (fitnessScore <= CHAMPION_MIN_FITNESS_SCORE) {
@@ -386,15 +390,20 @@ export class QmonChampionService {
     }
     if (paperLongWindowPnlSum <= 0 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("non-positive-long-window-sum");
+    } else if (paperLongWindowPnlSum < CHAMPION_MIN_PRODUCTION_NET_PNL && !shadowValidationEvidence.hasValidatedShadowEvidence) {
+      championEligibilityReasons.push("low-long-window-pnl");
     }
     if (negativeWindowRateLast10 > CHAMPION_MAX_NEGATIVE_WINDOW_RATE) {
       championEligibilityReasons.push("high-negative-window-rate");
     }
-    if (feeRatio > CHAMPION_MAX_FEE_RATIO) {
+    if (maxDrawdown > CHAMPION_MAX_PRODUCTION_DRAWDOWN) {
+      championEligibilityReasons.push("high-drawdown");
+    }
+    if (qmon.metrics.totalTrades >= CHAMPION_MIN_PRODUCTION_TRADES && feeRatio > CHAMPION_MAX_PRODUCTION_FEE_RATIO) {
       championEligibilityReasons.push("high-fee-ratio");
     }
-    if (maxDrawdown > CHAMPION_MAX_DRAWDOWN) {
-      championEligibilityReasons.push("high-drawdown");
+    if (recentAvgSlippageBps > CHAMPION_MAX_PRODUCTION_SLIPPAGE_BPS) {
+      championEligibilityReasons.push("high-slippage");
     }
     if (positiveRegimeCount < CHAMPION_MIN_REGIME_COVERAGE && regimeBreakdown.length >= CHAMPION_MIN_REGIME_COVERAGE) {
       championEligibilityReasons.push("weak-regime-coverage");
@@ -521,12 +530,10 @@ export class QmonChampionService {
     const shouldRetain =
       incumbentChampion.lifecycle === "active" &&
       this.hasConsistentTradeState(incumbentChampion) &&
-      incumbentChampion.metrics.totalPnl > 0 &&
-      incumbentChampion.metrics.winRate >= CHAMPION_MIN_WIN_RATE &&
-      incumbentChampion.metrics.totalTrades >= 10 &&
+      incumbentChampion.metrics.isChampionEligible &&
+      (incumbentChampion.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0 &&
       recentActiveWindowCount >= CHAMPION_INCUMBENT_MIN_ACTIVE_RECENT_WINDOWS &&
-      (incumbentChampion.metrics.feeRatio ?? 0) <= CHAMPION_MAX_FEE_RATIO &&
-      incumbentChampion.metrics.maxDrawdown <= CHAMPION_MAX_DRAWDOWN;
+      incumbentChampion.metrics.totalPnl > 0;
 
     return shouldRetain;
   }

@@ -310,6 +310,10 @@ export class QmonValidationLogService {
         } else {
           if (eventType === "validation-warning") {
             category = "warning";
+          } else {
+            if (eventType === "champion-lost-readiness") {
+              category = "warning";
+            }
           }
         }
       }
@@ -321,7 +325,7 @@ export class QmonValidationLogService {
   private resolveSeverity(eventType: string): DiagnosticSeverity {
     let severity: DiagnosticSeverity = "info";
 
-    if (eventType === "validation-warning") {
+    if (eventType === "validation-warning" || eventType === "champion-lost-readiness") {
       severity = "warn";
     }
 
@@ -490,6 +494,10 @@ export class QmonValidationLogService {
       if (typeof event.nextLeaderQmonId === "string" && event.nextLeaderQmonId !== event.qmonId) {
         nextAggregate.championChangeCount += 1;
       }
+    }
+
+    if (event.eventType === "champion-changed") {
+      nextAggregate.championChangeCount += 1;
     }
 
     if (event.eventType === "qmon-born") {
@@ -1174,7 +1182,12 @@ export class QmonValidationLogService {
   }
 
   private shouldPersistRawEvent(event: ValidationLogEvent): boolean {
-    const shouldPersist = event.isSeat === true || event.eventType === "position-opened" || event.eventType === "position-closed";
+    const shouldPersist =
+      event.isSeat === true ||
+      event.eventType === "position-opened" ||
+      event.eventType === "position-closed" ||
+      event.eventType === "champion-changed" ||
+      event.eventType === "champion-lost-readiness";
 
     return shouldPersist;
   }
@@ -1218,6 +1231,14 @@ export class QmonValidationLogService {
 
   public logQmonDied(payload: ValidationLogPayload): void {
     this.enqueueWrite("qmon-died", payload);
+  }
+
+  public logChampionChanged(payload: ValidationLogPayload): void {
+    this.enqueueWrite("champion-changed", payload);
+  }
+
+  public logChampionLostReadiness(payload: ValidationLogPayload): void {
+    this.enqueueWrite("champion-lost-readiness", payload);
   }
 
   public logPaperOrderCreated(payload: ValidationLogPayload): void {

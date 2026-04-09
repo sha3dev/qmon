@@ -482,8 +482,16 @@ test("QmonChampionService keeps sparse-history gates when shadow evidence is too
   assert.equal(weakShadowQmon.metrics.championEligibilityReasons.includes("fails-out-of-sample-validation"), true);
 });
 
-test("QmonChampionService rejects candidates with excessive fees or drawdown", () => {
+test("QmonChampionService migrates production-readiness checks into champion eligibility", () => {
   const championService = new QmonChampionService();
+  const slippageBlockedQmon = championService.refreshMetrics({
+    ...createChampionCandidate("SLIPPAGE", 0.8, 0.4),
+    paperWindowSlippageBps: [120, 118, 122, 121, 119, 120],
+    metrics: {
+      ...createChampionCandidate("SLIPPAGE", 0.8, 0.4).metrics,
+      recentAvgSlippageBps: 120,
+    },
+  });
   const expensiveQmon = championService.refreshMetrics({
     ...createChampionCandidate("EXPENSIVE", 0.8, 25),
     metrics: {
@@ -493,6 +501,8 @@ test("QmonChampionService rejects candidates with excessive fees or drawdown", (
     },
   });
 
+  assert.equal(slippageBlockedQmon.metrics.isChampionEligible, false);
+  assert.equal(slippageBlockedQmon.metrics.championEligibilityReasons.includes("high-slippage"), true);
   assert.equal(expensiveQmon.metrics.isChampionEligible, false);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-fee-ratio"), true);
   assert.equal(expensiveQmon.metrics.championEligibilityReasons.includes("high-drawdown"), true);

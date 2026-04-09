@@ -32,6 +32,15 @@ const MAX_BUFFER_SIZE = 700;
 const WALK_FORWARD_BLOCKED_LOG_INTERVAL_MS = 600_000;
 
 /**
+ * @section types
+ */
+
+type ServiceRuntimeCreateDefaultOptions = {
+  readonly dataDir?: string;
+  readonly diagnosticsDir?: string;
+};
+
+/**
  * @section class
  */
 
@@ -84,19 +93,20 @@ export class ServiceRuntime {
    * @section factory
    */
 
-  public static async createDefault(): Promise<ServiceRuntime> {
+  public static async createDefault(options: ServiceRuntimeCreateDefaultOptions = {}): Promise<ServiceRuntime> {
+    const dataDir = options.dataDir ?? "./data";
+    const diagnosticsDir = options.diagnosticsDir ?? `${dataDir}/qmon-diagnostics`;
     const snapshotService = new SnapshotService(config.SNAPSHOT_INTERVAL_MS);
     const signalEngine = SignalEngine.createDefault();
-    const qmonPersistence = QmonPersistenceService.createDefault("./data");
-    const qmonLiveStatePersistenceService = QmonLiveStatePersistenceService.createDefault("./data");
-    const qmonValidationLogService = QmonValidationLogService.createDefault("./data/qmon-diagnostics");
-    await qmonValidationLogService.clearPersistedState();
+    const qmonPersistence = QmonPersistenceService.createDefault(dataDir);
+    const qmonLiveStatePersistenceService = QmonLiveStatePersistenceService.createDefault(dataDir);
+    const qmonValidationLogService = QmonValidationLogService.createDefault(diagnosticsDir);
     const existingState = await qmonPersistence.load();
     const familyStateBackupPath = existingState !== null ? await qmonPersistence.backupFamilyState(existingState) : null;
     const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
     const normalizedExistingState =
       existingState !== null ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_EXECUTION_MODE, legacyLiveExecutionState) : null;
-    const initialFamilyState = normalizedExistingState !== null ? qmonPersistence.resetCpnlState(normalizedExistingState, config.QMON_EXECUTION_MODE) : null;
+    const initialFamilyState = normalizedExistingState;
     const qmonEngine = existingState
       ? new QmonEngine(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, initialFamilyState ?? undefined, signalEngine, undefined, qmonValidationLogService)
       : QmonEngine.createDefault(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, signalEngine, qmonValidationLogService);
@@ -105,7 +115,7 @@ export class ServiceRuntime {
       qmonEngine.initializePopulations();
       logger.info("QMON populations initialized");
     } else {
-      logger.info("QMON state loaded from persistence with CPnL reset");
+      logger.info("QMON state loaded from persistence without CPnL reset");
 
       if (familyStateBackupPath !== null) {
         logger.info(`QMON family state backup created at ${familyStateBackupPath}`);

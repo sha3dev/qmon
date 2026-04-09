@@ -1358,7 +1358,7 @@ test("QmonEngine keeps real-routed seat entries pending instead of filling them 
   assert.equal(queuedSeatQmon.metrics.totalPnl, 0);
 });
 
-test("QmonEngine downgrades an under-sampled champion market to paper when real walk-forward is required", () => {
+test("QmonEngine downgrades a non-production-ready champion market to paper when real routing is requested", () => {
   const championService = new QmonChampionService();
   const championQmon = championService.refreshMetrics({
     ...createQmon("champion"),
@@ -1366,13 +1366,13 @@ test("QmonEngine downgrades an under-sampled champion market to paper when real 
     paperWindowSlippageBps: [10, 10, 10, 10, 10],
     metrics: {
       ...createQmon("champion").metrics,
-      totalTrades: 3,
+      totalTrades: 12,
       totalPnl: 2.4,
       peakTotalPnl: 2.4,
-      recentAvgSlippageBps: 10,
+      recentAvgSlippageBps: 120,
       totalFeesPaid: 0.2,
       winRate: 0.67,
-      winCount: 2,
+      winCount: 8,
       maxDrawdown: 0.5,
       grossAlphaCapture: 2,
       feeRatio: 0.08,
@@ -1409,7 +1409,7 @@ test("QmonEngine downgrades an under-sampled champion market to paper when real 
 
   assert.equal(population.executionRuntime?.route, "paper");
   assert.equal(population.realWalkForwardGate?.isPassed, false);
-  assert.equal(population.realWalkForwardGate?.rejectReason, "walk-forward-insufficient-trades");
+  assert.equal(population.realWalkForwardGate?.rejectReason, "champion-not-production-ready");
 });
 
 test("QmonEngine arms real routing when the champion passes the walk-forward gate", () => {
