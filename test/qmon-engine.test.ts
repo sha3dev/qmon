@@ -1017,6 +1017,46 @@ test("QmonEngine reports position-size-invalid when the risk budget cannot fund 
   assert.equal(updatedQmon.pendingOrder, null);
 });
 
+test("QmonEngine bootstrap can open a high-priced market when notional sizing is enabled", () => {
+  const qmon = createQmon();
+  const bootstrapQmon: Qmon = {
+    ...qmon,
+    genome: {
+      ...qmon.genome,
+      riskBudgetUsd: 1.45,
+    },
+  };
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([bootstrapQmon])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.42, 0.58, 100, 100)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.95, 0.42, 0.58, marketStartMs, marketEndMs, 100_000, 0.8, 0.8, 0.01, 0.6, 0.9),
+      createRegimes(),
+      ["consensus-flip"],
+      entrySnapshots,
+    );
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(
+      MARKET_KEY,
+      createSignals(0.95, 0.42, 0.58, marketStartMs, marketEndMs, 100_000, 0.8, 0.8, 0.01, 0.6, 0.9),
+      createRegimes(),
+      ["consensus-flip"],
+      entrySnapshots,
+    );
+  });
+
+  const openedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(openedQmon.position.action, "BUY_UP");
+  assert.equal((openedQmon.position.shareCount ?? 0) >= 2, true);
+  assert.equal((openedQmon.position.shareCount ?? 0) < 5, true);
+});
+
 test("QmonEngine keeps high-conviction entries tradeable under moderate self-stress", () => {
   const qmon = createQmon();
   const stressedQmon: Qmon = {

@@ -4,6 +4,7 @@
 
 import type { Snapshot } from "@sha3/polymarket-snapshot";
 
+import config from "../config.ts";
 import { SignalBookParser } from "../signal/signal-book-parser.service.ts";
 import type { BestBidAsk, ParsedBook } from "../signal/signal.types.ts";
 import type {
@@ -143,9 +144,25 @@ export class QmonExecutionService {
 
     if (tokenPrice !== null && tokenPrice > 0 && tokenPrice <= 1) {
       const minimumNotionalShares = Math.ceil(MIN_POSITION_NOTIONAL_USD / tokenPrice);
-      const minimumNetShares = Math.max(MIN_POSITION_SHARES, minimumNotionalShares);
-      const takerBuyFeeShareRate = this.calculateTakerBuyFeeShareRate(tokenPrice);
-      shareCount = Math.ceil(minimumNetShares / Math.max(1 - takerBuyFeeShareRate, Number.EPSILON));
+      if (config.QMON_USE_MINIMUM_ENTRY_SHARES) {
+        const minimumNetShares = Math.max(MIN_POSITION_SHARES, minimumNotionalShares);
+        const takerBuyFeeShareRate = this.calculateTakerBuyFeeShareRate(tokenPrice);
+        shareCount = Math.ceil(minimumNetShares / Math.max(1 - takerBuyFeeShareRate, Number.EPSILON));
+      } else {
+        let candidateShareCount = 1;
+        let hasReachedMinimumNotional = false;
+
+        while (!hasReachedMinimumNotional) {
+          const candidateNetShares = this.calculateNetTakerBuyShares(candidateShareCount, tokenPrice);
+          hasReachedMinimumNotional = candidateNetShares * tokenPrice >= MIN_POSITION_NOTIONAL_USD;
+
+          if (!hasReachedMinimumNotional) {
+            candidateShareCount += 1;
+          }
+        }
+
+        shareCount = candidateShareCount;
+      }
     }
 
     return shareCount;
@@ -274,7 +291,8 @@ export class QmonExecutionService {
 
     if (averagePrice !== null) {
       const notional = filledShares * averagePrice;
-      isValid = filledShares >= MIN_POSITION_SHARES && notional >= MIN_POSITION_NOTIONAL_USD;
+      const hasValidShareCount = config.QMON_USE_MINIMUM_ENTRY_SHARES ? filledShares >= MIN_POSITION_SHARES : filledShares > 0;
+      isValid = hasValidShareCount && notional >= MIN_POSITION_NOTIONAL_USD;
     }
 
     return isValid;

@@ -6,7 +6,7 @@ const ENV = process.env;
 const signalAssets = ["btc", "eth", "sol", "xrp"] as const;
 const signalWindows = ["5m", "15m"] as const;
 const qmonExecutionMode = ENV.QMON_EXECUTION_MODE === "real" ? "real" : "paper";
-const qmonUseMinimumEntryShares = ENV.QMON_USE_MINIMUM_ENTRY_SHARES !== "false";
+const qmonUseMinimumEntryShares = ENV.QMON_USE_MINIMUM_ENTRY_SHARES === "true";
 const QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD = Number(ENV.QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD || 10);
 const qmonRealRequireWalkForward = ENV.QMON_REAL_REQUIRE_WALK_FORWARD !== "false";
 const qmonPresetQmonsEnabled = ENV.QMON_PRESET_QMONS_ENABLED !== "false";
