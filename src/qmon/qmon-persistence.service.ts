@@ -204,6 +204,45 @@ export class QmonPersistenceService {
     return executionState;
   }
 
+  private hasActiveExecutionRuntimeRisk(population: QmonPopulation, executionRuntime: QmonExecutionRuntime): boolean {
+    const hasActiveExecutionRuntimeRisk =
+      executionRuntime.orderId !== null ||
+      executionRuntime.pendingVenueOrders.length > 0 ||
+      executionRuntime.confirmedVenueSeat !== null ||
+      executionRuntime.pendingIntent !== null ||
+      population.seatPendingOrder !== null ||
+      population.seatPosition.action !== null;
+
+    return hasActiveExecutionRuntimeRisk;
+  }
+
+  private clearStaleWindowScopedError(
+    population: QmonPopulation,
+    executionRuntime: QmonExecutionRuntime,
+  ): QmonExecutionRuntime {
+    const currentWindowStartMs = population.seatLastWindowStartMs;
+    const runtimeWindowStartMs = executionRuntime.pendingIntent?.marketStartMs ?? executionRuntime.submittedAt;
+    const hasWindowScopedError = executionRuntime.route === "real" && !executionRuntime.isHalted && executionRuntime.lastError !== null;
+    const hasActiveExecutionRuntimeRisk = this.hasActiveExecutionRuntimeRisk(population, executionRuntime);
+    const shouldClearWindowScopedError =
+      hasWindowScopedError &&
+      !hasActiveExecutionRuntimeRisk &&
+      currentWindowStartMs !== null &&
+      runtimeWindowStartMs !== null &&
+      runtimeWindowStartMs < currentWindowStartMs;
+    let normalizedExecutionRuntime = executionRuntime;
+
+    if (shouldClearWindowScopedError) {
+      normalizedExecutionRuntime = {
+        ...executionRuntime,
+        submittedAt: null,
+        lastError: null,
+      };
+    }
+
+    return normalizedExecutionRuntime;
+  }
+
   private createConfirmedVenueSeatFromLegacy(
     persistedLiveSeatState: PersistedLiveSeatState | null,
   ): QmonExecutionRuntime["confirmedVenueSeat"] {
@@ -281,9 +320,10 @@ export class QmonPersistenceService {
       lastError: route === "real" ? currentExecutionRuntime.lastError : null,
       isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
     };
+    const windowScopedExecutionRuntime = this.clearStaleWindowScopedError(population, normalizedExecutionRuntime);
     const resolvedExecutionRuntime: QmonExecutionRuntime = {
-      ...normalizedExecutionRuntime,
-      executionState: this.resolveExecutionState(normalizedExecutionRuntime),
+      ...windowScopedExecutionRuntime,
+      executionState: this.resolveExecutionState(windowScopedExecutionRuntime),
     };
 
     return resolvedExecutionRuntime;

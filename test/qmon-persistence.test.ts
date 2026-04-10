@@ -496,3 +496,36 @@ test("QmonPersistenceService migrates legacy live execution state into the canon
   assert.equal(migratedState.populations[0]?.executionRuntime?.confirmedVenueSeat?.action, "BUY_UP");
   assert.equal(migratedState.populations[0]?.executionRuntime?.lastError, "restart with unresolved live order");
 });
+
+test("QmonPersistenceService clears stale window-scoped real errors during normalization", () => {
+  const persistenceService = new QmonPersistenceService("/tmp/qmon-persistence");
+  const familyState = createFamilyState();
+  const normalizedState = persistenceService.normalizeFamilyState(
+    {
+      ...familyState,
+      populations: familyState.populations.map((population) => ({
+        ...population,
+        seatLastWindowStartMs: 300,
+        executionRuntime: {
+          route: "real",
+          executionState: "real-error",
+          pendingIntent: null,
+          orderId: null,
+          submittedAt: 150,
+          confirmedVenueSeat: null,
+          pendingVenueOrders: [],
+          recoveryStartedAt: null,
+          lastReconciledAt: 160,
+          lastError: "venue rejected order",
+          isHalted: false,
+        },
+      })),
+    },
+    "real",
+  );
+
+  assert.equal(normalizedState.populations[0]?.executionRuntime?.executionState, "real-armed");
+  assert.equal(normalizedState.populations[0]?.executionRuntime?.submittedAt, null);
+  assert.equal(normalizedState.populations[0]?.executionRuntime?.lastError, null);
+  assert.equal(normalizedState.populations[0]?.executionRuntime?.isHalted, false);
+});
