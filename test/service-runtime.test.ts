@@ -384,6 +384,74 @@ test("ServiceRuntime preserves persisted family state and diagnostics across res
   });
 });
 
+test("ServiceRuntime clears persisted market error state on startup", async () => {
+  const runtimeDir = await mkdtemp(join(tmpdir(), "qmon-runtime-"));
+  const dataDir = join(runtimeDir, "data");
+  const diagnosticsDir = join(dataDir, "qmon-diagnostics");
+  await ServiceRuntime.createDefault({
+    dataDir,
+    diagnosticsDir,
+  });
+  const persistenceService = QmonPersistenceService.createDefault(dataDir);
+  const persistedState = await persistenceService.load();
+
+  if (persistedState === null) {
+    throw new Error("expected persisted family state");
+  }
+
+  const erroredState = {
+    ...persistedState,
+    populations: persistedState.populations.map((population, populationIndex) =>
+      populationIndex === 0
+        ? {
+            ...population,
+            seatLastWindowStartMs: 300,
+            executionRuntime: {
+              ...(population.executionRuntime ?? {
+                route: "real" as const,
+                executionState: "real-armed" as const,
+                pendingIntent: null,
+                orderId: null,
+                submittedAt: null,
+                confirmedVenueSeat: null,
+                pendingVenueOrders: [],
+                recoveryStartedAt: null,
+                lastReconciledAt: null,
+                lastError: null,
+                isHalted: false,
+              }),
+              route: "real" as const,
+              executionState: "real-error" as const,
+              submittedAt: 150,
+              lastError: "persisted startup error",
+              isHalted: false,
+              pendingIntent: null,
+              orderId: null,
+              confirmedVenueSeat: null,
+              pendingVenueOrders: [],
+              recoveryStartedAt: null,
+            },
+          }
+        : population,
+    ),
+  };
+
+  await persistenceService.save(erroredState);
+  await ServiceRuntime.createDefault({
+    dataDir,
+    diagnosticsDir,
+  });
+  const restartedState = await persistenceService.load();
+
+  if (restartedState === null) {
+    throw new Error("expected restarted family state");
+  }
+
+  assert.equal(restartedState.populations[0]?.executionRuntime?.lastError, null);
+  assert.equal(restartedState.populations[0]?.executionRuntime?.submittedAt, null);
+  assert.equal(restartedState.populations[0]?.executionRuntime?.executionState, "paper");
+});
+
 test("ServiceRuntime serves market seat activity events", async () => {
   const serviceRuntime = await ServiceRuntime.createDefault();
   const server = serviceRuntime.buildServer();

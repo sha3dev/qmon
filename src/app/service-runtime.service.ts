@@ -104,8 +104,11 @@ export class ServiceRuntime {
     const existingState = await qmonPersistence.load();
     const familyStateBackupPath = existingState !== null ? await qmonPersistence.backupFamilyState(existingState) : null;
     const legacyLiveExecutionState = await qmonLiveStatePersistenceService.load();
+    const startupStateWithoutMarketErrors = existingState !== null ? qmonPersistence.clearStartupMarketErrors(existingState) : null;
     const normalizedExistingState =
-      existingState !== null ? qmonPersistence.normalizeFamilyState(existingState, config.QMON_EXECUTION_MODE, legacyLiveExecutionState) : null;
+      startupStateWithoutMarketErrors !== null
+        ? qmonPersistence.normalizeFamilyState(startupStateWithoutMarketErrors, config.QMON_EXECUTION_MODE, legacyLiveExecutionState)
+        : null;
     const initialFamilyState = normalizedExistingState;
     const qmonEngine = existingState
       ? new QmonEngine(config.SIGNAL_ASSETS, config.SIGNAL_WINDOWS, initialFamilyState ?? undefined, signalEngine, undefined, qmonValidationLogService)

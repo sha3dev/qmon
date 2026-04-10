@@ -578,6 +578,38 @@ export class QmonPersistenceService {
     return normalizedState;
   }
 
+  public clearStartupMarketErrors(state: QmonFamilyState): QmonFamilyState {
+    const clearedState: QmonFamilyState = {
+      ...state,
+      populations: state.populations.map((population) => {
+        const currentExecutionRuntime = population.executionRuntime;
+        const shouldClearSubmittedAt =
+          currentExecutionRuntime !== undefined &&
+          !currentExecutionRuntime.isHalted &&
+          currentExecutionRuntime.pendingIntent === null &&
+          currentExecutionRuntime.orderId === null &&
+          currentExecutionRuntime.confirmedVenueSeat === null &&
+          currentExecutionRuntime.pendingVenueOrders.length === 0;
+        let updatedPopulation = population;
+
+        if (currentExecutionRuntime !== undefined) {
+          updatedPopulation = {
+            ...population,
+            executionRuntime: {
+              ...currentExecutionRuntime,
+              submittedAt: shouldClearSubmittedAt ? null : currentExecutionRuntime.submittedAt,
+              lastError: null,
+            },
+          };
+        }
+
+        return updatedPopulation;
+      }),
+    };
+
+    return clearedState;
+  }
+
   public resetCpnlState(state: QmonFamilyState, executionMode: QmonExecutionRoute = "paper"): QmonFamilyState {
     const now = Date.now();
     const resetState: QmonFamilyState = {
