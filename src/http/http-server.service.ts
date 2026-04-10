@@ -8,7 +8,7 @@ import { createAdaptorServer } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { Hono } from "hono";
 import type { QmonDashboardPayload, RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
-import type { DiagnosticCategory, DiagnosticRange, MarketKey, QmonEngine, QmonValidationLogService } from "../qmon/index.ts";
+import type { DiagnosticCategory, DiagnosticRange, MarketKey, QmonEngine, QmonPopulation, QmonValidationLogService } from "../qmon/index.ts";
 import { RegimeEngine } from "../regime/regime-engine.service.ts";
 import type { RegimeEvent, RegimeResult } from "../regime/regime.types.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
@@ -226,6 +226,9 @@ export class HttpServerService {
       position: qmon.position,
       metrics: {
         totalPnl: qmonMetrics.totalPnl ?? 0,
+        totalTrades: qmonMetrics.totalTrades ?? 0,
+        winRate: qmonMetrics.winRate ?? 0,
+        championScore: qmonMetrics.championScore ?? null,
         fitnessScore: qmonMetrics.fitnessScore ?? null,
         totalEstimatedNetEvUsd: qmonMetrics.totalEstimatedNetEvUsd ?? 0,
         feeRatio: qmonMetrics.feeRatio ?? null,
@@ -238,6 +241,7 @@ export class HttpServerService {
         recentSettledWinRate: qmonMetrics.recentSettledWinRate ?? 0,
         recentEstimatedEvUsd: qmonMetrics.recentEstimatedEvUsd ?? 0,
         recentEvRealizationRatio: qmonMetrics.recentEvRealizationRatio ?? null,
+        championEligibilityReasons: qmonMetrics.championEligibilityReasons ?? [],
       },
       paperWindowBaselinePnl: qmon.paperWindowBaselinePnl,
       windowsLived: qmon.windowsLived,
@@ -251,12 +255,14 @@ export class HttpServerService {
    */
   private buildPopulationSummary(population: Record<string, unknown>): Record<string, unknown> {
     const qmons = Array.isArray(population.qmons) ? population.qmons : [];
+    const paperActivitySummary = this.buildPaperActivitySummary(qmons as readonly Record<string, unknown>[]);
     const populationSummary = {
       market: population.market,
       createdAt: population.createdAt,
       lastUpdated: population.lastUpdated,
       activeChampionQmonId: population.activeChampionQmonId,
       marketPaperSessionPnl: population.marketPaperSessionPnl,
+      paperActivitySummary,
       marketConsolidatedPnl: population.marketConsolidatedPnl,
       seatPosition: population.seatPosition,
       seatPendingOrder: population.seatPendingOrder,
@@ -271,6 +277,51 @@ export class HttpServerService {
     };
 
     return populationSummary;
+  }
+
+  /**
+   * Build aggregate paper activity metrics so the dashboard can show candidate
+   * learning even when no production-ready champion exists yet.
+   */
+  private buildPaperActivitySummary(qmons: readonly Record<string, unknown>[]): Record<string, unknown> {
+    let totalTrades = 0;
+    let totalPnl = 0;
+    let positiveQmonCount = 0;
+    let openPositionCount = 0;
+    let bestQmon: Record<string, unknown> | null = null;
+    let bestQmonPnl = Number.NEGATIVE_INFINITY;
+
+    for (const qmon of qmons) {
+      const qmonMetrics = (qmon.metrics as Record<string, unknown> | undefined) ?? {};
+      const qmonPnl = typeof qmonMetrics.totalPnl === "number" ? qmonMetrics.totalPnl : 0;
+      const qmonTrades = typeof qmonMetrics.totalTrades === "number" ? qmonMetrics.totalTrades : 0;
+      const qmonPosition = (qmon.position as Record<string, unknown> | undefined) ?? {};
+
+      totalTrades += qmonTrades;
+      totalPnl += qmonPnl;
+
+      if (qmonPnl > 0) {
+        positiveQmonCount += 1;
+      }
+
+      if (qmonPosition.action !== null && qmonPosition.action !== undefined) {
+        openPositionCount += 1;
+      }
+
+      if (qmonPnl > bestQmonPnl) {
+        bestQmon = qmon;
+        bestQmonPnl = qmonPnl;
+      }
+    }
+
+    return {
+      totalTrades,
+      totalPnl,
+      positiveQmonCount,
+      openPositionCount,
+      bestQmonId: bestQmon?.id ?? null,
+      bestQmonPnl: bestQmonPnl === Number.NEGATIVE_INFINITY ? 0 : bestQmonPnl,
+    };
   }
 
   /**
@@ -327,7 +378,7 @@ export class HttpServerService {
    */
   private getLaggedSignalSnapshots(snapshots: readonly Record<string, unknown>[]): readonly { generated_at: number }[] {
     const laggedSnapshots = snapshots.length > 1 ? snapshots.slice(0, -1) : [];
-    const typedLaggedSnapshots = laggedSnapshots as readonly { generated_at: number }[];
+    const typedLaggedSnapshots = laggedSnapshots.filter((snapshot): snapshot is { generated_at: number } => typeof snapshot.generated_at === "number");
 
     return typedLaggedSnapshots;
   }
@@ -444,8 +495,7 @@ export class HttpServerService {
         return context.json({ error: "QMON engine not initialized" }, 503);
       }
 
-      const diagnosticsOverview =
-        this.qmonValidationLogService !== null ? await this.qmonValidationLogService.readDiagnosticsOverview("24h") : null;
+      const diagnosticsOverview = this.qmonValidationLogService !== null ? await this.qmonValidationLogService.readDiagnosticsOverview("24h") : null;
 
       return context.json(this.buildDashboardPayload(diagnosticsOverview), 200);
     });
@@ -527,7 +577,9 @@ export class HttpServerService {
 
       const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
       const diagnosticsOverview = await this.qmonValidationLogService.readDiagnosticsOverview(diagnosticsRange);
-      const populationByMarket = new Map((this.qmonEngine?.getFamilyState().populations ?? []).map((population) => [population.market, population]));
+      const populationByMarket = new Map<string, QmonPopulation>(
+        (this.qmonEngine?.getFamilyState().populations ?? []).map((population) => [population.market, population]),
+      );
       const enrichedMarkets = diagnosticsOverview.markets.map((marketSummary) => {
         const population = populationByMarket.get(marketSummary.market);
 

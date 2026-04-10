@@ -739,17 +739,18 @@
             <div class="market-pnl-meta">
               <span class="market-pnl-name" style="font-weight:700; font-size:10px;" x-text="mp.market.toUpperCase()"></span>
               <span class="market-pnl-champion" x-show="mp.championId" x-text="'👑 ' + mp.championId"></span>
+              <span class="market-pnl-champion" x-show="!mp.championId && mp.bestQmonId" x-text="'PAPER ' + mp.bestQmonId"></span>
             </div>
             <span class="market-route-badge" x-show="mp.routeLabel" :class="mp.routeClass" x-text="mp.routeLabel"></span>
           </div>
           <div class="market-pnl-grid">
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label">PAPR</span>
+              <span class="market-pnl-metric-label" x-text="mp.championId ? 'PAPR' : 'CAND'"></span>
               <span class="market-pnl-metric-value" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
             </div>
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label">REAL</span>
-              <span class="market-pnl-metric-value" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
+              <span class="market-pnl-metric-label" x-text="mp.championId ? 'REAL' : 'TRDS'"></span>
+              <span class="market-pnl-metric-value" :class="mp.championId ? pnlClass(mp.realPnl) : 'neutral'" x-text="mp.championId ? formatPnl(mp.realPnl) : formatCount(mp.totalTrades)"></span>
             </div>
           </div>
         </div>
@@ -1894,7 +1895,7 @@
             .map((population) => population.market)
             .filter(Boolean);
           const seatHistoryMarkets = (this.diagnosticsOverview?.markets || [])
-            .filter((marketRow) => (marketRow?.seatTradeCount || 0) > 0)
+            .filter((marketRow) => (marketRow?.seatTradeCount || 0) > 0 || (marketRow?.totalEvents || 0) > 0)
             .map((marketRow) => marketRow.market)
             .filter(Boolean);
           const realLogMarkets = [...new Set([...seatActiveMarkets, ...seatHistoryMarkets])];
@@ -1953,11 +1954,14 @@
 
           this.marketPnls = populations.map((population) => {
             const champion = population.qmons.find((qmon) => qmon.id === population.activeChampionQmonId) || null;
+            const paperActivitySummary = population.paperActivitySummary || {};
             const seatOpenPnl = this.getSeatOpenPnl(population);
             const paperOpenValue = champion ? this.getPaperMarkedOpenValue(champion) : 0;
             const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
             const seatSessionPnl = hasRealExecutionMode ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
-            const paperPnl = (population.marketPaperSessionPnl || 0) + paperOpenValue;
+            const paperPnl = champion
+              ? (population.marketPaperSessionPnl || 0) + paperOpenValue
+              : (paperActivitySummary.totalPnl || 0);
 
             return {
               market: population.market,
@@ -1966,6 +1970,9 @@
               paperPnl,
               realPnl: seatSessionPnl,
               championId: champion?.id ?? null,
+              bestQmonId: paperActivitySummary.bestQmonId || null,
+              totalTrades: paperActivitySummary.totalTrades || 0,
+              positiveQmonCount: paperActivitySummary.positiveQmonCount || 0,
               totalPnl: paperPnl,
               routeLabel: this.getMarketRouteLabel(population.market),
               routeClass: this.getMarketRouteClass(population.market),
