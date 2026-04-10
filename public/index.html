@@ -1957,8 +1957,10 @@
             const paperActivitySummary = population.paperActivitySummary || {};
             const seatOpenPnl = this.getSeatOpenPnl(population);
             const paperOpenValue = champion ? this.getPaperMarkedOpenValue(champion) : 0;
-            const route = this.runtimeStatus?.marketRoutes?.find((marketRoute) => marketRoute.market === population.market)?.route || 'paper';
-            const seatSessionPnl = hasRealExecutionMode ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
+            const marketRoute = this.runtimeStatus?.marketRoutes?.find((runtimeMarketRoute) => runtimeMarketRoute.market === population.market) || null;
+            const route = marketRoute?.route || 'paper';
+            const hasRealSeatState = route === 'real' || population.seatPosition?.action !== null || population.seatPendingOrder !== null || marketRoute?.hasLivePosition === true;
+            const seatSessionPnl = hasRealExecutionMode && hasRealSeatState ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
             const paperPnl = champion
               ? (population.marketPaperSessionPnl || 0) + paperOpenValue
               : (paperActivitySummary.totalPnl || 0);
