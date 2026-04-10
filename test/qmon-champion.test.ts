@@ -196,6 +196,75 @@ function attachRecentSettledTrades(
   };
 }
 
+function attachSettledTradesAcrossWindows(
+  qmon: Qmon,
+  trades: readonly {
+    readonly entryCashflow: number;
+    readonly exitCashflow: number;
+    readonly estimatedNetEvUsd: number;
+  }[],
+): Qmon {
+  const decisionHistory: QmonDecision[] = [];
+  let timestamp = 300_000;
+
+  for (const trade of trades) {
+    decisionHistory.push({
+      timestamp,
+      market: qmon.market,
+      action: "BUY_UP",
+      cashflow: trade.entryCashflow,
+      modelScore: 0.8,
+      triggeredBy: ["test-entry"],
+      fee: 0.01,
+      executionPrice: 0.2,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.8,
+      finalOutcomeProbability: 0.7,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 5000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    decisionHistory.push({
+      timestamp: timestamp + 1_000,
+      market: qmon.market,
+      action: "HOLD",
+      cashflow: trade.exitCashflow,
+      modelScore: 0.4,
+      triggeredBy: ["test-exit"],
+      fee: 0.01,
+      executionPrice: 0.4,
+      entryPrice: 0.2,
+      shareCount: 5,
+      priceImpactBps: 5,
+      isHydratedReplay: false,
+      directionalAlpha: 0.4,
+      finalOutcomeProbability: 0.6,
+      marketImpliedProbability: 0.2,
+      estimatedEdgeBps: 4000,
+      estimatedNetEvUsd: trade.estimatedNetEvUsd,
+      predictedSlippageBps: 20,
+      tradeabilityRejectReason: null,
+      riskBudgetUsd: 1,
+      signalAgreementCount: 3,
+      dominantSignalGroup: "predictive",
+    });
+    timestamp += 300_000;
+  }
+
+  return {
+    ...qmon,
+    decisionHistory,
+  };
+}
+
 function createMarketHealth(state: QmonMarketHealth["state"], reason: string | null = null): QmonMarketHealth {
   return {
     state,
@@ -695,6 +764,38 @@ test("QmonChampionService prefers recently active champions over equally strong 
   assert.equal(activeQmon.metrics.isChampionEligible, true);
   assert.equal(idleQmon.metrics.isChampionEligible, true);
   assert.equal((activeQmon.metrics.championScore ?? 0) > (idleQmon.metrics.championScore ?? 0), true);
+});
+
+test("QmonChampionService rebuilds window evidence from settled decisions when stored windows are empty", () => {
+  const championService = new QmonChampionService();
+  const qmonWithLostWindowEvidence = attachSettledTradesAcrossWindows(createChampionCandidate("REBUILD1", 0.75, 0.2), [
+    { entryCashflow: -1, exitCashflow: 1.8, estimatedNetEvUsd: 1.2 },
+    { entryCashflow: -1, exitCashflow: 1.7, estimatedNetEvUsd: 1.2 },
+    { entryCashflow: -1, exitCashflow: 1.9, estimatedNetEvUsd: 1.2 },
+    { entryCashflow: -1, exitCashflow: 1.6, estimatedNetEvUsd: 1.2 },
+    { entryCashflow: -1, exitCashflow: 1.8, estimatedNetEvUsd: 1.2 },
+  ]);
+  const refreshedQmon = championService.refreshMetrics({
+    ...qmonWithLostWindowEvidence,
+    paperWindowPnls: [0, 0, 0, 0, 0],
+    paperWindowBaselinePnl: qmonWithLostWindowEvidence.metrics.totalPnl,
+  });
+
+  assert.equal(refreshedQmon.metrics.paperWindowPnlSum > 0, true);
+  assert.equal(refreshedQmon.metrics.paperLongWindowPnlSum > 1, true);
+  assert.equal(refreshedQmon.metrics.isChampionEligible, true);
+});
+
+test("QmonChampionService allows low win-rate candidates when payoff skew is profitable", () => {
+  const championService = new QmonChampionService();
+  const refreshedQmon = championService.refreshMetrics({
+    ...createChampionCandidate("SKEWED1", 0.4, 0.2),
+    paperWindowPnls: [2.4, 0.6, 2.2, 0.8, 1.9],
+  });
+
+  assert.equal((refreshedQmon.metrics.netPnlPerTrade ?? 0) >= 0.1, true);
+  assert.equal(refreshedQmon.metrics.championEligibilityReasons.includes("low-win-rate"), false);
+  assert.equal(refreshedQmon.metrics.isChampionEligible, true);
 });
 
 test("QmonChampionService selects the best eligible champion by the new score priority", () => {

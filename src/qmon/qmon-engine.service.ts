@@ -476,8 +476,8 @@ export class QmonEngine {
       rejectReason = null;
     } else if (championQmon === null) {
       rejectReason = "no-active-champion";
-    } else if ((population.marketHealth?.state ?? "observation-only") !== "healthy") {
-      rejectReason = "market-not-production-healthy";
+    } else if ((population.marketHealth?.state ?? "observation-only") === "blocked") {
+      rejectReason = "market-health-blocked";
     } else if (!(championQmon.metrics.isChampionEligible && (championQmon.metrics.championScore ?? Number.NEGATIVE_INFINITY) > 0)) {
       rejectReason = "champion-not-production-ready";
     }

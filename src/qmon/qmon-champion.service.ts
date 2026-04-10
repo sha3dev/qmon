@@ -93,6 +93,11 @@ type ChampionInputs = {
   readonly championEligibilityReasons: readonly string[];
 };
 
+type PaperDecisionWindowPnl = {
+  readonly windowStartMs: number;
+  readonly pnl: number;
+};
+
 /**
  * @section class
  */
@@ -106,6 +111,78 @@ export class QmonChampionService {
     const recentPaperWindowPnls = paperWindowPnls.slice(-PAPER_CHAMPION_HISTORY_WINDOW);
 
     return recentPaperWindowPnls;
+  }
+
+  private getMarketWindowDurationMs(qmon: Qmon): number {
+    const marketWindowLabel = qmon.market.split("-")[1] ?? "5m";
+    const marketWindowMinutes = marketWindowLabel.endsWith("m") ? Number(marketWindowLabel.slice(0, -1)) : 5;
+    const marketWindowDurationMs = Number.isFinite(marketWindowMinutes) && marketWindowMinutes > 0 ? marketWindowMinutes * 60_000 : 5 * 60_000;
+
+    return marketWindowDurationMs;
+  }
+
+  private getDecisionWindowStartMs(timestamp: number, marketWindowDurationMs: number): number {
+    const decisionWindowStartMs = Math.floor(timestamp / marketWindowDurationMs) * marketWindowDurationMs;
+
+    return decisionWindowStartMs;
+  }
+
+  private hasNonZeroPaperWindowEvidence(paperWindowPnls: readonly number[]): boolean {
+    const hasNonZeroEvidence = paperWindowPnls.some((paperWindowPnl) => paperWindowPnl !== 0);
+
+    return hasNonZeroEvidence;
+  }
+
+  private appendDecisionWindowPnl(
+    paperDecisionWindowPnls: readonly PaperDecisionWindowPnl[],
+    windowStartMs: number,
+    pnl: number,
+  ): PaperDecisionWindowPnl[] {
+    const updatedPaperDecisionWindowPnls = [...paperDecisionWindowPnls];
+    const lastPaperDecisionWindowPnl = updatedPaperDecisionWindowPnls.at(-1);
+
+    if (lastPaperDecisionWindowPnl !== undefined && lastPaperDecisionWindowPnl.windowStartMs === windowStartMs) {
+      updatedPaperDecisionWindowPnls[updatedPaperDecisionWindowPnls.length - 1] = {
+        windowStartMs,
+        pnl: lastPaperDecisionWindowPnl.pnl + pnl,
+      };
+    } else {
+      updatedPaperDecisionWindowPnls.push({ windowStartMs, pnl });
+    }
+
+    return updatedPaperDecisionWindowPnls;
+  }
+
+  private buildDecisionWindowPnls(qmon: Qmon): readonly number[] {
+    const marketWindowDurationMs = this.getMarketWindowDurationMs(qmon);
+    let openDecision: QmonDecision | null = null;
+    let paperDecisionWindowPnls: readonly PaperDecisionWindowPnl[] = [];
+
+    for (const decision of qmon.decisionHistory) {
+      if (decision.action === "BUY_UP" || decision.action === "BUY_DOWN") {
+        openDecision = decision;
+      }
+
+      if (decision.action === "HOLD" && openDecision !== null) {
+        const windowStartMs = this.getDecisionWindowStartMs(decision.timestamp, marketWindowDurationMs);
+        paperDecisionWindowPnls = this.appendDecisionWindowPnl(paperDecisionWindowPnls, windowStartMs, openDecision.cashflow + decision.cashflow);
+        openDecision = null;
+      }
+    }
+
+    const decisionWindowPnls = paperDecisionWindowPnls.map((paperDecisionWindowPnl) => paperDecisionWindowPnl.pnl).slice(-PAPER_CHAMPION_LONG_HISTORY_WINDOW);
+
+    return decisionWindowPnls;
+  }
+
+  private getEffectivePaperWindowPnls(qmon: Qmon): readonly number[] {
+    let effectivePaperWindowPnls = qmon.paperWindowPnls;
+
+    if (!this.hasNonZeroPaperWindowEvidence(effectivePaperWindowPnls) && qmon.decisionHistory.length > 0) {
+      effectivePaperWindowPnls = this.buildDecisionWindowPnls(qmon);
+    }
+
+    return effectivePaperWindowPnls;
   }
 
   private getRecentChampionRiskWindowPnls(paperWindowPnls: readonly number[]): readonly number[] {
@@ -383,11 +460,12 @@ export class QmonChampionService {
   }
 
   private buildChampionInputs(qmon: Qmon, marketHealth?: QmonMarketHealth): ChampionInputs {
-    const paperWindowPnlSum = this.calculatePaperWindowPnlSum(qmon.paperWindowPnls);
-    const paperLongWindowPnlSum = this.calculatePaperLongWindowPnlSum(qmon.paperWindowPnls);
-    const paperWindowMedianPnl = this.calculatePaperWindowMedianPnl(qmon.paperWindowPnls);
-    const negativeWindowRateLast10 = this.calculateNegativeWindowRateLast10(qmon.paperWindowPnls);
-    const worstWindowPnlLast10 = this.calculateWorstWindowPnlLast10(qmon.paperWindowPnls);
+    const effectivePaperWindowPnls = this.getEffectivePaperWindowPnls(qmon);
+    const paperWindowPnlSum = this.calculatePaperWindowPnlSum(effectivePaperWindowPnls);
+    const paperLongWindowPnlSum = this.calculatePaperLongWindowPnlSum(effectivePaperWindowPnls);
+    const paperWindowMedianPnl = this.calculatePaperWindowMedianPnl(effectivePaperWindowPnls);
+    const negativeWindowRateLast10 = this.calculateNegativeWindowRateLast10(effectivePaperWindowPnls);
+    const worstWindowPnlLast10 = this.calculateWorstWindowPnlLast10(effectivePaperWindowPnls);
     const recentAvgSlippageBps = this.calculateRecentAvgSlippageBps(qmon.paperWindowSlippageBps);
     const netPnlPerTrade = this.calculateNetPnlPerTrade(qmon);
     const grossAlphaCapture = this.calculateGrossAlphaCapture(qmon);
@@ -414,7 +492,8 @@ export class QmonChampionService {
     const estimatedEvBonus = this.calculateEstimatedEvBonus(qmon);
     const shadowFitnessAdjustment = this.calculateShadowFitnessAdjustment(qmon);
     const shadowValidationEvidence = this.calculateShadowValidationEvidence(qmon);
-    const recentActiveWindowCount = this.calculateRecentActiveWindowCount(qmon.paperWindowPnls);
+    const recentActiveWindowCount = this.calculateRecentActiveWindowCount(effectivePaperWindowPnls);
+    const hasPositiveLifetimeEdge = netPnlPerTrade >= CHAMPION_MIN_NET_PNL_PER_TRADE;
     const positiveRegimeCount = regimeBreakdown.filter((regimeSlice) => regimeSlice.tradeCount > 0 && regimeSlice.totalPnl >= 0).length;
     const robustnessBonus =
       positiveRegimeCount * CHAMPION_REGIME_COVERAGE_WEIGHT +
@@ -446,7 +525,7 @@ export class QmonChampionService {
     if (qmon.lifecycle !== "active") {
       championEligibilityReasons.push("inactive");
     }
-    if (qmon.paperWindowPnls.length < PAPER_CHAMPION_HISTORY_WINDOW && !shadowValidationEvidence.hasValidatedShadowEvidence) {
+    if (effectivePaperWindowPnls.length < PAPER_CHAMPION_HISTORY_WINDOW && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("insufficient-windows");
     }
     if (paperWindowPnlSum <= 0 && !shadowValidationEvidence.hasValidatedShadowEvidence) {
@@ -458,7 +537,7 @@ export class QmonChampionService {
     if (qmon.metrics.totalPnl <= 0) {
       championEligibilityReasons.push("non-positive-pnl");
     }
-    if (qmon.metrics.winRate < CHAMPION_MIN_WIN_RATE && !shadowValidationEvidence.hasValidatedShadowEvidence) {
+    if (qmon.metrics.winRate < CHAMPION_MIN_WIN_RATE && !hasPositiveLifetimeEdge && !shadowValidationEvidence.hasValidatedShadowEvidence) {
       championEligibilityReasons.push("low-win-rate");
     }
     if (qmon.metrics.totalTrades < CHAMPION_MIN_PRODUCTION_TRADES && !shadowValidationEvidence.hasValidatedShadowEvidence) {
@@ -473,7 +552,8 @@ export class QmonChampionService {
     if (
       marketHealth !== undefined &&
       recentSettledTradeCount > 0 &&
-      recentSettledWinRate < CHAMPION_MIN_RECENT_SETTLED_WIN_RATE
+      recentSettledWinRate < CHAMPION_MIN_RECENT_SETTLED_WIN_RATE &&
+      recentSettledNetPnl <= 0
     ) {
       championEligibilityReasons.push("low-recent-settled-win-rate");
     }
@@ -517,7 +597,7 @@ export class QmonChampionService {
 
     // OUT-OF-SAMPLE VALIDATION GATE: Must pass 2 of 3 time periods
     const recentPositive = paperWindowPnlSum > 0;
-    const mediumPositive = this.calculateMediumWindowPnlSum(qmon.paperWindowPnls) > 0;
+    const mediumPositive = this.calculateMediumWindowPnlSum(effectivePaperWindowPnls) > 0;
     const longPositive = paperLongWindowPnlSum > 0;
     const positivePeriodCount = [recentPositive, mediumPositive, longPositive].filter(Boolean).length;
 

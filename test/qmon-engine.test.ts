@@ -1538,8 +1538,81 @@ test("QmonEngine downgrades a non-production-ready champion market to paper when
 
   assert.equal(updatedPopulation.executionRuntime?.route, "paper");
   assert.equal(updatedPopulation.realWalkForwardGate?.isPassed, false);
-  assert.equal(updatedPopulation.realWalkForwardGate?.rejectReason, "market-not-production-healthy");
+  assert.equal(updatedPopulation.realWalkForwardGate?.rejectReason, "market-health-blocked");
   assert.equal(updatedPopulation.marketHealth?.state, "blocked");
+});
+
+test("QmonEngine arms real routing for an eligible champion while market health is still observing", () => {
+  const championService = new QmonChampionService();
+  const championQmon = championService.refreshMetrics({
+    ...attachSettledTrades(createQmon("champion"), [
+      { entryCashflow: -1, exitCashflow: 2.1, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.2, estimatedNetEvUsd: 2 },
+      { entryCashflow: -1, exitCashflow: 2.3, estimatedNetEvUsd: 2 },
+    ]),
+    windowsLived: 20,
+    paperWindowPnls: [0.8, 0.7, 0.9, 0.6, 0.8, 0.7],
+    paperWindowSlippageBps: [12, 11, 12, 13, 10, 12],
+    metrics: {
+      ...createQmon("champion").metrics,
+      totalTrades: 14,
+      totalPnl: 4.2,
+      peakTotalPnl: 4.2,
+      totalFeesPaid: 0.35,
+      winRate: 0.64,
+      winCount: 9,
+      maxDrawdown: 1.2,
+      grossAlphaCapture: 4,
+      regimeBreakdown: [
+        {
+          regime: "regime:flat|normal",
+          tradeCount: 7,
+          totalPnl: 2.2,
+          estimatedNetEvUsd: 1.5,
+        },
+        {
+          regime: "regime:trending-up|normal",
+          tradeCount: 7,
+          totalPnl: 2,
+          estimatedNetEvUsd: 1.2,
+        },
+      ],
+    },
+  });
+  const population = {
+    ...createPopulation([championQmon], championQmon.id),
+    executionQuality: {
+      resolvedOrderCount: 30,
+      filledOrderCount: 12,
+      rejectedOrderCount: 18,
+      timedOutOrderCount: 0,
+      slippageRejectedOrderCount: 4,
+      avgFilledPriceImpactBps: 12,
+      avgRejectedSlippageBps: 40,
+      fillRate: 0.4,
+      rejectionRate: 0.6,
+      stressScore: 0.35,
+    },
+  };
+  const qmonEngine = new QmonEngine(
+    ["btc"],
+    ["5m"],
+    createFamilyState(population),
+    undefined,
+    undefined,
+    undefined,
+    false,
+    false,
+  );
+
+  qmonEngine.applyExecutionRoutes("real", 2);
+
+  const updatedPopulation = mustValue(qmonEngine.getPopulation(MARKET_KEY));
+
+  assert.equal(updatedPopulation.executionRuntime?.route, "real");
+  assert.equal(updatedPopulation.realWalkForwardGate?.isPassed, true);
+  assert.equal(updatedPopulation.realWalkForwardGate?.rejectReason, null);
+  assert.equal(updatedPopulation.marketHealth?.state, "observation-only");
 });
 
 test("QmonEngine arms real routing when the champion passes the walk-forward gate", () => {
