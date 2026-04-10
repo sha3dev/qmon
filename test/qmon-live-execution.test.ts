@@ -1376,6 +1376,55 @@ test("QmonLiveExecutionService clears window-scoped live blocks on the next mark
   assert.equal(status.marketRoutes[0]?.submittedAt, null);
 });
 
+test("QmonLiveExecutionService does not expose stale window-scoped real errors after the market window advances", async () => {
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => [],
+    cancelOrderById: async () => true,
+    postOrder: async () => null,
+    waitForOrderConfirmation: async () => null,
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m", 1)],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const population = {
+    ...createPopulation(
+      "eth-5m",
+      null,
+      null,
+      createRealExecutionRuntime({
+        executionState: "real-error",
+        submittedAt: 150,
+        lastError: "venue rejected order",
+        isHalted: false,
+      }),
+    ),
+    seatLastWindowStartMs: 300,
+  };
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  const status = liveExecutionService.getStatus([population]);
+
+  assert.equal(status.marketRoutes[0]?.isHalted, false);
+  assert.equal(status.marketRoutes[0]?.executionState, "real-armed");
+  assert.equal(status.marketRoutes[0]?.lastError, null);
+  assert.equal(status.marketRoutes[0]?.submittedAt, null);
+});
+
 test("QmonLiveExecutionService clears hard halts when the next window starts and no live risk remains", async () => {
   const orderService = {
     init: async () => undefined,

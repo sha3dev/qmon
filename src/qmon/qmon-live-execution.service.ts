@@ -301,6 +301,33 @@ export class QmonLiveExecutionService {
     return executionState;
   }
 
+  private clearStaleWindowScopedExecutionRuntime(
+    population: QmonPopulation | null,
+    executionRuntime: QmonExecutionRuntime,
+  ): QmonExecutionRuntime {
+    const currentWindowStartMs = population?.seatLastWindowStartMs ?? null;
+    const runtimeWindowStartMs = executionRuntime.pendingIntent?.marketStartMs ?? executionRuntime.submittedAt;
+    const hasWindowScopedError = executionRuntime.route === "real" && !executionRuntime.isHalted && executionRuntime.lastError !== null;
+    const hasActiveExecutionRuntimeRisk = population !== null && this.hasActiveLiveRisk(population, executionRuntime);
+    const shouldClearWindowScopedError =
+      hasWindowScopedError &&
+      !hasActiveExecutionRuntimeRisk &&
+      currentWindowStartMs !== null &&
+      runtimeWindowStartMs !== null &&
+      runtimeWindowStartMs < currentWindowStartMs;
+    let normalizedExecutionRuntime = executionRuntime;
+
+    if (shouldClearWindowScopedError) {
+      normalizedExecutionRuntime = {
+        ...executionRuntime,
+        submittedAt: null,
+        lastError: null,
+      };
+    }
+
+    return normalizedExecutionRuntime;
+  }
+
   private getExecutionRuntime(population: QmonPopulation | null, route: "paper" | "real"): QmonExecutionRuntime {
     const currentExecutionRuntime = population?.executionRuntime ?? this.createDefaultExecutionRuntime(route);
     const nextExecutionRuntime: QmonExecutionRuntime = {
@@ -316,10 +343,11 @@ export class QmonLiveExecutionService {
       lastError: route === "real" ? currentExecutionRuntime.lastError : null,
       isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
     };
+    const windowScopedExecutionRuntime = this.clearStaleWindowScopedExecutionRuntime(population, nextExecutionRuntime);
 
     return {
-      ...nextExecutionRuntime,
-      executionState: this.resolveExecutionState(nextExecutionRuntime),
+      ...windowScopedExecutionRuntime,
+      executionState: this.resolveExecutionState(windowScopedExecutionRuntime),
     };
   }
 
