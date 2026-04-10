@@ -134,15 +134,17 @@
       display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
     }
     .market-pnl-metric {
-      padding: 8px 10px; border-radius: 6px; background: rgba(15,17,23,0.34);
+      display: flex; flex-direction: column; justify-content: center; gap: 4px;
+      min-height: 56px; padding: 8px 10px; border-radius: 6px; background: rgba(15,17,23,0.34);
       border: 1px solid rgba(94,97,117,0.2);
       min-width: 0;
     }
     .market-pnl-metric-label {
-      font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
+      display: block; font-size: 8px; line-height: 1; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px;
     }
     .market-pnl-metric-value {
-      margin-top: 4px; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
+      display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 16px; line-height: 1.2; font-weight: 700; font-variant-numeric: tabular-nums;
     }
     .market-route-badge {
       display: inline-flex; align-items: center; justify-content: center;
