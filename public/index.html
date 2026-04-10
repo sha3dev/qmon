@@ -719,17 +719,17 @@
         <div class="market-pnl-head">
           <div class="market-pnl-meta">
             <span class="market-pnl-name" style="font-weight:700; font-size:10px;">TOTAL SESSION</span>
-            <span class="market-pnl-subval">Paper model vs live seat</span>
+            <span class="market-pnl-subval">Live seat first, paper context second</span>
           </div>
         </div>
         <div class="market-pnl-grid">
           <div class="market-pnl-metric">
-            <span class="market-pnl-metric-label">PAPR</span>
-            <span class="market-pnl-metric-value" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
-          </div>
-          <div class="market-pnl-metric">
             <span class="market-pnl-metric-label">REAL</span>
             <span class="market-pnl-metric-value" :class="pnlClass(totalRealMarketPnl)" x-text="formatPnl(totalRealMarketPnl)"></span>
+          </div>
+          <div class="market-pnl-metric">
+            <span class="market-pnl-metric-label">PAPR</span>
+            <span class="market-pnl-metric-value" :class="pnlClass(totalPaperMarketPnl)" x-text="formatPnl(totalPaperMarketPnl)"></span>
           </div>
         </div>
       </div>
@@ -745,12 +745,12 @@
           </div>
           <div class="market-pnl-grid">
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label" x-text="mp.championId ? 'PAPR' : 'CAND'"></span>
-              <span class="market-pnl-metric-value" :class="pnlClass(mp.paperPnl)" x-text="formatPnl(mp.paperPnl)"></span>
+              <span class="market-pnl-metric-label">REAL</span>
+              <span class="market-pnl-metric-value" :class="pnlClass(mp.realPnl)" x-text="formatPnl(mp.realPnl)"></span>
             </div>
             <div class="market-pnl-metric">
-              <span class="market-pnl-metric-label" x-text="mp.championId ? 'REAL' : 'TRDS'"></span>
-              <span class="market-pnl-metric-value" :class="mp.championId ? pnlClass(mp.realPnl) : 'neutral'" x-text="mp.championId ? formatPnl(mp.realPnl) : formatCount(mp.totalTrades)"></span>
+              <span class="market-pnl-metric-label" x-text="mp.championId ? 'PAPR' : 'TRDS'"></span>
+              <span class="market-pnl-metric-value" :class="mp.championId ? pnlClass(mp.paperPnl) : 'neutral'" x-text="mp.championId ? formatPnl(mp.paperPnl) : formatCount(mp.totalTrades)"></span>
             </div>
           </div>
         </div>
@@ -1963,7 +1963,7 @@
             const seatSessionPnl = hasRealExecutionMode && hasRealSeatState ? (population.marketConsolidatedPnl || 0) + seatOpenPnl : 0;
             const paperPnl = champion
               ? (population.marketPaperSessionPnl || 0) + paperOpenValue
-              : (paperActivitySummary.totalPnl || 0);
+              : 0;
 
             return {
               market: population.market,
@@ -1984,7 +1984,7 @@
               return b.realPnl - a.realPnl;
             }
 
-            return b.totalPnl - a.totalPnl;
+            return b.totalTrades - a.totalTrades;
           });
         },
 
