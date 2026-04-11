@@ -867,6 +867,116 @@ test("QmonLiveExecutionService rechecks a disappeared tracked order before halti
   assert.equal(status.marketRoutes[0]?.confirmedLiveSeat?.action, "BUY_UP");
 });
 
+test("QmonLiveExecutionService preserves posted order price and size for late reconciliation fills", async () => {
+  const appliedFillArguments: {
+    averagePrice: number;
+    filledShares: number;
+    venuePositionShareCount: number | null | undefined;
+  }[] = [];
+  let pendingConfirmationReads = 0;
+  let reconciliationChecks = 0;
+  const orderService = {
+    init: async () => undefined,
+    getMyBalance: async () => 10,
+    listActiveOrdersPendingConfirmation: async () => {
+      pendingConfirmationReads += 1;
+
+      return [];
+    },
+    cancelOrderById: async () => true,
+    getSellableSize: async () => 6.2,
+    postOrder: async () => ({
+      id: "late-fill-2",
+      date: new Date(),
+      size: 7,
+      price: 0.44,
+    }),
+    reconcileOrderStatus: async () => {
+      reconciliationChecks += 1;
+      return "confirmed" as const;
+    },
+    waitForOrderConfirmation: async () => ({
+      id: "late-fill-2",
+      ok: false,
+      status: "timeout" as const,
+      latency: 1,
+      date: new Date(),
+      error: {
+        message: "Order late-fill-2 timed out after 5000ms.",
+      },
+    }),
+  };
+  const marketCatalogService = {
+    loadCryptoWindowMarkets: async () => [createMockMarket("eth-updown-5m")],
+  };
+  const liveExecutionService = new QmonLiveExecutionService(
+    orderService as never,
+    marketCatalogService as never,
+    createMockLiveStatePersistence() as never,
+    null,
+  );
+  const baseEngine = createMockEngine([createPopulation("eth-5m", createPendingOrder("eth-5m", "entry", "BUY_UP"), null)]);
+  const baseEngineWithRealFill = baseEngine as unknown as {
+    applyRealSeatPendingOrderFill: (
+      market: "eth-5m" | "btc-5m",
+      averagePrice: number,
+      filledShares: number,
+      timestamp: number,
+      venuePositionShareCount?: number | null,
+    ) => void;
+  };
+  const engine = {
+    ...baseEngine,
+    applyRealSeatPendingOrderFill(
+      market: "eth-5m" | "btc-5m",
+      averagePrice: number,
+      filledShares: number,
+      timestamp: number,
+      venuePositionShareCount?: number | null,
+    ) {
+      appliedFillArguments.push({
+        averagePrice,
+        filledShares,
+        venuePositionShareCount,
+      });
+      baseEngineWithRealFill.applyRealSeatPendingOrderFill(market, averagePrice, filledShares, timestamp, venuePositionShareCount);
+    },
+  };
+
+  await liveExecutionService.initialize({
+    mode: "real",
+    privateKey: "0xabc",
+    confirmationTimeoutMs: 5_000,
+    persistedState: null,
+    cpnlSessionStartedAt: null,
+  });
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const recoveryStatus = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(recoveryStatus.marketRoutes[0]?.executionState, "real-recovery-required");
+  assert.equal(recoveryStatus.marketRoutes[0]?.pendingIntent?.limitPrice, 0.44);
+  assert.equal(recoveryStatus.marketRoutes[0]?.pendingIntent?.requestedShares, 7);
+
+  liveExecutionService.queueSync(engine as never, createSignals() as never);
+  await liveExecutionService.flush();
+
+  const finalStatus = liveExecutionService.getStatus(engine.getPopulations());
+
+  assert.equal(pendingConfirmationReads, 2);
+  assert.equal(reconciliationChecks, 1);
+  assert.deepEqual(appliedFillArguments, [
+    {
+      averagePrice: 0.44,
+      filledShares: 7,
+      venuePositionShareCount: 6.2,
+    },
+  ]);
+  assert.equal(finalStatus.marketRoutes[0]?.executionState, "real-open");
+});
+
 test("QmonLiveExecutionService logs reconciliation progress for timed out tracked orders", async () => {
   const trackedPendingOrder = createPendingOrder("eth-5m", "entry", "BUY_UP");
   const orderService = {

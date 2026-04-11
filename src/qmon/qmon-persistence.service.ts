@@ -310,7 +310,7 @@ export class QmonPersistenceService {
     const normalizedExecutionRuntime: QmonExecutionRuntime = {
       route,
       executionState: currentExecutionRuntime.executionState,
-      pendingIntent: route === "real" ? population.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      pendingIntent: route === "real" ? (currentExecutionRuntime.pendingIntent ?? population.seatPendingOrder ?? null) : null,
       orderId: route === "real" ? currentExecutionRuntime.orderId : null,
       submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
       confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,

@@ -93,6 +93,8 @@ type LiveOrderAttemptResult = {
   readonly confirmation: PostedOrderWithStatus | null;
   readonly errorMessage: string | null;
   readonly orderId: string | null;
+  readonly postedPrice: number | null;
+  readonly postedSize: number | null;
 };
 
 /**
@@ -333,7 +335,7 @@ export class QmonLiveExecutionService {
     const nextExecutionRuntime: QmonExecutionRuntime = {
       route,
       executionState: currentExecutionRuntime.executionState,
-      pendingIntent: route === "real" ? population?.seatPendingOrder ?? currentExecutionRuntime.pendingIntent : null,
+      pendingIntent: route === "real" ? (currentExecutionRuntime.pendingIntent ?? population?.seatPendingOrder ?? null) : null,
       orderId: route === "real" ? currentExecutionRuntime.orderId : null,
       submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
       confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
@@ -789,17 +791,22 @@ export class QmonLiveExecutionService {
 
       if (reconciliationStatus === "confirmed") {
         const marketMetadata = this.liveMarketCacheByMarket.get(market)?.market ?? null;
-        const venuePositionShareCount =
-          marketMetadata !== null && pendingIntent.kind === "entry"
-            ? await this.getVenueSellableSize(marketMetadata, pendingIntent)
-            : null;
+        const venuePositionShareCount = marketMetadata !== null ? await this.getVenueSellableSize(marketMetadata, pendingIntent) : null;
+        const currentPopulation = qmonEngine.getPopulation(market);
+        const reconciledFillShareCount = this.getReconciledFillShareCount(currentPopulation, pendingIntent, venuePositionShareCount);
 
         this.logLiveExecutionEvent(
           "live-reconcile-confirmed",
           market,
           `reconciliation confirmed orderId=${executionRuntime.orderId}`,
         );
-        qmonEngine.applyRealSeatPendingOrderFill(market, pendingIntent.limitPrice, pendingIntent.requestedShares, Date.now(), venuePositionShareCount);
+        qmonEngine.applyRealSeatPendingOrderFill(
+          market,
+          pendingIntent.limitPrice,
+          reconciledFillShareCount,
+          Date.now(),
+          pendingIntent.kind === "entry" ? venuePositionShareCount : null,
+        );
         await this.refreshBalanceSnapshot();
 
         const updatedPopulation = qmonEngine.getPopulation(market);
@@ -866,6 +873,32 @@ export class QmonLiveExecutionService {
     return errorMessage;
   }
 
+  private buildTrackedPendingIntent(pendingOrder: QmonPendingOrder, attemptResult: LiveOrderAttemptResult): QmonPendingOrder {
+    const trackedPendingIntent: QmonPendingOrder = {
+      ...pendingOrder,
+      requestedShares: attemptResult.postedSize ?? pendingOrder.requestedShares,
+      remainingShares: attemptResult.postedSize ?? pendingOrder.remainingShares,
+      limitPrice: attemptResult.postedPrice ?? pendingOrder.limitPrice,
+    };
+
+    return trackedPendingIntent;
+  }
+
+  private getReconciledFillShareCount(
+    population: QmonPopulation | null,
+    pendingOrder: QmonPendingOrder,
+    venuePositionShareCount: number | null,
+  ): number {
+    const existingSeatShareCount = population?.seatPosition.shareCount ?? 0;
+    let fillShareCount = pendingOrder.requestedShares;
+
+    if (pendingOrder.kind === "exit" && venuePositionShareCount !== null) {
+      fillShareCount = Math.max(0, existingSeatShareCount - venuePositionShareCount);
+    }
+
+    return fillShareCount;
+  }
+
   private shouldClearConfirmedExitDust(population: QmonPopulation | null, pendingOrder: QmonPendingOrder, market: PolymarketMarket): boolean {
     const seatShareCount = population?.seatPosition.shareCount ?? population?.executionRuntime?.confirmedVenueSeat?.shareCount ?? null;
     let shouldClearDust = false;
@@ -920,6 +953,7 @@ export class QmonLiveExecutionService {
     const executedPrice = confirmation?.price ?? pendingOrder.limitPrice;
     const executedSize = confirmation?.size ?? pendingOrder.requestedShares;
     const hasTraceableOrderId = attemptResult.orderId !== null && attemptResult.orderId.trim().length > 0;
+    const trackedPendingIntent = this.buildTrackedPendingIntent(pendingOrder, attemptResult);
 
     if (confirmation !== null && confirmation.ok && confirmation.status === "confirmed") {
       if (!hasTraceableOrderId) {
@@ -985,7 +1019,7 @@ export class QmonLiveExecutionService {
 
     if (attemptResult.orderId !== null) {
       await this.updateExecutionRuntime(qmonEngine, marketKey, {
-        pendingIntent: pendingOrder,
+        pendingIntent: trackedPendingIntent,
         orderId: attemptResult.orderId,
         submittedAt: Date.now(),
         isHalted: true,
@@ -1056,6 +1090,8 @@ export class QmonLiveExecutionService {
       confirmation: null,
       errorMessage: null,
       orderId: null,
+      postedPrice: null,
+      postedSize: null,
     };
 
     try {
@@ -1074,6 +1110,8 @@ export class QmonLiveExecutionService {
           confirmation: null,
           errorMessage: "OrderService.postOrder returned null",
           orderId: null,
+          postedPrice: null,
+          postedSize: null,
         };
       } else {
         const postedOrderId = typeof postedOrder.id === "string" && postedOrder.id.trim().length > 0 ? postedOrder.id : null;
@@ -1085,6 +1123,8 @@ export class QmonLiveExecutionService {
             confirmation: null,
             errorMessage: "OrderService.postOrder returned an order without id",
             orderId: null,
+            postedPrice: postedOrderPrice,
+            postedSize: postedOrderSize,
           };
 
           return liveOrderAttemptResult;
@@ -1116,6 +1156,8 @@ export class QmonLiveExecutionService {
           confirmation,
           errorMessage: confirmation.ok ? null : confirmation.error?.message ?? `live order ${confirmation.status}`,
           orderId: postedOrderId,
+          postedPrice: postedOrderPrice,
+          postedSize: postedOrderSize,
         };
       }
     } catch (error: unknown) {
@@ -1125,6 +1167,8 @@ export class QmonLiveExecutionService {
         confirmation: null,
         errorMessage: message,
         orderId: null,
+        postedPrice: null,
+        postedSize: null,
       };
       logger.error(message);
       this.logLiveWarning(marketKey, "live-order-threw", message);

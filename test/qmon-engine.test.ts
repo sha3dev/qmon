@@ -434,6 +434,68 @@ test("QmonEngine exits early only when the final-outcome thesis collapses", () =
   assert.equal(exitDecision.triggeredBy[0], "thesis-collapsed");
 });
 
+test("QmonEngine takes profit after doubling and then fading from the peak", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+  const rallySnapshots = [createSnapshot(0.22, 0.78)];
+  const fadeSnapshots = [createSnapshot(0.205, 0.795)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+  withMockNow(4_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.22, 0.78, marketStartMs, marketEndMs), createRegimes(), [], rallySnapshots);
+  });
+
+  const qmonAtPeak = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal((qmonAtPeak.position.peakReturnPct ?? 0) >= 1, true);
+  assert.equal(qmonAtPeak.position.action, "BUY_UP");
+
+  withMockNow(6_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.205, 0.795, marketStartMs, marketEndMs), createRegimes(), [], fadeSnapshots);
+  });
+  withMockNow(8_500, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.205, 0.795, marketStartMs, marketEndMs), createRegimes(), [], fadeSnapshots);
+  });
+
+  const closedQmon = mustValue(qmonEngine.getQmon("QMON01"));
+  const exitDecision = mustValue(closedQmon.decisionHistory[1]);
+
+  assert.equal(closedQmon.position.action, null);
+  assert.equal(exitDecision.triggeredBy[0], "take-profit-hit");
+});
+
+test("QmonEngine does not take profit immediately when the position only touches the doubling threshold", () => {
+  const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
+  const marketStartMs = 100;
+  const marketEndMs = 10_000;
+  const entrySnapshots = [createSnapshot(0.1, 0.9)];
+  const doublingSnapshots = [createSnapshot(0.2, 0.8)];
+
+  withMockNow(1_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+  withMockNow(3_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.1, 0.9, marketStartMs, marketEndMs), createRegimes(), ["consensus-flip"], entrySnapshots);
+  });
+  withMockNow(4_000, () => {
+    qmonEngine.evaluatePopulation(MARKET_KEY, createSignals(0.9, 0.2, 0.8, marketStartMs, marketEndMs), createRegimes(), [], doublingSnapshots);
+  });
+
+  const stillOpenQmon = mustValue(qmonEngine.getQmon("QMON01"));
+
+  assert.equal(stillOpenQmon.position.action, "BUY_UP");
+  assert.equal(stillOpenQmon.pendingOrder, null);
+  assert.equal(stillOpenQmon.decisionHistory.length, 1);
+  assert.equal((stillOpenQmon.position.peakReturnPct ?? 0) >= 1, true);
+});
+
 test("QmonEngine keeps paper entry pending until the simulated wait elapses", () => {
   const qmonEngine = new QmonEngine(["btc"], ["5m"], createFamilyState(createPopulation([createQmon()])), undefined, undefined, undefined, false, false);
   const marketStartMs = 100;

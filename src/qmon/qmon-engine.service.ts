@@ -87,6 +87,8 @@ const MIN_POSITION_NOTIONAL_USD = 1;
  */
 const ENTRY_COOLDOWN_MS = 30_000;
 const STOP_LOSS_MIN_HOLD_MS = 60_000;
+const EXTREME_TAKE_PROFIT_MIN_RETURN_PCT = 1;
+const EXTREME_TAKE_PROFIT_REVERSAL_PCT = 0.02;
 const EXECUTION_QUALITY_STRESS_FILL_QUALITY = 0.14;
 const EXECUTION_QUALITY_STRESS_SLIPPAGE_BPS = 45;
 const EXECUTION_QUALITY_SELF_FEE_STRESS_WEIGHT = 0.55;
@@ -2634,6 +2636,22 @@ export class QmonEngine {
   }
 
   /**
+   * Take profit only after an extreme move has already doubled the position and then starts fading.
+   */
+  private hasExtremeTakeProfitSignal(qmon: Qmon, openPositionReturnPct: number | null): boolean {
+    const peakReturnPct = qmon.position.peakReturnPct;
+    let hasExtremeTakeProfitSignal = false;
+
+    if (peakReturnPct !== null && openPositionReturnPct !== null) {
+      hasExtremeTakeProfitSignal =
+        peakReturnPct >= EXTREME_TAKE_PROFIT_MIN_RETURN_PCT &&
+        openPositionReturnPct <= peakReturnPct - EXTREME_TAKE_PROFIT_REVERSAL_PCT;
+    }
+
+    return hasExtremeTakeProfitSignal;
+  }
+
+  /**
    * Queue an exit order and immediately process it when it is taker.
    */
   private queueExitOrder(
@@ -4361,6 +4379,7 @@ export class QmonEngine {
     const collapseThreshold = exitPolicy.thesisCollapseProbability ?? config.QMON_THESIS_COLLAPSE_PROBABILITY;
     const extremeDrawdownThreshold = exitPolicy.extremeDrawdownPct ?? config.QMON_EXTREME_DRAWDOWN_PCT;
     const hasThesisCollapsed = finalOutcomeProbability !== null && finalOutcomeProbability < collapseThreshold;
+    const hasExtremeTakeProfitSignal = this.hasExtremeTakeProfitSignal(qmon, openPositionReturnPct);
     const hasExtremeDrawdown =
       openPositionReturnPct !== null &&
       openPositionReturnPct <= -extremeDrawdownThreshold &&
@@ -4371,6 +4390,8 @@ export class QmonEngine {
       closeDecision = { close: true, reason: "market-settled", finalOutcomeProbability: this.getSettledShareValue(qmon, chainlinkPrice) };
     } else if (hasThesisCollapsed) {
       closeDecision = { close: true, reason: "thesis-collapsed", finalOutcomeProbability };
+    } else if (hasExtremeTakeProfitSignal) {
+      closeDecision = { close: true, reason: "take-profit-hit", finalOutcomeProbability };
     } else if (hasExtremeDrawdown) {
       closeDecision = { close: true, reason: "extreme-drawdown-hit", finalOutcomeProbability };
     }
