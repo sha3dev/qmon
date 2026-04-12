@@ -10,7 +10,7 @@ export type QmonTradeAction = "BUY_UP" | "BUY_DOWN";
 
 export type QmonRole = "champion" | "candidate";
 
-export type QmonStrategyId = "late-trend-reverse";
+export type QmonStrategyId = "late-trend-reverse" | "mid-window-cheap-trend-x2";
 
 export type QmonPosition = {
   readonly action: QmonTradeAction | null;
@@ -25,10 +25,10 @@ export type QmonPosition = {
 
 export type QmonTriggerRecord = {
   readonly firedAt: number;
-  readonly previousTrend: Exclude<QmonTrend, "FLAT">;
+  readonly previousTrend: QmonTrend;
   readonly nextTrend: Exclude<QmonTrend, "FLAT">;
   readonly action: QmonTradeAction;
-  readonly lateZoneProgress: number;
+  readonly triggerProgress: number;
 };
 
 export type QmonStrategyState = {

@@ -83,7 +83,7 @@ test("late trend reverse opens only on the first flip inside the late zone", () 
     80,
   );
 
-  let qmon = qmonEngine.getFamilyState().populations[0]?.qmons[0];
+  let qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-reverse");
 
   assert.ok(qmon);
   assert.equal(qmon.paperPosition.action, null);
@@ -102,7 +102,7 @@ test("late trend reverse opens only on the first flip inside the late zone", () 
     95,
   );
 
-  qmon = qmonEngine.getFamilyState().populations[0]?.qmons[0];
+  qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-reverse");
 
   assert.ok(qmon);
   assert.equal(qmon.paperPosition.action, "BUY_DOWN");
@@ -122,7 +122,7 @@ test("late trend reverse opens only on the first flip inside the late zone", () 
     97,
   );
 
-  qmon = qmonEngine.getFamilyState().populations[0]?.qmons[0];
+  qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-reverse");
 
   assert.ok(qmon);
   assert.equal(qmon.paperPosition.action, "BUY_DOWN");
@@ -173,7 +173,7 @@ test("late trend reverse settles at rollover and activates the market champion o
   );
 
   const population = qmonEngine.getFamilyState().populations[0];
-  const qmon = population?.qmons[0];
+  const qmon = population?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-reverse");
 
   assert.ok(population);
   assert.ok(qmon);
@@ -185,7 +185,7 @@ test("late trend reverse settles at rollover and activates the market champion o
   assert.equal(population.activeChampionQmonId, qmon.id);
 });
 
-test("market has no champion when the last five window pnl sum is not positive", () => {
+test("champion selection can move to the better preset when late trend reverse is negative", () => {
   const qmonEngine = QmonEngine.createDefault(["btc"], ["5m"]);
 
   qmonEngine.evaluateAll(
@@ -229,11 +229,59 @@ test("market has no champion when the last five window pnl sum is not positive",
   );
 
   const population = qmonEngine.getFamilyState().populations[0];
-  const qmon = population?.qmons[0];
+  const lateTrendReverseQmon = population?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-reverse");
+  const cheapTrendQmon = population?.qmons.find((candidateQmon) => candidateQmon.strategyId === "mid-window-cheap-trend-x2");
 
   assert.ok(population);
+  assert.ok(lateTrendReverseQmon);
+  assert.ok(cheapTrendQmon);
+  assert.equal(lateTrendReverseQmon.metrics.recentWindowPnlSum < 0, true);
+  assert.equal(lateTrendReverseQmon.metrics.isActive, false);
+  assert.equal(cheapTrendQmon.metrics.isActive, true);
+  assert.equal(population.activeChampionQmonId, cheapTrendQmon.id);
+});
+
+test("mid window cheap trend x2 buys the cheap trend token after 50% and exits on x2", () => {
+  const qmonEngine = QmonEngine.createDefault(["btc"], ["5m"]);
+
+  qmonEngine.evaluateAll(
+    createStructuredSignals({
+      generatedAt: 400,
+      marketStartMs: 0,
+      marketEndMs: 100,
+      upPrice: 0.18,
+      downPrice: 0.82,
+      priceToBeat: 100_000,
+      chainlinkPrice: 100_100,
+    }),
+    createRegimes("trending-up"),
+    60,
+  );
+
+  let qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "mid-window-cheap-trend-x2");
+
   assert.ok(qmon);
-  assert.equal(qmon.metrics.recentWindowPnlSum < 0, true);
-  assert.equal(qmon.metrics.isActive, false);
-  assert.equal(population.activeChampionQmonId, null);
+  assert.equal(qmon.paperPosition.action, "BUY_UP");
+  assert.equal(qmon.paperPosition.shareCount, 6);
+
+  qmonEngine.evaluateAll(
+    createStructuredSignals({
+      generatedAt: 401,
+      marketStartMs: 0,
+      marketEndMs: 100,
+      upPrice: 0.36,
+      downPrice: 0.64,
+      priceToBeat: 100_000,
+      chainlinkPrice: 100_120,
+    }),
+    createRegimes("trending-up"),
+    70,
+  );
+
+  qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "mid-window-cheap-trend-x2");
+
+  assert.ok(qmon);
+  assert.equal(qmon.paperPosition.action, null);
+  assert.equal(qmon.metrics.totalTrades, 1);
+  assert.equal(qmon.currentWindowPnl > 1, true);
 });

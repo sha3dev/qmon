@@ -51,7 +51,7 @@ test("ServiceRuntime serves the reduced qmon payload", async () => {
     assert.equal(Array.isArray(json.populations), true);
     assert.ok(firstPopulation);
     assert.ok(firstQmon);
-    assert.equal(firstQmon.strategyId, "late-trend-reverse");
+    assert.equal(firstPopulation.qmons.length, 2);
     assert.equal(typeof firstQmon.metrics.recentWindowPnlSum, "number");
     assert.ok("realSeat" in firstPopulation);
   });
@@ -64,7 +64,7 @@ test("ServiceRuntime serves qmon stats for the preset-only runtime", async () =>
 
     assert.equal(response.status, 200);
     assert.equal(json.totalPopulations, 8);
-    assert.equal(json.totalQmons, 8);
+    assert.equal(json.totalQmons, 16);
     assert.equal(typeof json.activeChampionCount, "number");
     assert.equal(typeof json.totalPnl, "number");
   });

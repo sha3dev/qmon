@@ -3,37 +3,391 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QMON Signals</title>
+  <title>Polymarket Quant — Signal Dashboard</title>
   <style>
-    body {
-      margin: 0;
-      font-family: "Iosevka", "IBM Plex Mono", monospace;
-      background: #091019;
-      color: #edf6ff;
-      padding: 24px;
+    :root {
+      --bg-primary: #0f1117;
+      --bg-secondary: #1a1d27;
+      --bg-card: #222636;
+      --bg-card-hover: #2a2f45;
+      --border: #2d3148;
+      --text-primary: #e4e6f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5e6175;
+      --green-strong: #00e676;
+      --green-mid: #66bb6a;
+      --red-mid: #ef5350;
+      --accent: #7c4dff;
+      --accent-dim: rgba(124, 77, 255, 0.15);
+      --yellow: #ffd740;
     }
-    a { color: #f4b942; }
-    pre {
-      white-space: pre-wrap;
-      word-break: break-word;
-      padding: 16px;
-      border-radius: 14px;
-      background: #111c28;
-      border: 1px solid #294055;
-      max-height: calc(100vh - 140px);
-      overflow: auto;
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-size: 12px;
+      line-height: 1.4;
+      min-height: 100vh;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .header h1 span {
+      color: var(--accent);
+    }
+    .view-tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-card);
+      padding: 3px;
+      border-radius: 5px;
+    }
+    .view-tab {
+      font-size: 10px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-secondary);
+      text-decoration: none;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .view-tab.active {
+      background: var(--accent);
+      color: var(--bg-primary);
+      font-weight: 700;
+    }
+    .status {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .dot-live {
+      background: var(--green-strong);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .dashboard {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .asset-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .asset-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+    }
+    .asset-head-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .asset-sym {
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .price-tag {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .price-label {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .regime-badge {
+      display: inline-block;
+      font-size: 8px;
+      padding: 2px 6px;
+      border-radius: 2px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .regime-direction-up {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--green-mid);
+    }
+    .regime-direction-down {
+      background: rgba(255, 82, 82, 0.15);
+      color: var(--red-mid);
+    }
+    .regime-direction-flat {
+      background: rgba(69, 90, 100, 0.2);
+      color: var(--text-secondary);
+    }
+    .asset-signals {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 6px;
+    }
+    .sig-grid {
+      display: grid;
+      gap: 4px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .sig-cell {
+      background: var(--bg-card);
+      border-radius: 4px;
+      padding: 6px 7px;
+      border: 1px solid transparent;
+    }
+    .sig-cell:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+    }
+    .sig-name {
+      font-size: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 3px;
+    }
+    .sig-val {
+      font-size: 13px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .sig-null {
+      color: var(--text-muted);
+      font-style: italic;
+      font-size: 10px;
+    }
+    .windows-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--border);
+    }
+    .win-panel {
+      background: var(--bg-secondary);
+      padding: 10px 14px;
+    }
+    .win-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .win-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .win-prices {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .win-price {
+      font-size: 10px;
+    }
+    .win-price-label {
+      color: var(--text-muted);
+    }
+    .win-price-val {
+      font-weight: 600;
+    }
+    .up-color { color: var(--green-mid); }
+    .down-color { color: var(--red-mid); }
+    .info-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      gap: 16px;
+    }
+    @media (max-width: 720px) {
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .header-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .sig-grid,
+      .windows-row {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <p><a href="/">Back to dashboard</a></p>
-  <h1>Structured signals</h1>
-  <pre id="payload">Loading…</pre>
+  <div class="header">
+    <div class="header-left">
+      <h1>POLYMARKET QUANT <span>SIGNALS</span></h1>
+      <div class="view-tabs">
+        <a class="view-tab" href="/">Dashboard</a>
+        <a class="view-tab active" href="/signals.html">Signals</a>
+      </div>
+    </div>
+    <div class="status" id="signals-status"><span class="dot dot-live"></span>LIVE</div>
+  </div>
+
+  <div class="dashboard" id="signals-dashboard"></div>
+  <div class="info-bar" id="signals-footer">Waiting for first signal payload</div>
+
   <script>
+    const signalsDashboardElement = document.getElementById("signals-dashboard");
+    const signalsFooterElement = document.getElementById("signals-footer");
+
+    function formatNumber(value) {
+      return typeof value === "number" ? value.toFixed(3) : "—";
+    }
+
+    function formatPrice(value) {
+      return typeof value === "number" ? value.toFixed(4) : "—";
+    }
+
+    function regimeClass(direction) {
+      if (direction === "trending-up") {
+        return "regime-direction-up";
+      }
+
+      if (direction === "trending-down") {
+        return "regime-direction-down";
+      }
+
+      return "regime-direction-flat";
+    }
+
+    function regimeLabel(direction) {
+      if (direction === "trending-up") {
+        return "trend up";
+      }
+
+      if (direction === "trending-down") {
+        return "trend down";
+      }
+
+      return "flat";
+    }
+
+    function renderSignals(payload) {
+      const structuredSignals = payload.structuredSignals || {};
+      const regimes = payload.regimes || {};
+
+      signalsDashboardElement.innerHTML = Object.entries(structuredSignals).map(([asset, assetResult]) => {
+        const assetSignals = assetResult.signals || {};
+        const windows = assetResult.windows || {};
+        const scalarSignals = [
+          ["oracleLag", assetSignals.oracleLag],
+          ["dispersion", assetSignals.dispersion],
+          ["microprice", assetSignals.microprice],
+          ["crossAssetMomentum", assetSignals.crossAssetMomentum],
+        ];
+
+        const windowPanels = Object.entries(windows).map(([windowLabel, windowResult]) => `
+          <div class="win-panel">
+            <div class="win-head">
+              <div class="win-label">${windowLabel}</div>
+              <div class="regime-badge ${regimeClass(regimes[asset]?.direction)}">${regimeLabel(regimes[asset]?.direction)}</div>
+            </div>
+            <div class="win-prices">
+              <div class="win-price"><span class="win-price-label">UP</span> <span class="win-price-val up-color">${formatPrice(windowResult.prices?.upPrice)}</span></div>
+              <div class="win-price"><span class="win-price-label">DOWN</span> <span class="win-price-val down-color">${formatPrice(windowResult.prices?.downPrice)}</span></div>
+              <div class="win-price"><span class="win-price-label">PTB</span> <span class="win-price-val">${formatPrice(windowResult.prices?.priceToBeat)}</span></div>
+            </div>
+            <div class="sig-grid">
+              ${Object.entries(windowResult.signals || {}).map(([signalName, signalValue]) => `
+                <div class="sig-cell">
+                  <div class="sig-name">${signalName}</div>
+                  <div class="${signalValue === null ? "sig-null" : "sig-val"}">${signalValue === null ? "—" : formatNumber(signalValue)}</div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `).join("");
+
+        return `
+          <div class="asset-card">
+            <div class="asset-head">
+              <div class="asset-head-left">
+                <span class="asset-sym">${asset.toUpperCase()}</span>
+                <span class="price-tag">${formatPrice(assetResult.chainlinkPrice)}</span>
+                <span class="price-label">Chainlink</span>
+                <span class="regime-badge ${regimeClass(regimes[asset]?.direction)}">${regimeLabel(regimes[asset]?.direction)}</span>
+              </div>
+            </div>
+            <div class="asset-signals">
+              <div class="section-label">Asset Signals</div>
+              <div class="sig-grid">
+                ${scalarSignals.map(([signalName, signalValue]) => `
+                  <div class="sig-cell">
+                    <div class="sig-name">${signalName}</div>
+                    <div class="${signalValue === null ? "sig-null" : "sig-val"}">${signalValue === null ? "—" : formatNumber(signalValue)}</div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+            <div class="windows-row">${windowPanels}</div>
+          </div>
+        `;
+      }).join("");
+    }
+
     async function refreshSignals() {
       const response = await fetch("/api/signals/structured");
       const payload = await response.json();
-      document.getElementById("payload").textContent = JSON.stringify(payload, null, 2);
+
+      renderSignals(payload);
+      signalsFooterElement.textContent = `Last signal update ${new Date(payload.generatedAt).toLocaleTimeString()} • ${Object.keys(payload.regimes || {}).length} assets classified`;
     }
 
     refreshSignals();

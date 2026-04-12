@@ -15,6 +15,12 @@ const LATE_TREND_REVERSE_DEFINITION: QmonStrategyDefinition = {
   strategyDescription: "Buys the new trend direction on the first UP/DOWN flip detected inside the final 10% of the market window.",
 };
 
+const MID_WINDOW_CHEAP_TREND_X2_DEFINITION: QmonStrategyDefinition = {
+  strategyId: "mid-window-cheap-trend-x2",
+  strategyName: "Mid Window Cheap Trend X2",
+  strategyDescription: "After 50% of the window, buys the trend-aligned token when it costs at most 0.20 and exits when the token price doubles.",
+};
+
 /**
  * @section class
  */
@@ -67,6 +73,12 @@ export class QmonPresetStrategyService {
     return qmonName;
   }
 
+  private buildStrategyName(market: MarketKey, strategyDefinition: QmonStrategyDefinition): string {
+    const qmonName = `${market}-${strategyDefinition.strategyId}`;
+
+    return qmonName;
+  }
+
   /**
    * @section public:methods
    */
@@ -77,15 +89,20 @@ export class QmonPresetStrategyService {
     return strategyDefinition;
   }
 
-  public createMarketQmon(market: MarketKey): Qmon {
-    const now = Date.now();
+  public getDefinitions(): readonly QmonStrategyDefinition[] {
+    const strategyDefinitions = [LATE_TREND_REVERSE_DEFINITION, MID_WINDOW_CHEAP_TREND_X2_DEFINITION] as const;
+
+    return strategyDefinitions;
+  }
+
+  public createMarketQmon(market: MarketKey, strategyDefinition: QmonStrategyDefinition): Qmon {
     const qmon: Qmon = {
-      id: `qmon-${market}-${LATE_TREND_REVERSE_DEFINITION.strategyId}`,
-      name: this.buildQmonName(market),
+      id: `qmon-${market}-${strategyDefinition.strategyId}`,
+      name: this.buildStrategyName(market, strategyDefinition),
       market,
-      strategyId: LATE_TREND_REVERSE_DEFINITION.strategyId,
-      strategyName: LATE_TREND_REVERSE_DEFINITION.strategyName,
-      strategyDescription: LATE_TREND_REVERSE_DEFINITION.strategyDescription,
+      strategyId: strategyDefinition.strategyId,
+      strategyName: strategyDefinition.strategyName,
+      strategyDescription: strategyDefinition.strategyDescription,
       role: "candidate",
       currentTrend: "FLAT",
       strategyState: this.buildInitialStrategyState(),
@@ -100,8 +117,6 @@ export class QmonPresetStrategyService {
         lastSettledAt: null,
       },
     };
-
-    void now;
 
     return qmon;
   }

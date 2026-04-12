@@ -3,238 +3,631 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QMON v1 Dashboard</title>
+  <title>QMON — Polymarket Quant</title>
   <style>
     :root {
-      --bg: #0c1117;
-      --panel: #121b24;
-      --panel-strong: #182534;
-      --border: #294055;
-      --text: #edf6ff;
-      --muted: #8ca4bc;
-      --positive: #3ed598;
-      --negative: #ff7b72;
-      --accent: #f4b942;
+      --bg-primary: #0f1117;
+      --bg-secondary: #1a1d27;
+      --bg-card: #222636;
+      --bg-card-hover: #2a2f45;
+      --border: #2d3148;
+      --text-primary: #e4e6f0;
+      --text-secondary: #8b8fa3;
+      --text-muted: #5e6175;
+      --green-strong: #00e676;
+      --green-mid: #66bb6a;
+      --green-faint: #2e4a3e;
+      --red-strong: #ff1744;
+      --red-mid: #ef5350;
+      --red-faint: #4a2e2e;
+      --neutral: #455a64;
+      --accent: #7c4dff;
+      --accent-dim: rgba(124, 77, 255, 0.15);
+      --yellow: #ffd740;
+      --orange: #ff9800;
     }
-    * { box-sizing: border-box; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      margin: 0;
-      font-family: "Iosevka", "IBM Plex Mono", monospace;
-      background:
-        radial-gradient(circle at top right, rgba(244, 185, 66, 0.12), transparent 25%),
-        linear-gradient(180deg, #081018 0%, #0c1117 100%);
-      color: var(--text);
-    }
-    main {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 32px 20px 48px;
-    }
-    .hero {
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      align-items: end;
-      margin-bottom: 24px;
-    }
-    .hero h1 {
-      margin: 0;
-      font-size: 28px;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    .hero p {
-      margin: 8px 0 0;
-      color: var(--muted);
-      max-width: 720px;
-    }
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .summary-card, .market-card {
-      background: linear-gradient(180deg, rgba(24, 37, 52, 0.96), rgba(18, 27, 36, 0.96));
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 16px;
-      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18);
-    }
-    .summary-label, .market-label {
-      color: var(--muted);
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+      background: var(--bg-primary);
+      color: var(--text-primary);
       font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
+      line-height: 1.4;
+      min-height: 100vh;
     }
-    .summary-value {
-      display: block;
-      margin-top: 8px;
-      font-size: 28px;
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg-primary); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .header h1 {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .header h1 span {
+      color: var(--accent);
+    }
+    .view-tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--bg-card);
+      padding: 3px;
+      border-radius: 5px;
+    }
+    .view-tab {
+      font-size: 10px;
+      padding: 6px 14px;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--text-secondary);
+      border: none;
+      text-decoration: none;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .view-tab.active {
+      background: var(--accent);
+      color: var(--bg-primary);
       font-weight: 700;
+    }
+    .header-right {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .status {
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+    .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+    .dot-live {
+      background: var(--green-strong);
+      animation: pulse 2s infinite;
+    }
+    .dot-off {
+      background: var(--red-strong);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .dashboard {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .status-banner {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .status-banner.warning {
+      border-color: var(--yellow);
+      background: rgba(255, 215, 64, 0.08);
+    }
+    .status-banner-title {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--yellow);
+      margin-bottom: 2px;
+    }
+    .status-banner-desc {
+      font-size: 9px;
+      color: var(--text-secondary);
+    }
+    .market-pnl-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      padding: 12px 14px;
+      background: linear-gradient(180deg, rgba(26, 29, 39, 0.96), rgba(20, 23, 32, 0.98));
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .market-pnl-item {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+      padding: 12px 14px;
+      background: linear-gradient(180deg, rgba(34, 38, 54, 0.98), rgba(24, 27, 38, 0.98));
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .market-pnl-item.has-champion {
+      border-color: rgba(0, 230, 118, 0.45);
+      box-shadow: inset 0 0 0 1px rgba(0, 230, 118, 0.12);
+    }
+    .market-pnl-item.total {
+      background: linear-gradient(180deg, rgba(124, 77, 255, 0.16), rgba(34, 38, 54, 0.96));
+      border-color: rgba(124, 77, 255, 0.45);
+    }
+    .market-pnl-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .market-pnl-name {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+    .market-pnl-champion {
+      font-size: 10px;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.4px;
+    }
+    .market-pnl-val {
+      font-size: 18px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .market-pnl-subval {
+      font-size: 10px;
+      color: var(--text-secondary);
+      font-variant-numeric: tabular-nums;
+    }
+    .market-pnl-val.green { color: var(--green-mid); }
+    .market-pnl-val.red { color: var(--red-mid); }
+    .market-pnl-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .market-pnl-metric {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+      min-height: 56px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(15, 17, 23, 0.34);
+      border: 1px solid rgba(94, 97, 117, 0.2);
+    }
+    .market-pnl-metric-label {
+      font-size: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .market-pnl-metric-value {
+      font-size: 15px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .market-route-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      border: 1px solid var(--border);
+    }
+    .market-route-badge.real {
+      color: var(--green-mid);
+      background: rgba(0, 230, 118, 0.12);
+      border-color: rgba(0, 230, 118, 0.28);
+    }
+    .market-route-badge.paper {
+      color: var(--text-secondary);
+      background: rgba(94, 97, 117, 0.16);
+      border-color: rgba(94, 97, 117, 0.28);
     }
     .market-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
       gap: 14px;
+    }
+    .market-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
     }
     .market-head {
       display: flex;
-      align-items: start;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 12px;
+      padding: 12px 14px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
     }
     .market-title {
-      margin: 6px 0 0;
-      font-size: 18px;
+      font-size: 13px;
+      font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+    .market-subtitle {
+      margin-top: 3px;
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .market-summary {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .market-summary-card {
+      padding: 9px 10px;
+      background: rgba(15, 17, 23, 0.34);
+      border: 1px solid rgba(94, 97, 117, 0.2);
+      border-radius: 5px;
+    }
+    .market-summary-label {
+      font-size: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .market-summary-value {
+      margin-top: 4px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .qmon-stack {
+      display: flex;
+      flex-direction: column;
+    }
+    .qmon-row {
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+    }
+    .qmon-row:first-child {
+      border-top: none;
+    }
+    .qmon-row-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .qmon-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .qmon-id {
+      margin-top: 2px;
+      font-size: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
     }
     .pill {
       display: inline-flex;
       align-items: center;
-      border-radius: 999px;
-      padding: 5px 10px;
-      font-size: 11px;
-      border: 1px solid var(--border);
-      color: var(--muted);
+      justify-content: center;
+      min-width: 22px;
+      min-height: 20px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      border: 1px solid transparent;
     }
-    .pill.champion { color: var(--positive); border-color: rgba(62, 213, 152, 0.45); }
-    .pill.inactive { color: var(--negative); border-color: rgba(255, 123, 114, 0.45); }
-    .market-meta {
+    .pill.champion {
+      color: var(--green-mid);
+      background: rgba(0, 230, 118, 0.12);
+      border-color: rgba(0, 230, 118, 0.28);
+    }
+    .pill.active {
+      color: var(--accent);
+      background: rgba(124, 77, 255, 0.12);
+      border-color: rgba(124, 77, 255, 0.28);
+    }
+    .pill.inactive {
+      color: var(--red-mid);
+      background: rgba(255, 82, 82, 0.12);
+      border-color: rgba(255, 82, 82, 0.28);
+    }
+    .qmon-grid {
+      margin-top: 10px;
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-top: 12px;
+      gap: 8px;
     }
-    .market-metric {
-      padding: 12px;
-      border-radius: 12px;
-      background: rgba(9, 15, 22, 0.78);
-      border: 1px solid rgba(41, 64, 85, 0.55);
+    .qmon-metric {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(15, 17, 23, 0.34);
+      border: 1px solid rgba(94, 97, 117, 0.2);
     }
-    .market-metric strong {
-      display: block;
-      margin-top: 6px;
-      font-size: 18px;
+    .qmon-metric-label {
+      font-size: 8px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .qmon-metric-value {
+      font-size: 13px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .window-strip {
+      margin-top: 10px;
       display: flex;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
-      margin-top: 12px;
     }
     .window-pill {
-      min-width: 48px;
-      padding: 8px 10px;
+      min-width: 42px;
+      padding: 5px 7px;
+      border-radius: 4px;
+      background: rgba(15, 17, 23, 0.34);
+      border: 1px solid rgba(94, 97, 117, 0.2);
       text-align: center;
-      border-radius: 10px;
-      font-size: 12px;
-      background: rgba(9, 15, 22, 0.78);
-      border: 1px solid rgba(41, 64, 85, 0.55);
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
     }
-    .positive { color: var(--positive); }
-    .negative { color: var(--negative); }
-    .footer-note {
-      margin-top: 24px;
-      color: var(--muted);
-      font-size: 12px;
-    }
+    .positive { color: var(--green-mid); }
+    .negative { color: var(--red-mid); }
     @media (max-width: 720px) {
-      .hero { flex-direction: column; align-items: start; }
-      .market-meta { grid-template-columns: 1fr; }
+      .header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .header-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .market-summary,
+      .qmon-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <main>
-    <section class="hero">
-      <div>
-        <div class="market-label">Preset QMON Runtime</div>
-        <h1>QMON v1</h1>
-        <p>One preset-only QMON per market. The current champion is the market QMON with a positive summed paper PnL across the last 5 completed windows.</p>
+  <div class="header">
+    <div class="header-left">
+      <h1>QMON <span>PRESET RUNTIME</span></h1>
+      <div class="view-tabs">
+        <a class="view-tab active" href="/">Dashboard</a>
+        <a class="view-tab" href="/signals.html">Signals</a>
       </div>
-      <a class="pill" href="/signals.html">Signals view</a>
-    </section>
+    </div>
+    <div class="header-right">
+      <div class="status" id="status-text"><span class="dot dot-off"></span>OFFLINE</div>
+      <div class="status" id="last-update">Waiting for first payload</div>
+    </div>
+  </div>
 
-    <section id="summary" class="summary"></section>
-    <section id="markets" class="market-grid"></section>
-    <div class="footer-note" id="footer-note">Waiting for runtime payload…</div>
-  </main>
+  <div class="dashboard">
+    <div class="status-banner warning">
+      <div class="status-banner-text">
+        <div class="status-banner-title">Preset Champion Loop</div>
+        <div class="status-banner-desc">
+          Multiple fixed QMONs compete per market. A champion exists only when the best recent 5-window paper PnL is positive.
+        </div>
+      </div>
+    </div>
+
+    <div class="market-pnl-bar" id="market-pnl-bar"></div>
+    <div class="market-grid" id="market-grid"></div>
+  </div>
 
   <script>
-    const summaryElement = document.getElementById("summary");
-    const marketsElement = document.getElementById("markets");
-    const footerNoteElement = document.getElementById("footer-note");
+    const marketPnlBarElement = document.getElementById("market-pnl-bar");
+    const marketGridElement = document.getElementById("market-grid");
+    const statusTextElement = document.getElementById("status-text");
+    const lastUpdateElement = document.getElementById("last-update");
 
     function formatNumber(value) {
       return Number(value || 0).toFixed(2);
     }
 
-    function formatWindowPnl(windowPnl) {
-      const className = windowPnl > 0 ? "positive" : windowPnl < 0 ? "negative" : "";
-      return `<div class="window-pill ${className}">${formatNumber(windowPnl)}</div>`;
+    function pnlClass(value) {
+      let className = "";
+
+      if (value > 0) {
+        className = "green";
+      } else if (value < 0) {
+        className = "red";
+      }
+
+      return className;
     }
 
-    function renderSummary(payload) {
+    function routeBadgeClass(route) {
+      return route === "real" ? "real" : "paper";
+    }
+
+    function qmonStatus(qmon, population) {
+      if (population.activeChampionQmonId === qmon.id) {
+        return { label: "champion", className: "champion" };
+      }
+
+      if (qmon.metrics?.isActive) {
+        return { label: "active", className: "active" };
+      }
+
+      return { label: "inactive", className: "inactive" };
+    }
+
+    function renderMarketPnlBar(payload) {
       const populations = payload.populations || [];
-      const championCount = populations.filter((population) => population.activeChampionQmonId !== null).length;
       const totalRecentPnl = populations.reduce((runningPnl, population) => {
-        const marketQmon = population.qmons?.[0];
-        return runningPnl + (marketQmon?.metrics?.recentWindowPnlSum || 0);
+        const bestQmon = (population.qmons || []).reduce((currentBestQmon, qmon) => {
+          if (currentBestQmon === null || (qmon.metrics?.recentWindowPnlSum || 0) > (currentBestQmon.metrics?.recentWindowPnlSum || 0)) {
+            return qmon;
+          }
+
+          return currentBestQmon;
+        }, null);
+
+        return runningPnl + (bestQmon?.metrics?.recentWindowPnlSum || 0);
       }, 0);
-
-      summaryElement.innerHTML = [
-        ["Mode", payload.mode || "paper"],
-        ["Markets", populations.length],
-        ["Champions", championCount],
-        ["Recent 5W PnL", formatNumber(totalRecentPnl)],
-      ].map(([label, value]) => `
-        <article class="summary-card">
-          <div class="summary-label">${label}</div>
-          <span class="summary-value">${value}</span>
-        </article>
-      `).join("");
-    }
-
-    function renderMarkets(payload) {
-      const populations = payload.populations || [];
-      marketsElement.innerHTML = populations.map((population) => {
-        const marketQmon = population.qmons?.[0];
-        const recentWindowPnls = marketQmon?.metrics?.recentWindowPnls || [];
-        const isChampion = population.activeChampionQmonId === marketQmon?.id;
-        const statusLabel = isChampion ? "active champion" : marketQmon?.metrics?.isActive ? "active / no champion" : "inactive";
-        const statusClass = isChampion ? "champion" : marketQmon?.metrics?.isActive ? "" : "inactive";
+      const cards = populations.map((population) => {
+        const championQmon = (population.qmons || []).find((qmon) => qmon.id === population.activeChampionQmonId) || null;
+        const bestRecentPnl = Math.max(...(population.qmons || []).map((qmon) => qmon.metrics?.recentWindowPnlSum || 0));
+        const totalTrades = (population.qmons || []).reduce((runningTrades, qmon) => runningTrades + (qmon.metrics?.totalTrades || 0), 0);
+        const route = population.realSeat?.route || payload.mode || "paper";
 
         return `
-          <article class="market-card">
+          <div class="market-pnl-item ${population.activeChampionQmonId ? "has-champion" : ""}">
+            <div class="market-pnl-head">
+              <div class="market-pnl-meta">
+                <div class="market-pnl-name">${population.market}</div>
+                <div class="market-pnl-champion">${championQmon ? championQmon.strategyName : "No champion"}</div>
+              </div>
+              <span class="market-route-badge ${routeBadgeClass(route)}">${route}</span>
+            </div>
+            <div class="market-pnl-val ${pnlClass(bestRecentPnl)}">${formatNumber(bestRecentPnl)}</div>
+            <div class="market-pnl-subval">Best 5-window paper PnL</div>
+            <div class="market-pnl-grid">
+              <div class="market-pnl-metric">
+                <span class="market-pnl-metric-label">Trend</span>
+                <span class="market-pnl-metric-value">${population.currentTrend || "FLAT"}</span>
+              </div>
+              <div class="market-pnl-metric">
+                <span class="market-pnl-metric-label">QMONs</span>
+                <span class="market-pnl-metric-value">${population.qmons?.length || 0}</span>
+              </div>
+              <div class="market-pnl-metric">
+                <span class="market-pnl-metric-label">Trades</span>
+                <span class="market-pnl-metric-value">${totalTrades}</span>
+              </div>
+              <div class="market-pnl-metric">
+                <span class="market-pnl-metric-label">Mirrored Seat</span>
+                <span class="market-pnl-metric-value">${population.realSeat?.mirroredQmonId ? "armed" : "idle"}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      cards.unshift(`
+        <div class="market-pnl-item total">
+          <div class="market-pnl-head">
+            <div class="market-pnl-meta">
+              <div class="market-pnl-name">Session Summary</div>
+              <div class="market-pnl-champion">${payload.populations?.length || 0} markets live</div>
+            </div>
+          </div>
+          <div class="market-pnl-val ${pnlClass(totalRecentPnl)}">${formatNumber(totalRecentPnl)}</div>
+          <div class="market-pnl-subval">Combined best recent market PnL</div>
+        </div>
+      `);
+
+      marketPnlBarElement.innerHTML = cards.join("");
+    }
+
+    function renderMarketGrid(payload) {
+      const populations = payload.populations || [];
+
+      marketGridElement.innerHTML = populations.map((population) => {
+        const championQmon = (population.qmons || []).find((qmon) => qmon.id === population.activeChampionQmonId) || null;
+        const qmonRows = (population.qmons || []).map((qmon) => {
+          const status = qmonStatus(qmon, population);
+          const recentWindowPnls = qmon.metrics?.recentWindowPnls || [];
+
+          return `
+            <div class="qmon-row">
+              <div class="qmon-row-head">
+                <div>
+                  <div class="qmon-name">${qmon.strategyName}</div>
+                  <div class="qmon-id">${qmon.strategyId}</div>
+                </div>
+                <span class="pill ${status.className}">${status.label}</span>
+              </div>
+              <div class="qmon-grid">
+                <div class="qmon-metric">
+                  <span class="qmon-metric-label">Recent 5W PnL</span>
+                  <span class="qmon-metric-value ${qmon.metrics?.recentWindowPnlSum >= 0 ? "positive" : "negative"}">${formatNumber(qmon.metrics?.recentWindowPnlSum || 0)}</span>
+                </div>
+                <div class="qmon-metric">
+                  <span class="qmon-metric-label">Paper Position</span>
+                  <span class="qmon-metric-value">${qmon.currentPaperPosition?.action || "flat"}</span>
+                </div>
+                <div class="qmon-metric">
+                  <span class="qmon-metric-label">Trades</span>
+                  <span class="qmon-metric-value">${qmon.metrics?.totalTrades || 0}</span>
+                </div>
+                <div class="qmon-metric">
+                  <span class="qmon-metric-label">Last Skip</span>
+                  <span class="qmon-metric-value">${qmon.strategyState?.lastSkipReason || "none"}</span>
+                </div>
+              </div>
+              <div class="window-strip">
+                ${recentWindowPnls.map((windowPnl) => `<div class="window-pill ${windowPnl >= 0 ? "positive" : "negative"}">${formatNumber(windowPnl)}</div>`).join("")}
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        return `
+          <div class="market-card">
             <div class="market-head">
               <div>
-                <div class="market-label">${marketQmon?.strategyName || "Late Trend Reverse"}</div>
-                <h2 class="market-title">${population.market}</h2>
+                <div class="market-title">${population.market}</div>
+                <div class="market-subtitle">${championQmon ? `Champion: ${championQmon.strategyName}` : "Champion: none"}</div>
               </div>
-              <span class="pill ${statusClass}">${statusLabel}</span>
+              <span class="market-route-badge ${routeBadgeClass(population.realSeat?.route || "paper")}">${population.realSeat?.route || "paper"}</span>
             </div>
-            <div class="market-meta">
-              <div class="market-metric">
-                <span class="market-label">Trend</span>
-                <strong>${population.currentTrend || "FLAT"}</strong>
+            <div class="market-summary">
+              <div class="market-summary-card">
+                <div class="market-summary-label">Current Trend</div>
+                <div class="market-summary-value">${population.currentTrend || "FLAT"}</div>
               </div>
-              <div class="market-metric">
-                <span class="market-label">Recent 5W PnL</span>
-                <strong class="${(marketQmon?.metrics?.recentWindowPnlSum || 0) >= 0 ? "positive" : "negative"}">${formatNumber(marketQmon?.metrics?.recentWindowPnlSum || 0)}</strong>
-              </div>
-              <div class="market-metric">
-                <span class="market-label">Paper Position</span>
-                <strong>${marketQmon?.currentPaperPosition?.action || "flat"}</strong>
-              </div>
-              <div class="market-metric">
-                <span class="market-label">Real Seat</span>
-                <strong>${population.realSeat?.route === "real" && population.realSeat?.hasOpenPosition ? population.realSeat.action : population.realSeat?.route || "paper"}</strong>
+              <div class="market-summary-card">
+                <div class="market-summary-label">Mirrored QMON</div>
+                <div class="market-summary-value">${population.realSeat?.mirroredQmonId || "none"}</div>
               </div>
             </div>
-            <div class="window-strip">${recentWindowPnls.map(formatWindowPnl).join("")}</div>
-          </article>
+            <div class="qmon-stack">${qmonRows}</div>
+          </div>
         `;
       }).join("");
     }
@@ -243,9 +636,10 @@
       const response = await fetch("/api/qmons");
       const payload = await response.json();
 
-      renderSummary(payload);
-      renderMarkets(payload);
-      footerNoteElement.textContent = `Last update ${new Date(payload.generatedAt).toLocaleTimeString()}`;
+      statusTextElement.innerHTML = `<span class="dot dot-live"></span>${payload.mode?.toUpperCase() || "LIVE"}`;
+      lastUpdateElement.textContent = `Last update ${new Date(payload.generatedAt).toLocaleTimeString()}`;
+      renderMarketPnlBar(payload);
+      renderMarketGrid(payload);
     }
 
     refreshDashboard();

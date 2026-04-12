@@ -60,6 +60,14 @@ export class QmonEngine {
   }
 
   /**
+   * @section static:properties
+   */
+
+  private static readonly MID_WINDOW_ENTRY_PROGRESS = 0.5;
+  private static readonly MAX_CHEAP_TOKEN_PRICE = 0.2;
+  private static readonly TAKE_PROFIT_MULTIPLIER = 2;
+
+  /**
    * @section factory
    */
 
@@ -82,7 +90,9 @@ export class QmonEngine {
         const market = `${asset}-${windowLabel}` as MarketKey;
         populations.push({
           market,
-          qmons: [this.presetStrategyService.createMarketQmon(market)],
+          qmons: this.presetStrategyService
+            .getDefinitions()
+            .map((strategyDefinition) => this.presetStrategyService.createMarketQmon(market, strategyDefinition)),
           activeChampionQmonId: null,
           currentTrend: "FLAT",
           currentWindowStartMs: null,
@@ -259,13 +269,13 @@ export class QmonEngine {
   }
 
   private calculateLateZoneProgress(currentWindowStartMs: number | null, marketEndMs: number | null, evaluatedAt: number): number | null {
-    let lateZoneProgress: number | null = null;
+    let windowProgress: number | null = null;
 
     if (currentWindowStartMs !== null && marketEndMs !== null && marketEndMs > currentWindowStartMs) {
-      lateZoneProgress = (evaluatedAt - currentWindowStartMs) / (marketEndMs - currentWindowStartMs);
+      windowProgress = (evaluatedAt - currentWindowStartMs) / (marketEndMs - currentWindowStartMs);
     }
 
-    return lateZoneProgress;
+    return windowProgress;
   }
 
   private resolveEntryAction(nextTrend: QmonTrend): QmonTradeAction | null {
@@ -309,7 +319,7 @@ export class QmonEngine {
   private openPaperPosition(
     qmon: Qmon,
     currentTrend: QmonTrend,
-    lateZoneProgress: number,
+    triggerProgress: number,
     entryPrice: number,
     requestedShares: number,
     currentWindowStartMs: number | null,
@@ -344,11 +354,63 @@ export class QmonEngine {
                 previousTrend,
                 nextTrend: currentTrend,
                 action: entryAction,
-                lateZoneProgress,
+                triggerProgress,
               }
             : qmon.strategyState.lastTrigger,
       },
     };
+
+    return nextQmon;
+  }
+
+  private hasReachedTakeProfit(qmon: Qmon, upPrice: number | null, downPrice: number | null): boolean {
+    const entryPrice = qmon.paperPosition.entryPrice;
+    const action = qmon.paperPosition.action;
+    let hasReachedTakeProfit = false;
+
+    if (entryPrice !== null && action !== null) {
+      const currentTokenPrice = this.resolveEntryPrice(action, upPrice, downPrice);
+
+      if (currentTokenPrice !== null) {
+        hasReachedTakeProfit = currentTokenPrice >= entryPrice * QmonEngine.TAKE_PROFIT_MULTIPLIER;
+      }
+    }
+
+    return hasReachedTakeProfit;
+  }
+
+  private settleOpenPositionAtMarketPrice(qmon: Qmon, upPrice: number | null, downPrice: number | null, settledAt: number): Qmon {
+    const action = qmon.paperPosition.action;
+    const shareCount = qmon.paperPosition.shareCount;
+    const entryCostUsd = qmon.paperPosition.entryCostUsd;
+    const exitPrice = this.resolveEntryPrice(action, upPrice, downPrice);
+    let nextQmon = qmon;
+
+    if (action !== null && shareCount !== null && entryCostUsd !== null && exitPrice !== null) {
+      const realizedPnl = shareCount * exitPrice - entryCostUsd;
+      nextQmon = {
+        ...qmon,
+        paperPosition: this.buildEmptyPosition(),
+        currentWindowPnl: qmon.currentWindowPnl + realizedPnl,
+        metrics: {
+          ...qmon.metrics,
+          totalPnl: qmon.metrics.totalPnl + realizedPnl,
+          totalTrades: qmon.metrics.totalTrades + 1,
+          lastSettledAt: settledAt,
+        },
+      };
+    }
+
+    return nextQmon;
+  }
+
+  private maybeTakeProfit(qmon: Qmon, upPrice: number | null, downPrice: number | null, evaluatedAt: number): Qmon {
+    const shouldTakeProfit = qmon.strategyId === "mid-window-cheap-trend-x2" && this.hasReachedTakeProfit(qmon, upPrice, downPrice);
+    let nextQmon = qmon;
+
+    if (shouldTakeProfit) {
+      nextQmon = this.settleOpenPositionAtMarketPrice(qmon, upPrice, downPrice, evaluatedAt);
+    }
 
     return nextQmon;
   }
@@ -421,6 +483,58 @@ export class QmonEngine {
     return nextQmon;
   }
 
+  private evaluateMidWindowCheapTrendX2(
+    qmon: Qmon,
+    currentTrend: QmonTrend,
+    currentWindowStartMs: number | null,
+    marketEndMs: number | null,
+    priceToBeat: number | null,
+    upPrice: number | null,
+    downPrice: number | null,
+    evaluatedAt: number,
+  ): Qmon {
+    const windowProgress = this.calculateLateZoneProgress(currentWindowStartMs, marketEndMs, evaluatedAt);
+    const isEligibleWindowHalf = windowProgress !== null && windowProgress >= QmonEngine.MID_WINDOW_ENTRY_PROGRESS;
+    const entryAction = this.resolveEntryAction(currentTrend);
+    const entryPrice = this.resolveEntryPrice(entryAction, upPrice, downPrice);
+    const requestedShares = this.resolveRequestedShares(entryPrice);
+    const isCheapEnough = entryPrice !== null && entryPrice <= QmonEngine.MAX_CHEAP_TOKEN_PRICE;
+    const canOpenPosition = qmon.paperPosition.action === null && !qmon.strategyState.hasTriggeredThisWindow;
+    const shouldAttemptEntry = isEligibleWindowHalf && currentTrend !== "FLAT" && isCheapEnough && canOpenPosition;
+    let nextQmon: Qmon = {
+      ...qmon,
+      currentTrend,
+      strategyState: {
+        ...qmon.strategyState,
+        previousTrend: currentTrend,
+      },
+    };
+
+    if (shouldAttemptEntry && windowProgress !== null && entryPrice !== null && requestedShares !== null) {
+      if (requestedShares < config.QMON_MIN_ENTRY_SHARES || requestedShares * entryPrice < config.QMON_MIN_ENTRY_USD) {
+        nextQmon = this.skipPaperEntry(nextQmon, currentTrend, "minimum-size-not-met");
+      } else {
+        nextQmon = this.openPaperPosition(
+          nextQmon,
+          currentTrend,
+          windowProgress,
+          entryPrice,
+          requestedShares,
+          currentWindowStartMs,
+          marketEndMs,
+          priceToBeat,
+          evaluatedAt,
+        );
+      }
+    } else {
+      if (isEligibleWindowHalf && currentTrend !== "FLAT" && canOpenPosition && !isCheapEnough) {
+        nextQmon = this.skipPaperEntry(nextQmon, currentTrend, "token-price-above-cap");
+      }
+    }
+
+    return nextQmon;
+  }
+
   private evaluatePopulation(
     population: QmonPopulation,
     structuredSignals: StructuredSignalResult,
@@ -441,17 +555,33 @@ export class QmonEngine {
       let evaluatedQmon = existingQmon;
 
       evaluatedQmon = this.maybeRollWindow(evaluatedQmon, currentWindowStartMs, currentTrend, chainlinkPrice, evaluatedAt);
+      evaluatedQmon = this.maybeTakeProfit(evaluatedQmon, upPrice, downPrice, evaluatedAt);
       evaluatedQmon = this.maybeSettleExpiredPosition(evaluatedQmon, chainlinkPrice, evaluatedAt);
-      evaluatedQmon = this.evaluateLateTrendReverse(
-        evaluatedQmon,
-        currentTrend,
-        currentWindowStartMs,
-        marketEndMs,
-        priceToBeat,
-        upPrice,
-        downPrice,
-        evaluatedAt,
-      );
+      if (evaluatedQmon.strategyId === "late-trend-reverse") {
+        evaluatedQmon = this.evaluateLateTrendReverse(
+          evaluatedQmon,
+          currentTrend,
+          currentWindowStartMs,
+          marketEndMs,
+          priceToBeat,
+          upPrice,
+          downPrice,
+          evaluatedAt,
+        );
+      } else {
+        if (evaluatedQmon.strategyId === "mid-window-cheap-trend-x2") {
+          evaluatedQmon = this.evaluateMidWindowCheapTrendX2(
+            evaluatedQmon,
+            currentTrend,
+            currentWindowStartMs,
+            marketEndMs,
+            priceToBeat,
+            upPrice,
+            downPrice,
+            evaluatedAt,
+          );
+        }
+      }
 
       return evaluatedQmon;
     });
