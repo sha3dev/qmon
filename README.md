@@ -2,23 +2,23 @@
 
 ## TL;DR
 
-QMON v1 is a preset-only Polymarket runtime with exactly one QMON per configured market. The first strategy is `late-trend-reverse`: when the market enters the last 10% of its window and the detected trend flips from `UP` to `DOWN` or from `DOWN` to `UP`, the QMON buys the new trend token with the minimum valid size (`>= 1 USD` and `>= 5 shares`) and holds it until market resolution.
+QMON v1 is a preset-only Polymarket runtime with a small fixed catalog of QMONs per configured market. The active strategies are `late-trend-reverse`, `mid-window-cheap-trend-x2`, and `late-trend-band-entry`, each with independent paper history, champion eligibility, and optional real-seat mirroring.
 
 ## Why
 
 The previous QMON stack was dominated by genetic evolution, large diagnostic payloads, and champion heuristics that made the product difficult to reason about. QMON v1 replaces that with a direct operating model:
 
-- one predefined strategy per market
+- a small predefined strategy catalog per market
 - one simple active rule
 - one simple champion rule
 - one reduced dashboard and API surface
 
 ## Main Capabilities
 
-- builds 8 preset QMONs from the default `btc/eth/sol/xrp` x `5m/15m` universe
+- builds 24 preset QMONs from the default `btc/eth/sol/xrp` x `5m/15m` universe
 - computes structured market snapshots with current token prices and timing fields
 - derives a simplified trend state from recent price momentum
-- runs the `late-trend-reverse` paper strategy
+- runs the `late-trend-reverse`, `mid-window-cheap-trend-x2`, and `late-trend-band-entry` paper strategies
 - settles paper trades at market resolution
 - marks a market champion only when recent 5-window paper PnL is positive
 - mirrors the champion seat into a simplified real-seat ledger when mode is `real`
@@ -128,7 +128,9 @@ Factory for the preset strategy catalog.
 - `QmonPresetStrategyService.createDefault()`
   - Creates the preset strategy registry.
 - `getDefinition()`
-  - Returns the `late-trend-reverse` definition.
+  - Returns the canonical baseline strategy definition.
+- `getDefinitions()`
+  - Returns the full preset strategy catalog.
 - `createMarketQmon(market)`
   - Creates the canonical preset QMON for one market.
 
@@ -277,6 +279,20 @@ The market QMON is champion-eligible only when its summed paper PnL over the las
 - the trend flips from `UP` to `DOWN` or from `DOWN` to `UP`
 - the QMON has not already triggered in that window
 - current token pricing supports both the minimum USD and minimum share constraints
+
+`mid-window-cheap-trend-x2` trades only when all of these are true:
+
+- the market is at or beyond 50% of the active window
+- the current trend is `UP` or `DOWN`
+- the trend-aligned token costs `<= 0.20`
+- the QMON has not already triggered in that window
+
+`late-trend-band-entry` trades only when all of these are true:
+
+- the market is at or beyond 75% of the active window
+- the current trend is `UP` or `DOWN`
+- the trend-aligned token costs between `0.60` and `0.80`
+- the QMON has not already triggered in that window
 
 ### Real seat stays flat
 

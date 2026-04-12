@@ -21,6 +21,13 @@ const MID_WINDOW_CHEAP_TREND_X2_DEFINITION: QmonStrategyDefinition = {
   strategyDescription: "After 50% of the window, buys the trend-aligned token when it costs at most 0.20 and exits when the token price doubles.",
 };
 
+const LATE_TREND_BAND_ENTRY_DEFINITION: QmonStrategyDefinition = {
+  strategyId: "late-trend-band-entry",
+  strategyName: "Late Trend Band Entry",
+  strategyDescription:
+    "Inside the final 25% of the window, buys the trend-aligned token when its price sits between 0.60 and 0.80, then holds until market resolution.",
+};
+
 /**
  * @section class
  */
@@ -67,12 +74,6 @@ export class QmonPresetStrategyService {
     return strategyState;
   }
 
-  private buildQmonName(market: MarketKey): string {
-    const qmonName = `${market}-late-trend-reverse`;
-
-    return qmonName;
-  }
-
   private buildStrategyName(market: MarketKey, strategyDefinition: QmonStrategyDefinition): string {
     const qmonName = `${market}-${strategyDefinition.strategyId}`;
 
@@ -90,7 +91,7 @@ export class QmonPresetStrategyService {
   }
 
   public getDefinitions(): readonly QmonStrategyDefinition[] {
-    const strategyDefinitions = [LATE_TREND_REVERSE_DEFINITION, MID_WINDOW_CHEAP_TREND_X2_DEFINITION] as const;
+    const strategyDefinitions = [LATE_TREND_REVERSE_DEFINITION, MID_WINDOW_CHEAP_TREND_X2_DEFINITION, LATE_TREND_BAND_ENTRY_DEFINITION] as const;
 
     return strategyDefinitions;
   }

@@ -65,6 +65,9 @@ export class QmonEngine {
 
   private static readonly MID_WINDOW_ENTRY_PROGRESS = 0.5;
   private static readonly MAX_CHEAP_TOKEN_PRICE = 0.2;
+  private static readonly LATE_TREND_PREMIUM_ENTRY_PROGRESS = 0.75;
+  private static readonly MIN_PREMIUM_TOKEN_PRICE = 0.6;
+  private static readonly MAX_PREMIUM_TOKEN_PRICE = 0.8;
   private static readonly TAKE_PROFIT_MULTIPLIER = 2;
 
   /**
@@ -535,6 +538,58 @@ export class QmonEngine {
     return nextQmon;
   }
 
+  private evaluateLateTrendPremiumBand(
+    qmon: Qmon,
+    currentTrend: QmonTrend,
+    currentWindowStartMs: number | null,
+    marketEndMs: number | null,
+    priceToBeat: number | null,
+    upPrice: number | null,
+    downPrice: number | null,
+    evaluatedAt: number,
+  ): Qmon {
+    const windowProgress = this.calculateLateZoneProgress(currentWindowStartMs, marketEndMs, evaluatedAt);
+    const isLateQuarter = windowProgress !== null && windowProgress >= QmonEngine.LATE_TREND_PREMIUM_ENTRY_PROGRESS;
+    const entryAction = this.resolveEntryAction(currentTrend);
+    const entryPrice = this.resolveEntryPrice(entryAction, upPrice, downPrice);
+    const requestedShares = this.resolveRequestedShares(entryPrice);
+    const isPremiumBandPrice = entryPrice !== null && entryPrice >= QmonEngine.MIN_PREMIUM_TOKEN_PRICE && entryPrice <= QmonEngine.MAX_PREMIUM_TOKEN_PRICE;
+    const canOpenPosition = qmon.paperPosition.action === null && !qmon.strategyState.hasTriggeredThisWindow;
+    const shouldAttemptEntry = isLateQuarter && currentTrend !== "FLAT" && isPremiumBandPrice && canOpenPosition;
+    let nextQmon: Qmon = {
+      ...qmon,
+      currentTrend,
+      strategyState: {
+        ...qmon.strategyState,
+        previousTrend: currentTrend,
+      },
+    };
+
+    if (shouldAttemptEntry && windowProgress !== null && entryPrice !== null && requestedShares !== null) {
+      if (requestedShares < config.QMON_MIN_ENTRY_SHARES || requestedShares * entryPrice < config.QMON_MIN_ENTRY_USD) {
+        nextQmon = this.skipPaperEntry(nextQmon, currentTrend, "minimum-size-not-met");
+      } else {
+        nextQmon = this.openPaperPosition(
+          nextQmon,
+          currentTrend,
+          windowProgress,
+          entryPrice,
+          requestedShares,
+          currentWindowStartMs,
+          marketEndMs,
+          priceToBeat,
+          evaluatedAt,
+        );
+      }
+    } else {
+      if (isLateQuarter && currentTrend !== "FLAT" && canOpenPosition && !isPremiumBandPrice) {
+        nextQmon = this.skipPaperEntry(nextQmon, currentTrend, "token-price-outside-band");
+      }
+    }
+
+    return nextQmon;
+  }
+
   private evaluatePopulation(
     population: QmonPopulation,
     structuredSignals: StructuredSignalResult,
@@ -580,6 +635,19 @@ export class QmonEngine {
             downPrice,
             evaluatedAt,
           );
+        } else {
+          if (evaluatedQmon.strategyId === "late-trend-band-entry") {
+            evaluatedQmon = this.evaluateLateTrendPremiumBand(
+              evaluatedQmon,
+              currentTrend,
+              currentWindowStartMs,
+              marketEndMs,
+              priceToBeat,
+              upPrice,
+              downPrice,
+              evaluatedAt,
+            );
+          }
         }
       }
 

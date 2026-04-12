@@ -285,3 +285,67 @@ test("mid window cheap trend x2 buys the cheap trend token after 50% and exits o
   assert.equal(qmon.metrics.totalTrades, 1);
   assert.equal(qmon.currentWindowPnl > 1, true);
 });
+
+test("late trend band entry buys only in the last quarter when the trend token stays inside the 0.60 to 0.80 band", () => {
+  const qmonEngine = QmonEngine.createDefault(["btc"], ["5m"]);
+
+  qmonEngine.evaluateAll(
+    createStructuredSignals({
+      generatedAt: 500,
+      marketStartMs: 0,
+      marketEndMs: 100,
+      upPrice: 0.7,
+      downPrice: 0.3,
+      priceToBeat: 100_000,
+      chainlinkPrice: 100_100,
+    }),
+    createRegimes("trending-up"),
+    74,
+  );
+
+  let qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-band-entry");
+
+  assert.ok(qmon);
+  assert.equal(qmon.paperPosition.action, null);
+
+  qmonEngine.evaluateAll(
+    createStructuredSignals({
+      generatedAt: 501,
+      marketStartMs: 0,
+      marketEndMs: 100,
+      upPrice: 0.7,
+      downPrice: 0.3,
+      priceToBeat: 100_000,
+      chainlinkPrice: 100_120,
+    }),
+    createRegimes("trending-up"),
+    76,
+  );
+
+  qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-band-entry");
+
+  assert.ok(qmon);
+  assert.equal(qmon.paperPosition.action, "BUY_UP");
+  assert.equal(qmon.paperPosition.shareCount, 5);
+
+  qmonEngine.evaluateAll(
+    createStructuredSignals({
+      generatedAt: 502,
+      marketStartMs: 100,
+      marketEndMs: 200,
+      upPrice: 0.4,
+      downPrice: 0.6,
+      priceToBeat: 100_000,
+      chainlinkPrice: 100_200,
+    }),
+    createRegimes("trending-up"),
+    105,
+  );
+
+  qmon = qmonEngine.getFamilyState().populations[0]?.qmons.find((candidateQmon) => candidateQmon.strategyId === "late-trend-band-entry");
+
+  assert.ok(qmon);
+  assert.equal(qmon.paperPosition.action, null);
+  assert.equal(qmon.metrics.totalTrades, 1);
+  assert.equal(qmon.metrics.recentWindowPnls.at(-1), 1.5);
+});

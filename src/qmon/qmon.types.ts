@@ -10,7 +10,7 @@ export type QmonTradeAction = "BUY_UP" | "BUY_DOWN";
 
 export type QmonRole = "champion" | "candidate";
 
-export type QmonStrategyId = "late-trend-reverse" | "mid-window-cheap-trend-x2";
+export type QmonStrategyId = "late-trend-reverse" | "mid-window-cheap-trend-x2" | "late-trend-band-entry";
 
 export type QmonPosition = {
   readonly action: QmonTradeAction | null;
