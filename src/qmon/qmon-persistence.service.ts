@@ -2,36 +2,15 @@
  * @section imports:externals
  */
 
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 /**
  * @section imports:internals
  */
 
-import config from "../config.ts";
-import { generateQmonId } from "./qmon-genome.service.ts";
-import type {
-  QmonExecutionQuality,
-  MarketKey,
-  Qmon,
-  QmonExecutionRoute,
-  QmonExecutionRuntime,
-  QmonFamilyState,
-  QmonId,
-  QmonMetrics,
-  QmonPopulation,
-} from "./qmon.types.ts";
-import type { PersistedLiveExecutionState, PersistedLiveSeatState, PersistedMarketLiveState } from "./qmon-live-state-persistence.service.ts";
-
-/**
- * @section consts
- */
-
-const FAMILY_STATE_FILENAME = "family-state.json";
-const FAMILY_STATE_BACKUP_DIRNAME = "family-state-backups";
-const FAMILY_STATE_SCHEMA_VERSION = 3;
+import logger from "../logger.ts";
+import type { QmonFamilyState } from "./qmon.types.ts";
 
 /**
  * @section class
@@ -42,658 +21,79 @@ export class QmonPersistenceService {
    * @section private:attributes
    */
 
-  private readonly dataDir: string;
-  private writeQueue: Promise<boolean>;
+  private readonly familyStatePath: string;
 
   /**
    * @section constructor
    */
 
-  public constructor(dataDir: string) {
-    this.dataDir = dataDir;
-    this.writeQueue = Promise.resolve(true);
+  public constructor(familyStatePath: string) {
+    this.familyStatePath = familyStatePath;
   }
 
   /**
    * @section factory
    */
 
-  public static createDefault(dataDir = "./data"): QmonPersistenceService {
-    return new QmonPersistenceService(dataDir);
+  public static createDefault(dataDir: string): QmonPersistenceService {
+    const familyStatePath = join(dataDir, "qmon-v1-state.json");
+    const persistenceService = new QmonPersistenceService(familyStatePath);
+
+    return persistenceService;
   }
 
   /**
    * @section private:methods
    */
 
-  private getFamilyStatePath(): string {
-    return join(this.dataDir, FAMILY_STATE_FILENAME);
-  }
+  private isValidFamilyState(parsedValue: unknown): parsedValue is QmonFamilyState {
+    const parsedRecord = typeof parsedValue === "object" && parsedValue !== null ? (parsedValue as Record<string, unknown>) : null;
+    const hasValidShape =
+      parsedRecord !== null &&
+      parsedRecord.schemaVersion === 1 &&
+      Array.isArray(parsedRecord.populations) &&
+      typeof parsedRecord.createdAt === "number" &&
+      typeof parsedRecord.lastUpdated === "number";
 
-  private getTempFilePath(targetPath: string): string {
-    return `${targetPath}.tmp`;
-  }
-
-  private getFamilyStateBackupDirPath(): string {
-    return join("./tmp", FAMILY_STATE_BACKUP_DIRNAME);
-  }
-
-  private getFamilyStateBackupPath(timestamp: number): string {
-    return join(this.getFamilyStateBackupDirPath(), `family-state.${timestamp}.json`);
-  }
-
-  private async persistState(state: QmonFamilyState): Promise<boolean> {
-    let isSaved = true;
-
-    try {
-      await mkdir(this.dataDir, { recursive: true });
-      const targetPath = this.getFamilyStatePath();
-      const tempPath = this.getTempFilePath(targetPath);
-      const json = JSON.stringify(this.sanitizeFamilyStateForPersistence(state), null, 2);
-      await writeFile(tempPath, json, "utf-8");
-      await rename(tempPath, targetPath);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to save family state: ${message}`);
-      isSaved = false;
-    }
-
-    return isSaved;
-  }
-
-  private getConfiguredMarkets(): readonly MarketKey[] {
-    const marketKeys: MarketKey[] = [];
-
-    for (const asset of config.SIGNAL_ASSETS) {
-      for (const window of config.SIGNAL_WINDOWS) {
-        marketKeys.push(`${asset}-${window}` as MarketKey);
-      }
-    }
-
-    return marketKeys;
-  }
-
-  private createEmptySeatPosition(): QmonPopulation["seatPosition"] {
-    const emptySeatPosition: QmonPopulation["seatPosition"] = {
-      action: null,
-      enteredAt: null,
-      entryScore: null,
-      entryPrice: null,
-      peakReturnPct: null,
-      shareCount: null,
-      priceToBeat: null,
-      marketStartMs: null,
-      marketEndMs: null,
-      entryTriggers: [],
-      entryDirectionRegime: null,
-      entryVolatilityRegime: null,
-      directionalAlpha: null,
-      finalOutcomeProbability: null,
-      marketImpliedProbability: null,
-      estimatedEdgeBps: null,
-      estimatedNetEvUsd: null,
-      predictedSlippageBps: null,
-      predictedFillQuality: null,
-      riskBudgetUsd: null,
-      signalAgreementCount: null,
-      dominantSignalGroup: "none",
-    };
-
-    return emptySeatPosition;
-  }
-
-  private createDefaultExecutionRuntime(route: QmonExecutionRoute): QmonExecutionRuntime {
-    let executionRuntime: QmonExecutionRuntime = {
-      route,
-      executionState: "paper",
-      pendingIntent: null,
-      orderId: null,
-      submittedAt: null,
-      confirmedVenueSeat: null,
-      pendingVenueOrders: [],
-      recoveryStartedAt: null,
-      lastReconciledAt: null,
-      lastError: null,
-      isHalted: false,
-    };
-
-    if (route === "real") {
-      executionRuntime = {
-        ...executionRuntime,
-        executionState: "real-armed",
-      };
-    }
-
-    return executionRuntime;
-  }
-
-  private createDefaultExecutionQuality(): QmonExecutionQuality {
-    return {
-      resolvedOrderCount: 0,
-      filledOrderCount: 0,
-      rejectedOrderCount: 0,
-      timedOutOrderCount: 0,
-      slippageRejectedOrderCount: 0,
-      avgFilledPriceImpactBps: 0,
-      avgRejectedSlippageBps: 0,
-      fillRate: 0,
-      rejectionRate: 0,
-      stressScore: 0,
-    };
-  }
-
-  private resolveExecutionState(executionRuntime: QmonExecutionRuntime): QmonExecutionRuntime["executionState"] {
-    let executionState: QmonExecutionRuntime["executionState"] = "paper";
-
-    if (executionRuntime.route === "real") {
-      executionState = "real-armed";
-
-      if (executionRuntime.isHalted) {
-        executionState = executionRuntime.recoveryStartedAt !== null ? "real-recovery-required" : "real-halted";
-      } else if (executionRuntime.pendingIntent?.kind === "entry") {
-        executionState = "real-pending-entry";
-      } else if (executionRuntime.pendingIntent?.kind === "exit") {
-        executionState = "real-pending-exit";
-      } else if (executionRuntime.confirmedVenueSeat !== null) {
-        executionState = "real-open";
-      } else if (executionRuntime.lastError !== null) {
-        executionState = "real-error";
-      }
-    }
-
-    return executionState;
-  }
-
-  private hasActiveExecutionRuntimeRisk(population: QmonPopulation, executionRuntime: QmonExecutionRuntime): boolean {
-    const hasActiveExecutionRuntimeRisk =
-      executionRuntime.orderId !== null ||
-      executionRuntime.pendingVenueOrders.length > 0 ||
-      executionRuntime.confirmedVenueSeat !== null ||
-      executionRuntime.pendingIntent !== null ||
-      population.seatPendingOrder !== null ||
-      population.seatPosition.action !== null;
-
-    return hasActiveExecutionRuntimeRisk;
-  }
-
-  private clearStaleWindowScopedError(
-    population: QmonPopulation,
-    executionRuntime: QmonExecutionRuntime,
-  ): QmonExecutionRuntime {
-    const currentWindowStartMs = population.seatLastWindowStartMs;
-    const runtimeWindowStartMs = executionRuntime.pendingIntent?.marketStartMs ?? executionRuntime.submittedAt;
-    const hasWindowScopedError = executionRuntime.route === "real" && !executionRuntime.isHalted && executionRuntime.lastError !== null;
-    const hasActiveExecutionRuntimeRisk = this.hasActiveExecutionRuntimeRisk(population, executionRuntime);
-    const shouldClearWindowScopedError =
-      hasWindowScopedError &&
-      !hasActiveExecutionRuntimeRisk &&
-      currentWindowStartMs !== null &&
-      runtimeWindowStartMs !== null &&
-      runtimeWindowStartMs < currentWindowStartMs;
-    let normalizedExecutionRuntime = executionRuntime;
-
-    if (shouldClearWindowScopedError) {
-      normalizedExecutionRuntime = {
-        ...executionRuntime,
-        submittedAt: null,
-        lastError: null,
-      };
-    }
-
-    return normalizedExecutionRuntime;
-  }
-
-  private createConfirmedVenueSeatFromLegacy(
-    persistedLiveSeatState: PersistedLiveSeatState | null,
-  ): QmonExecutionRuntime["confirmedVenueSeat"] {
-    let confirmedVenueSeat: QmonExecutionRuntime["confirmedVenueSeat"] = null;
-
-    if (persistedLiveSeatState !== null) {
-      confirmedVenueSeat = {
-        action: persistedLiveSeatState.action,
-        shareCount: persistedLiveSeatState.shareCount,
-        entryPrice: persistedLiveSeatState.entryPrice,
-        enteredAt: persistedLiveSeatState.enteredAt,
-      };
-    }
-
-    return confirmedVenueSeat;
-  }
-
-  private createExecutionRuntimeFromLegacyMarketState(
-    persistedMarketLiveState: PersistedMarketLiveState | null,
-  ): QmonExecutionRuntime | null {
-    let executionRuntime: QmonExecutionRuntime | null = null;
-
-    if (persistedMarketLiveState !== null) {
-      const isHalted = persistedMarketLiveState.routeState !== "armed";
-      const recoveryStartedAt = persistedMarketLiveState.routeState === "recovery-required" ? persistedMarketLiveState.submittedAt : null;
-
-      executionRuntime = {
-        route: "real",
-        executionState: "real-armed",
-        pendingIntent: null,
-        orderId: persistedMarketLiveState.orderId,
-        submittedAt: persistedMarketLiveState.submittedAt,
-        confirmedVenueSeat: this.createConfirmedVenueSeatFromLegacy(persistedMarketLiveState.confirmedLiveSeat),
-        pendingVenueOrders: [],
-        recoveryStartedAt,
-        lastReconciledAt: null,
-        lastError: persistedMarketLiveState.lastError,
-        isHalted,
-      };
-      executionRuntime = {
-        ...executionRuntime,
-        executionState: this.resolveExecutionState(executionRuntime),
-      };
-    }
-
-    return executionRuntime;
-  }
-
-  private findLegacyMarketState(
-    legacyLiveExecutionState: PersistedLiveExecutionState | null,
-    market: MarketKey,
-  ): PersistedMarketLiveState | null {
-    const persistedMarketLiveState = legacyLiveExecutionState?.markets.find((persistedMarket) => persistedMarket.market === market) ?? null;
-
-    return persistedMarketLiveState;
-  }
-
-  private normalizeExecutionRuntime(
-    population: QmonPopulation,
-    route: QmonExecutionRoute,
-    legacyLiveExecutionState: PersistedLiveExecutionState | null,
-  ): QmonExecutionRuntime {
-    const legacyExecutionRuntime = this.createExecutionRuntimeFromLegacyMarketState(this.findLegacyMarketState(legacyLiveExecutionState, population.market));
-    const currentExecutionRuntime = population.executionRuntime ?? legacyExecutionRuntime ?? this.createDefaultExecutionRuntime(route);
-    const normalizedExecutionRuntime: QmonExecutionRuntime = {
-      route,
-      executionState: currentExecutionRuntime.executionState,
-      pendingIntent: route === "real" ? (currentExecutionRuntime.pendingIntent ?? population.seatPendingOrder ?? null) : null,
-      orderId: route === "real" ? currentExecutionRuntime.orderId : null,
-      submittedAt: route === "real" ? currentExecutionRuntime.submittedAt : null,
-      confirmedVenueSeat: route === "real" ? currentExecutionRuntime.confirmedVenueSeat : null,
-      pendingVenueOrders: route === "real" ? currentExecutionRuntime.pendingVenueOrders : [],
-      recoveryStartedAt: route === "real" ? currentExecutionRuntime.recoveryStartedAt : null,
-      lastReconciledAt: route === "real" ? currentExecutionRuntime.lastReconciledAt : null,
-      lastError: route === "real" ? currentExecutionRuntime.lastError : null,
-      isHalted: route === "real" ? currentExecutionRuntime.isHalted : false,
-    };
-    const windowScopedExecutionRuntime = this.clearStaleWindowScopedError(population, normalizedExecutionRuntime);
-    const resolvedExecutionRuntime: QmonExecutionRuntime = {
-      ...windowScopedExecutionRuntime,
-      executionState: this.resolveExecutionState(windowScopedExecutionRuntime),
-    };
-
-    return resolvedExecutionRuntime;
-  }
-
-  private normalizePopulation(
-    population: QmonPopulation,
-    route: QmonExecutionRoute,
-    legacyLiveExecutionState: PersistedLiveExecutionState | null,
-  ): QmonPopulation {
-    const normalizedPopulation: QmonPopulation = {
-      ...population,
-      marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
-      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
-      executionRuntime: this.normalizeExecutionRuntime(population, route, legacyLiveExecutionState),
-    };
-
-    return normalizedPopulation;
-  }
-
-  private sanitizeQmonForPersistence(qmon: Qmon): Qmon {
-    const sanitizedQmon: Qmon = {
-      ...qmon,
-      shadowPosition: qmon.shadowPosition ?? null,
-      metrics: this.normalizeQmonMetrics(qmon.metrics),
-      decisionHistory: [],
-    };
-
-    return sanitizedQmon;
-  }
-
-  private normalizeQmonMetrics(metrics: QmonMetrics): QmonMetrics {
-    const normalizedMetrics: QmonMetrics = {
-      ...metrics,
-      peakTotalPnl: metrics.peakTotalPnl ?? Math.max(metrics.totalPnl + metrics.maxDrawdown, metrics.totalPnl, 0),
-      observedTicks: metrics.observedTicks ?? 0,
-      positionHoldTicks: metrics.positionHoldTicks ?? 0,
-      marketExposureRatio: metrics.marketExposureRatio ?? 0,
-      tradesPerWindow: metrics.tradesPerWindow ?? 0,
-      fitnessScore: metrics.fitnessScore ?? null,
-      grossAlphaCapture: metrics.grossAlphaCapture ?? 0,
-      netPnlPerTrade: metrics.netPnlPerTrade ?? 0,
-      feeRatio: metrics.feeRatio ?? 0,
-      slippageRatio: metrics.slippageRatio ?? 0,
-      noTradeDisciplineScore: metrics.noTradeDisciplineScore ?? 0,
-      regimeBreakdown: metrics.regimeBreakdown ?? [],
-      triggerBreakdown: metrics.triggerBreakdown ?? [],
-      totalEstimatedNetEvUsd: metrics.totalEstimatedNetEvUsd ?? 0,
-      shadowResolvedCount: metrics.shadowResolvedCount ?? 0,
-      shadowCorrectCount: metrics.shadowCorrectCount ?? 0,
-      shadowBrierScoreSum: metrics.shadowBrierScoreSum ?? 0,
-      shadowNetPnl: metrics.shadowNetPnl ?? 0,
-    };
-
-    return normalizedMetrics;
-  }
-
-  private sanitizePopulationForPersistence(population: QmonPopulation): Record<string, unknown> {
-    const { marketPaperSessionPnl: _marketPaperSessionPnl, ...persistablePopulation } = population;
-    const sanitizedPopulation: Record<string, unknown> = {
-      ...persistablePopulation,
-      qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
-    };
-
-    return sanitizedPopulation;
-  }
-
-  private sanitizeLoadedPopulation(population: QmonPopulation): QmonPopulation {
-    const sanitizedPopulation: QmonPopulation = {
-      ...population,
-      qmons: population.qmons.map((qmon) => this.sanitizeQmonForPersistence(qmon)),
-      marketPaperSessionPnl: population.marketPaperSessionPnl ?? 0,
-      executionQuality: population.executionQuality ?? this.createDefaultExecutionQuality(),
-    };
-
-    return sanitizedPopulation;
-  }
-
-  private sanitizeFamilyStateForPersistence(state: QmonFamilyState): Record<string, unknown> {
-    const sanitizedState: Record<string, unknown> = {
-      ...state,
-      strategySchemaVersion: FAMILY_STATE_SCHEMA_VERSION,
-      populations: state.populations.map((population) => this.sanitizePopulationForPersistence(population)),
-    };
-
-    return sanitizedState;
-  }
-
-  private resetQmonRuntimeState(qmon: Qmon): Qmon {
-    const resetQmon: Qmon = {
-      ...qmon,
-      position: this.createEmptySeatPosition(),
-      pendingOrder: null,
-      decisionHistory: [],
-      windowTradeCount: 0,
-      paperWindowBaselinePnl: null,
-      currentWindowStart: null,
-      currentWindowSlippageTotalBps: 0,
-      currentWindowSlippageFillCount: 0,
-      lastCloseTimestamp: null,
-    };
-
-    return resetQmon;
-  }
-
-  private resetPopulationRuntimeState(population: QmonPopulation, route: QmonExecutionRoute, now: number): QmonPopulation {
-    const resetPopulation: QmonPopulation = {
-      ...population,
-      qmons: population.qmons.map((qmon) => this.resetQmonRuntimeState(qmon)),
-      marketPaperSessionPnl: 0,
-      marketConsolidatedPnl: 0,
-      seatPosition: this.createEmptySeatPosition(),
-      seatPendingOrder: null,
-      seatLastCloseTimestamp: null,
-      seatLastWindowStartMs: null,
-      seatLastSettledWindowStartMs: null,
-      executionQuality: this.createDefaultExecutionQuality(),
-      executionRuntime: this.createDefaultExecutionRuntime(route),
-      lastUpdated: now,
-    };
-
-    return resetPopulation;
+    return hasValidShape;
   }
 
   /**
    * @section public:methods
    */
 
-  public async saveQmon(qmon: Qmon): Promise<boolean> {
-    const existingState = await this.load();
-    const nextState = existingState ?? {
-      populations: [],
-      globalGeneration: 0,
-      createdAt: Date.now(),
-      lastUpdated: Date.now(),
-    };
-    const populationIndex = nextState.populations.findIndex((population) => population.market === qmon.market);
-    const nextPopulations = [...nextState.populations];
-
-    if (populationIndex >= 0) {
-      const currentPopulation = nextPopulations[populationIndex];
-
-      if (currentPopulation !== undefined) {
-        const nextQmons = currentPopulation.qmons.filter((currentQmon) => currentQmon.id !== qmon.id);
-        nextPopulations[populationIndex] = {
-          ...currentPopulation,
-          qmons: [...nextQmons, qmon],
-          lastUpdated: Date.now(),
-        };
-      }
-    } else {
-      nextPopulations.push({
-        market: qmon.market,
-        qmons: [qmon],
-        createdAt: Date.now(),
-        lastUpdated: Date.now(),
-        activeChampionQmonId: null,
-        marketPaperSessionPnl: 0,
-        marketConsolidatedPnl: 0,
-        seatPosition: {
-          action: null,
-          enteredAt: null,
-          entryScore: null,
-          entryPrice: null,
-          peakReturnPct: null,
-          shareCount: null,
-          priceToBeat: null,
-          marketStartMs: null,
-          marketEndMs: null,
-        },
-        seatPendingOrder: null,
-        seatLastCloseTimestamp: null,
-        seatLastWindowStartMs: null,
-        seatLastSettledWindowStartMs: null,
-        executionQuality: this.createDefaultExecutionQuality(),
-        executionRuntime: this.createDefaultExecutionRuntime("paper"),
-      });
-    }
-
-    return this.save({
-      ...nextState,
-      populations: nextPopulations,
-      lastUpdated: Date.now(),
-    });
-  }
-
-  public async savePopulation(population: QmonPopulation): Promise<boolean> {
-    const existingState = await this.load();
-    const nextState = existingState ?? {
-      populations: [],
-      globalGeneration: 0,
-      createdAt: Date.now(),
-      lastUpdated: Date.now(),
-    };
-    const populationIndex = nextState.populations.findIndex((existingPopulation) => existingPopulation.market === population.market);
-    const nextPopulations = [...nextState.populations];
-
-    if (populationIndex >= 0) {
-      nextPopulations[populationIndex] = population;
-    } else {
-      nextPopulations.push(population);
-    }
-
-    return this.save({
-      ...nextState,
-      populations: nextPopulations,
-      lastUpdated: Date.now(),
-    });
-  }
-
-  public async save(state: QmonFamilyState): Promise<boolean> {
-    const nextWrite = this.writeQueue.then(async () => this.persistState(state));
-    this.writeQueue = nextWrite.catch(async () => false);
-    const isSaved = await nextWrite;
-
-    return isSaved;
-  }
-
-  public async backupFamilyState(state: QmonFamilyState, timestamp = Date.now()): Promise<string | null> {
-    const backupPath = this.getFamilyStateBackupPath(timestamp);
-    let createdBackupPath: string | null = null;
-
-    try {
-      await mkdir(this.getFamilyStateBackupDirPath(), { recursive: true });
-      await writeFile(backupPath, JSON.stringify(this.sanitizeFamilyStateForPersistence(state), null, 2), "utf-8");
-      createdBackupPath = backupPath;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`Failed to backup family state: ${message}`);
-    }
-
-    return createdBackupPath;
-  }
-
-  public normalizeFamilyState(
-    state: QmonFamilyState,
-    executionMode: QmonExecutionRoute = "paper",
-    legacyLiveExecutionState: PersistedLiveExecutionState | null = null,
-  ): QmonFamilyState {
-    const normalizedState: QmonFamilyState = {
-      ...state,
-      strategySchemaVersion: FAMILY_STATE_SCHEMA_VERSION,
-      populations: state.populations.map((population) =>
-        this.normalizePopulation(
-          this.sanitizeLoadedPopulation(population),
-          executionMode === "real" ? "real" : population.executionRuntime?.route ?? "paper",
-          legacyLiveExecutionState,
-        ),
-      ),
-    };
-
-    return normalizedState;
-  }
-
-  public clearStartupMarketErrors(state: QmonFamilyState): QmonFamilyState {
-    const clearedState: QmonFamilyState = {
-      ...state,
-      populations: state.populations.map((population) => {
-        const currentExecutionRuntime = population.executionRuntime;
-        const shouldClearSubmittedAt =
-          currentExecutionRuntime !== undefined &&
-          !currentExecutionRuntime.isHalted &&
-          currentExecutionRuntime.pendingIntent === null &&
-          currentExecutionRuntime.orderId === null &&
-          currentExecutionRuntime.confirmedVenueSeat === null &&
-          currentExecutionRuntime.pendingVenueOrders.length === 0;
-        let updatedPopulation = population;
-
-        if (currentExecutionRuntime !== undefined) {
-          updatedPopulation = {
-            ...population,
-            executionRuntime: {
-              ...currentExecutionRuntime,
-              submittedAt: shouldClearSubmittedAt ? null : currentExecutionRuntime.submittedAt,
-              lastError: null,
-            },
-          };
-        }
-
-        return updatedPopulation;
-      }),
-    };
-
-    return clearedState;
-  }
-
-  public resetCpnlState(state: QmonFamilyState, executionMode: QmonExecutionRoute = "paper"): QmonFamilyState {
-    const now = Date.now();
-    const resetState: QmonFamilyState = {
-      ...state,
-      populations: state.populations.map((population) => this.resetPopulationRuntimeState(population, executionMode, now)),
-      lastUpdated: now,
-    };
-
-    return resetState;
-  }
-
   public async load(): Promise<QmonFamilyState | null> {
-    const familyStatePath = this.getFamilyStatePath();
     let familyState: QmonFamilyState | null = null;
 
-    if (!existsSync(familyStatePath)) {
-      return familyState;
-    }
-
     try {
-      const json = await readFile(familyStatePath, "utf-8");
-      const parsedFamilyState = JSON.parse(json) as QmonFamilyState;
+      const fileContents = await readFile(this.familyStatePath, "utf-8");
+      const parsedValue: unknown = JSON.parse(fileContents);
 
-      if (parsedFamilyState.strategySchemaVersion === FAMILY_STATE_SCHEMA_VERSION) {
-        familyState = this.normalizeFamilyState(parsedFamilyState);
-      } else {
-        console.warn("Ignoring persisted family state because strategy schema version changed");
+      if (this.isValidFamilyState(parsedValue)) {
+        familyState = parsedValue;
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Failed to load family state: ${message}`);
+
+      logger.warn(`QMON v1 state load skipped: ${message}`);
     }
 
     return familyState;
   }
 
-  public async loadPopulation(market: string): Promise<QmonPopulation | null> {
-    const familyState = await this.load();
-    const population = familyState?.populations.find((existingPopulation) => existingPopulation.market === market) ?? null;
+  public async save(familyState: QmonFamilyState): Promise<boolean> {
+    let hasSavedFamilyState = false;
 
-    return population;
-  }
+    try {
+      await mkdir(dirname(this.familyStatePath), { recursive: true });
+      await writeFile(this.familyStatePath, JSON.stringify(familyState, null, 2), "utf-8");
+      hasSavedFamilyState = true;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
 
-  public async exists(): Promise<boolean> {
-    return existsSync(this.getFamilyStatePath());
-  }
-
-  public async deleteQmon(market: string, qmonId: QmonId): Promise<boolean> {
-    const familyState = await this.load();
-    let isDeleted = true;
-
-    if (familyState === null) {
-      return isDeleted;
+      logger.error(`QMON v1 state save failed: ${message}`);
     }
 
-    const nextPopulations = familyState.populations.map((population) => {
-      if (population.market !== market) {
-        return population;
-      }
-
-      return {
-        ...population,
-        qmons: population.qmons.filter((qmon) => qmon.id !== qmonId),
-      };
-    });
-
-    isDeleted = await this.save({
-      ...familyState,
-      populations: nextPopulations,
-      lastUpdated: Date.now(),
-    });
-
-    return isDeleted;
-  }
-
-  public getDataDir(): string {
-    return this.dataDir;
-  }
-
-  public generateUniqueId(): QmonId {
-    return generateQmonId();
-  }
-
-  public getAllMarkets(): readonly string[] {
-    return this.getConfiguredMarkets();
+    return hasSavedFamilyState;
   }
 }

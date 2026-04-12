@@ -28,6 +28,7 @@ ai/examples/rules/testing-good.ts
 ai/rules.md
 ai/windsurf.md
 coverage
+data/**
 dist
 node_modules
 PROMPT.md
@@ -48,3 +49,4 @@ skills/readme-authoring/SKILL.md
 skills/refactor-workflow/SKILL.md
 skills/simplicity-audit/SKILL.md
 skills/test-scope-selection/SKILL.md
+tmp/**

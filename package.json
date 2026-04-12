@@ -11,18 +11,16 @@
       "import": "./dist/index.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "scripts": {
     "start": "node --import tsx src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "check": "npm run standards:check && npm run lint && npm run format:check && npm run typecheck && npm run test",
     "fix": "npm run lint:fix && npm run format:write",
-    "lint": "biome check .",
-    "lint:fix": "biome check . --write",
-    "format:check": "biome format .",
-    "format:write": "biome format . --write",
+    "lint": "biome check src test public README.md package.json .biomeignore",
+    "lint:fix": "biome check src test public README.md package.json .biomeignore --write",
+    "format:check": "biome format src test public README.md package.json .biomeignore",
+    "format:write": "biome format src test public README.md package.json .biomeignore --write",
     "standards:check": "code-standards verify",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",

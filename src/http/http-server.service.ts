@@ -7,23 +7,22 @@ import { join } from "node:path";
 import { createAdaptorServer } from "@hono/node-server";
 import type { ServerType } from "@hono/node-server";
 import { Hono } from "hono";
-import type { QmonDashboardPayload, RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
-import type { DiagnosticCategory, DiagnosticRange, MarketKey, QmonEngine, QmonPopulation, QmonValidationLogService } from "../qmon/index.ts";
+
+/**
+ * @section imports:internals
+ */
+
+import type { RuntimeExecutionStatus } from "../app/app-runtime.types.ts";
+import type { QmonEngine } from "../qmon/index.ts";
 import { RegimeEngine } from "../regime/regime-engine.service.ts";
 import type { RegimeEvent, RegimeResult } from "../regime/regime.types.ts";
 import { SignalEngine } from "../signal/signal-engine.service.ts";
-import type { StructuredSignalResult } from "../signal/signal.types.ts";
-import { TriggerEngine } from "../trigger/trigger-engine.service.ts";
-import type { TriggerEvent } from "../trigger/trigger.types.ts";
+import type { Snapshot, StructuredSignalResult } from "../signal/signal.types.ts";
 
 /**
  * @section consts
  */
 
-/**
- * Resolve the public directory path relative to this file's location.
- * Works both in source (src/http/) and compiled (dist/http/) contexts.
- */
 const PUBLIC_DIR = join(import.meta.dirname ?? ".", "..", "..", "public");
 
 /**
@@ -36,663 +35,175 @@ export class HttpServerService {
    */
 
   private readonly signalEngine: SignalEngine;
-  private readonly triggerEngine: TriggerEngine;
   private readonly regimeEngine: RegimeEngine;
   private readonly qmonEngine: QmonEngine | null;
-  private readonly qmonValidationLogService: QmonValidationLogService | null;
-  private readonly runtimeExecutionStatusProvider: (() => RuntimeExecutionStatus) | null;
   private lastStructuredResult: StructuredSignalResult | null;
-  private lastTriggers: readonly TriggerEvent[];
   private lastRegimes: RegimeResult;
   private lastRegimeEvents: readonly RegimeEvent[];
-  private cachedQmonFamilyVersion: number | null;
-  private cachedQmonFamilyJson: string | null;
-  private cachedQmonSummaryVersion: number | null;
-  private cachedQmonSummaryJson: string | null;
-  private apiQmonsCacheHits: number;
-  private apiQmonsCacheMisses: number;
-  private apiQmonsSerializationTotalMs: number;
-  private apiQmonsSerializationCount: number;
+  private runtimeExecutionStatus: RuntimeExecutionStatus | null;
+  private executionMode: "paper" | "real";
 
   /**
    * @section constructor
    */
 
-  public constructor(
-    signalEngine: SignalEngine,
-    triggerEngine: TriggerEngine,
-    regimeEngine: RegimeEngine,
-    qmonEngine: QmonEngine | null = null,
-    qmonValidationLogService: QmonValidationLogService | null = null,
-    runtimeExecutionStatusProvider: (() => RuntimeExecutionStatus) | null = null,
-  ) {
+  public constructor(signalEngine: SignalEngine, regimeEngine: RegimeEngine, qmonEngine: QmonEngine | null = null, executionMode: "paper" | "real" = "paper") {
     this.signalEngine = signalEngine;
-    this.triggerEngine = triggerEngine;
     this.regimeEngine = regimeEngine;
     this.qmonEngine = qmonEngine;
-    this.qmonValidationLogService = qmonValidationLogService;
-    this.runtimeExecutionStatusProvider = runtimeExecutionStatusProvider;
     this.lastStructuredResult = null;
-    this.lastTriggers = [];
     this.lastRegimes = {};
     this.lastRegimeEvents = [];
-    this.cachedQmonFamilyVersion = null;
-    this.cachedQmonFamilyJson = null;
-    this.cachedQmonSummaryVersion = null;
-    this.cachedQmonSummaryJson = null;
-    this.apiQmonsCacheHits = 0;
-    this.apiQmonsCacheMisses = 0;
-    this.apiQmonsSerializationTotalMs = 0;
-    this.apiQmonsSerializationCount = 0;
+    this.runtimeExecutionStatus = null;
+    this.executionMode = executionMode;
   }
 
   /**
    * @section factory
    */
 
-  public static createDefault(
-    qmonEngine: QmonEngine | null = null,
-    signalEngine?: SignalEngine,
-    qmonValidationLogService: QmonValidationLogService | null = null,
-    runtimeExecutionStatusProvider: (() => RuntimeExecutionStatus) | null = null,
-  ): HttpServerService {
-    return new HttpServerService(
-      signalEngine ?? SignalEngine.createDefault(),
-      TriggerEngine.createDefault(),
-      RegimeEngine.createDefault(),
-      qmonEngine,
-      qmonValidationLogService,
-      runtimeExecutionStatusProvider,
-    );
+  public static createDefault(qmonEngine: QmonEngine | null = null, signalEngine?: SignalEngine, executionMode: "paper" | "real" = "paper"): HttpServerService {
+    return new HttpServerService(signalEngine ?? SignalEngine.createDefault(), RegimeEngine.createDefault(), qmonEngine, executionMode);
   }
 
   /**
    * @section private:methods
    */
 
-  /**
-   * Read the canonical QMON dashboard HTML file from the public directory.
-   */
-  private readIndexHtml(): string | null {
-    let result: string | null = null;
-
+  private readHtmlDocument(filename: string): string | null {
     try {
-      result = readFileSync(join(PUBLIC_DIR, "index.html"), "utf-8");
+      return readFileSync(join(PUBLIC_DIR, filename), "utf-8");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Index HTML not found at ${PUBLIC_DIR}: ${message}`);
-      result = null;
+
+      console.warn(`HTML not found at ${filename}: ${message}`);
+      return null;
     }
-
-    return result;
   }
 
-  /**
-   * Read the signals dashboard HTML file from the public directory.
-   */
-  private readSignalsHtml(): string | null {
-    let result: string | null = null;
+  private buildQmonPayload(): Record<string, unknown> {
+    const familyState = this.qmonEngine?.getFamilyState() ?? null;
+    const populations =
+      familyState?.populations.map((population) => {
+        const qmons = population.qmons.map((qmon) => ({
+          id: qmon.id,
+          name: qmon.name,
+          market: qmon.market,
+          strategyId: qmon.strategyId,
+          strategyName: qmon.strategyName,
+          strategyDescription: qmon.strategyDescription,
+          role: qmon.role,
+          currentTrend: qmon.currentTrend,
+          currentPaperPosition: qmon.paperPosition,
+          currentWindowPnl: qmon.currentWindowPnl,
+          metrics: qmon.metrics,
+          strategyState: qmon.strategyState,
+        }));
 
-    try {
-      result = readFileSync(join(PUBLIC_DIR, "signals.html"), "utf-8");
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Signals HTML not found at ${PUBLIC_DIR}: ${message}`);
-      result = null;
-    }
-
-    return result;
-  }
-
-  /**
-   * Normalize diagnostics range queries into one of the supported fixed buckets.
-   */
-  private parseDiagnosticsRange(requestedRange: string | null): DiagnosticRange {
-    let diagnosticsRange: DiagnosticRange = "24h";
-
-    if (requestedRange === "7d" || requestedRange === "30d") {
-      diagnosticsRange = requestedRange;
-    }
-
-    return diagnosticsRange;
-  }
-
-  /**
-   * Normalize diagnostics category queries and ignore unsupported values.
-   */
-  private parseDiagnosticsCategory(requestedCategory: string | null): DiagnosticCategory | undefined {
-    let diagnosticsCategory: DiagnosticCategory | undefined;
-
-    if (
-      requestedCategory === "execution" ||
-      requestedCategory === "position" ||
-      requestedCategory === "window" ||
-      requestedCategory === "warning" ||
-      requestedCategory === "lifecycle"
-    ) {
-      diagnosticsCategory = requestedCategory;
-    }
-
-    return diagnosticsCategory;
-  }
-
-  /**
-   * Return a cached serialized family state whenever the engine mutation version did not change.
-   */
-  private getCachedFamilyStateJson(): string {
-    const familyState = this.qmonEngine?.getFamilyState();
-    const familyVersion = this.qmonEngine?.getStateSnapshotVersion() ?? null;
-    let familyStateJson = this.cachedQmonFamilyJson ?? '{"populations":[],"globalGeneration":0,"createdAt":0,"lastUpdated":0}';
-
-    if (
-      familyState !== undefined &&
-      familyState !== null &&
-      familyVersion !== null &&
-      this.cachedQmonFamilyVersion === familyVersion &&
-      this.cachedQmonFamilyJson !== null
-    ) {
-      this.apiQmonsCacheHits += 1;
-    } else if (familyState !== undefined && familyState !== null) {
-      const serializationStartedAt = Date.now();
-
-      familyStateJson = JSON.stringify(familyState);
-      this.cachedQmonFamilyVersion = familyVersion;
-      this.cachedQmonFamilyJson = familyStateJson;
-      this.apiQmonsCacheMisses += 1;
-      this.apiQmonsSerializationCount += 1;
-      this.apiQmonsSerializationTotalMs += Date.now() - serializationStartedAt;
-    }
-
-    return familyStateJson;
-  }
-
-  /**
-   * Build the compact QMON payload used by the dashboard grid.
-   */
-  private buildQmonSummary(qmon: Record<string, unknown>): Record<string, unknown> {
-    const qmonMetrics = (qmon.metrics as Record<string, unknown> | undefined) ?? {};
-    const qmonSummary = {
-      id: qmon.id,
-      market: qmon.market,
-      strategyKind: qmon.strategyKind ?? "genetic",
-      strategyName: qmon.strategyName ?? "Genetic Bootstrap Strategy",
-      strategyDescription: qmon.strategyDescription ?? "Genome-born QMON evaluated through the genetic paper/champion loop.",
-      presetStrategyId: qmon.presetStrategyId ?? null,
-      presetFamily: qmon.presetFamily ?? null,
-      role: qmon.role,
-      lifecycle: qmon.lifecycle,
-      generation: qmon.generation,
-      createdAt: qmon.createdAt,
-      position: qmon.position,
-      metrics: {
-        totalPnl: qmonMetrics.totalPnl ?? 0,
-        totalTrades: qmonMetrics.totalTrades ?? 0,
-        winRate: qmonMetrics.winRate ?? 0,
-        championScore: qmonMetrics.championScore ?? null,
-        fitnessScore: qmonMetrics.fitnessScore ?? null,
-        totalEstimatedNetEvUsd: qmonMetrics.totalEstimatedNetEvUsd ?? 0,
-        feeRatio: qmonMetrics.feeRatio ?? null,
-        marketExposureRatio: qmonMetrics.marketExposureRatio ?? 0,
-        positionHoldTicks: qmonMetrics.positionHoldTicks ?? 0,
-        tradesPerWindow: qmonMetrics.tradesPerWindow ?? 0,
-        isChampionEligible: qmonMetrics.isChampionEligible ?? false,
-        recentSettledTradeCount: qmonMetrics.recentSettledTradeCount ?? 0,
-        recentSettledNetPnl: qmonMetrics.recentSettledNetPnl ?? 0,
-        recentSettledWinRate: qmonMetrics.recentSettledWinRate ?? 0,
-        recentEstimatedEvUsd: qmonMetrics.recentEstimatedEvUsd ?? 0,
-        recentEvRealizationRatio: qmonMetrics.recentEvRealizationRatio ?? null,
-        championEligibilityReasons: qmonMetrics.championEligibilityReasons ?? [],
-      },
-      paperWindowBaselinePnl: qmon.paperWindowBaselinePnl,
-      windowsLived: qmon.windowsLived,
-    };
-
-    return qmonSummary;
-  }
-
-  /**
-   * Build the compact population payload used by the dashboard grid.
-   */
-  private buildPopulationSummary(population: Record<string, unknown>): Record<string, unknown> {
-    const qmons = Array.isArray(population.qmons) ? population.qmons : [];
-    const paperActivitySummary = this.buildPaperActivitySummary(qmons as readonly Record<string, unknown>[]);
-    const populationSummary = {
-      market: population.market,
-      createdAt: population.createdAt,
-      lastUpdated: population.lastUpdated,
-      activeChampionQmonId: population.activeChampionQmonId,
-      marketPaperSessionPnl: population.marketPaperSessionPnl,
-      paperActivitySummary,
-      marketConsolidatedPnl: population.marketConsolidatedPnl,
-      seatPosition: population.seatPosition,
-      seatPendingOrder: population.seatPendingOrder,
-      seatLastCloseTimestamp: population.seatLastCloseTimestamp,
-      seatLastWindowStartMs: population.seatLastWindowStartMs,
-      seatLastSettledWindowStartMs: population.seatLastSettledWindowStartMs,
-      realWalkForwardGate: population.realWalkForwardGate ?? null,
-      executionRuntime: population.executionRuntime ?? null,
-      marketHealth: population.marketHealth ?? null,
-      evaluationFunnel: population.evaluationFunnel ?? null,
-      qmons: qmons.map((qmon) => this.buildQmonSummary(qmon as Record<string, unknown>)),
-    };
-
-    return populationSummary;
-  }
-
-  /**
-   * Build aggregate paper activity metrics so the dashboard can show candidate
-   * learning even when no production-ready champion exists yet.
-   */
-  private buildPaperActivitySummary(qmons: readonly Record<string, unknown>[]): Record<string, unknown> {
-    let totalTrades = 0;
-    let totalPnl = 0;
-    let positiveQmonCount = 0;
-    let openPositionCount = 0;
-    let bestQmon: Record<string, unknown> | null = null;
-    let bestQmonPnl = Number.NEGATIVE_INFINITY;
-
-    for (const qmon of qmons) {
-      const qmonMetrics = (qmon.metrics as Record<string, unknown> | undefined) ?? {};
-      const qmonPnl = typeof qmonMetrics.totalPnl === "number" ? qmonMetrics.totalPnl : 0;
-      const qmonTrades = typeof qmonMetrics.totalTrades === "number" ? qmonMetrics.totalTrades : 0;
-      const qmonPosition = (qmon.position as Record<string, unknown> | undefined) ?? {};
-
-      totalTrades += qmonTrades;
-      totalPnl += qmonPnl;
-
-      if (qmonPnl > 0) {
-        positiveQmonCount += 1;
-      }
-
-      if (qmonPosition.action !== null && qmonPosition.action !== undefined) {
-        openPositionCount += 1;
-      }
-
-      if (qmonPnl > bestQmonPnl) {
-        bestQmon = qmon;
-        bestQmonPnl = qmonPnl;
-      }
-    }
+        return {
+          market: population.market,
+          currentTrend: population.currentTrend,
+          currentWindowStartMs: population.currentWindowStartMs,
+          activeChampionQmonId: population.activeChampionQmonId,
+          realSeat: population.realSeat,
+          qmons,
+        };
+      }) ?? [];
 
     return {
-      totalTrades,
-      totalPnl,
-      positiveQmonCount,
-      openPositionCount,
-      bestQmonId: bestQmon?.id ?? null,
-      bestQmonPnl: bestQmonPnl === Number.NEGATIVE_INFINITY ? 0 : bestQmonPnl,
-    };
-  }
-
-  /**
-   * Return a cached serialized family summary whenever the engine mutation version did not change.
-   */
-  private getCachedFamilySummaryJson(): string {
-    const familyState = this.qmonEngine?.getFamilyState();
-    const familyVersion = this.qmonEngine?.getStateSnapshotVersion() ?? null;
-    let familySummaryJson = this.cachedQmonSummaryJson ?? '{"populations":[],"globalGeneration":0,"createdAt":0,"lastUpdated":0}';
-
-    if (
-      familyState !== undefined &&
-      familyState !== null &&
-      familyVersion !== null &&
-      this.cachedQmonSummaryVersion === familyVersion &&
-      this.cachedQmonSummaryJson !== null
-    ) {
-      this.apiQmonsCacheHits += 1;
-    } else if (familyState !== undefined && familyState !== null) {
-      const serializationStartedAt = Date.now();
-      const familySummary = {
-        populations: familyState.populations.map((population) => this.buildPopulationSummary(population as unknown as Record<string, unknown>)),
-        globalGeneration: familyState.globalGeneration,
-        createdAt: familyState.createdAt,
-        lastUpdated: familyState.lastUpdated,
-      };
-
-      familySummaryJson = JSON.stringify(familySummary);
-      this.cachedQmonSummaryVersion = familyVersion;
-      this.cachedQmonSummaryJson = familySummaryJson;
-      this.apiQmonsCacheMisses += 1;
-      this.apiQmonsSerializationCount += 1;
-      this.apiQmonsSerializationTotalMs += Date.now() - serializationStartedAt;
-    }
-
-    return familySummaryJson;
-  }
-
-  /**
-   * Measure how long the server spends rebuilding the `/api/qmons` response.
-   */
-  private getAverageApiQmonsSerializationMs(): number {
-    let averageApiQmonsSerializationMs = 0;
-
-    if (this.apiQmonsSerializationCount > 0) {
-      averageApiQmonsSerializationMs = this.apiQmonsSerializationTotalMs / this.apiQmonsSerializationCount;
-    }
-
-    return averageApiQmonsSerializationMs;
-  }
-
-  /**
-   * Use t-1 snapshots for signals so the newest snapshot remains reserved for fills.
-   */
-  private getLaggedSignalSnapshots(snapshots: readonly Record<string, unknown>[]): readonly { generated_at: number }[] {
-    const laggedSnapshots = snapshots.length > 1 ? snapshots.slice(0, -1) : [];
-    const typedLaggedSnapshots = laggedSnapshots.filter((snapshot): snapshot is { generated_at: number } => typeof snapshot.generated_at === "number");
-
-    return typedLaggedSnapshots;
-  }
-
-  /**
-   * Build the operator-facing dashboard payload from canonical runtime state.
-   */
-  private buildDashboardPayload(diagnosticsOverview: unknown): QmonDashboardPayload {
-    const familyState = this.qmonEngine?.getFamilyState() ?? {
-      populations: [],
-      globalGeneration: 0,
-      createdAt: 0,
-      lastUpdated: 0,
-    };
-    const familySummary = {
-      populations: familyState.populations.map((population) => this.buildPopulationSummary(population as unknown as Record<string, unknown>)),
-      globalGeneration: familyState.globalGeneration,
-      createdAt: familyState.createdAt,
-      lastUpdated: familyState.lastUpdated,
-    };
-    const runtimeExecutionStatus = this.runtimeExecutionStatusProvider?.() ?? {
-      mode: "paper",
-      balanceUsd: null,
-      balanceState: "unavailable",
-      balanceUpdatedAt: null,
-      cpnlSessionStartedAt: null,
-      marketRoutes: [],
-    };
-    const dashboardPayload: QmonDashboardPayload = {
       generatedAt: Date.now(),
-      familyState: familySummary,
-      runtimeExecutionStatus,
-      diagnosticsOverview,
+      mode: this.executionMode,
+      populations,
+      runtimeExecutionStatus: this.runtimeExecutionStatus,
     };
+  }
 
-    return dashboardPayload;
+  private buildQmonStatsPayload(): Record<string, unknown> {
+    const familyState = this.qmonEngine?.getFamilyState() ?? null;
+    const populations = familyState?.populations ?? [];
+    const totalQmons = populations.reduce((runningQmonCount, population) => runningQmonCount + population.qmons.length, 0);
+    const activeChampionCount = populations.filter((population) => population.activeChampionQmonId !== null).length;
+    const totalPnl = populations.reduce(
+      (runningPnl, population) => runningPnl + population.qmons.reduce((runningMarketPnl, qmon) => runningMarketPnl + qmon.metrics.totalPnl, 0),
+      0,
+    );
+    const totalTrades = populations.reduce(
+      (runningTradeCount, population) =>
+        runningTradeCount + population.qmons.reduce((runningMarketTradeCount, qmon) => runningMarketTradeCount + qmon.metrics.totalTrades, 0),
+      0,
+    );
+
+    return {
+      generatedAt: Date.now(),
+      totalPopulations: populations.length,
+      totalQmons,
+      activeChampionCount,
+      totalPnl,
+      totalTrades,
+    };
   }
 
   /**
    * @section public:methods
    */
 
-  /**
-   * Update the cached signal result. Called externally each time the
-   * snapshot buffer is refreshed so the API endpoint serves fresh data.
-   */
-  public updateSignals(snapshots: readonly Record<string, unknown>[]): void {
-    const typed = this.getLaggedSignalSnapshots(snapshots);
-    this.lastStructuredResult = this.signalEngine.calculateStructured(typed);
-    this.lastTriggers = this.triggerEngine.evaluate(this.lastStructuredResult);
-    const regimeResult = this.regimeEngine.evaluate(this.lastStructuredResult);
-    this.lastRegimes = regimeResult.states;
-    this.lastRegimeEvents = regimeResult.events;
+  public updateSignals(snapshots: readonly Snapshot[]): void {
+    this.lastStructuredResult = this.signalEngine.calculateStructured(snapshots);
+
+    const regimeEvaluation = this.regimeEngine.evaluate(this.lastStructuredResult);
+
+    this.lastRegimes = regimeEvaluation.states;
+    this.lastRegimeEvents = regimeEvaluation.events;
   }
 
-  /**
-   * Get the last evaluated triggers for QMON processing.
-   */
-  public getLastTriggers(): readonly TriggerEvent[] {
-    return this.lastTriggers;
+  public getLastStructuredSignals(): StructuredSignalResult | null {
+    return this.lastStructuredResult;
   }
 
-  /**
-   * Get the last evaluated regimes for QMON processing.
-   */
   public getLastRegimes(): RegimeResult {
     return this.lastRegimes;
   }
 
-  /**
-   * Get the last structured signals for QMON processing.
-   */
-  public getLastStructuredSignals(): StructuredSignalResult | null {
-    return this.lastStructuredResult;
+  public setRuntimeExecutionStatus(runtimeExecutionStatus: RuntimeExecutionStatus): void {
+    this.runtimeExecutionStatus = runtimeExecutionStatus;
+    this.executionMode = runtimeExecutionStatus.mode;
   }
 
   public buildServer(): ServerType {
     const app = new Hono();
 
-    // Main page is now QMON dashboard
     app.get("/", (context) => {
-      const qmonHtml = this.readIndexHtml();
-      if (qmonHtml === null) {
-        return context.text("QMON dashboard not found", 404);
+      const indexHtml = this.readHtmlDocument("index.html");
+
+      if (indexHtml === null) {
+        return context.text("Dashboard not found", 404);
       }
-      return context.html(qmonHtml);
+
+      return context.html(indexHtml);
     });
-
-    app.get("/api/signals/structured", (context) => {
-      const basePayload = this.lastStructuredResult ?? {};
-      const payload = { ...basePayload, triggers: this.lastTriggers, regimes: this.lastRegimes, regimeEvents: this.lastRegimeEvents };
-      return context.json(payload, 200);
-    });
-
-    // QMON API endpoints
-    app.get("/api/qmons", (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-      const familyStateJson = this.getCachedFamilyStateJson();
-      return context.body(familyStateJson, 200, { "Content-Type": "application/json" });
-    });
-
-    app.get("/api/qmons/summary", (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-      const familySummaryJson = this.getCachedFamilySummaryJson();
-      return context.body(familySummaryJson, 200, { "Content-Type": "application/json" });
-    });
-
-    app.get("/api/qmons/dashboard", async (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-
-      const diagnosticsOverview = this.qmonValidationLogService !== null ? await this.qmonValidationLogService.readDiagnosticsOverview("24h") : null;
-
-      return context.json(this.buildDashboardPayload(diagnosticsOverview), 200);
-    });
-
-    app.get("/api/qmons/stats", (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-      const stats = {
-        ...this.qmonEngine.getStats(),
-        apiQmonsCacheHits: this.apiQmonsCacheHits,
-        apiQmonsCacheMisses: this.apiQmonsCacheMisses,
-        averageApiQmonsSerializationMs: this.getAverageApiQmonsSerializationMs(),
-      };
-      return context.json(stats, 200);
-    });
-
-    app.get("/api/runtime-status", (context) => {
-      const runtimeExecutionStatus = this.runtimeExecutionStatusProvider?.() ?? {
-        mode: "paper",
-        balanceUsd: null,
-        balanceState: "unavailable",
-        balanceUpdatedAt: null,
-        cpnlSessionStartedAt: null,
-        marketRoutes: [],
-      };
-
-      return context.json(runtimeExecutionStatus, 200);
-    });
-
-    app.get("/api/qmons/activity", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json([], 200);
-      }
-
-      const requestedLimit = Number(context.req.query("limit") ?? "50");
-      const safeLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 200) : 50;
-      const activityEvents = await this.qmonValidationLogService.readRecentEvents(safeLimit);
-      return context.json(activityEvents, 200);
-    });
-
-    app.get("/api/qmons/cpnl-log", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json([], 200);
-      }
-
-      const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
-      const requestedLimit = Number(context.req.query("limit") ?? "100");
-      const safeLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 1000) : 100;
-      const cpnlEvents = await this.qmonValidationLogService.readCpnlLogRows(diagnosticsRange, safeLimit);
-
-      return context.json(cpnlEvents, 200);
-    });
-
-    app.get("/api/qmons/diagnostics/overview", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json(
-          {
-            range: this.parseDiagnosticsRange(context.req.query("range") ?? null),
-            generatedAt: Date.now(),
-            totals: {
-              totalEvents: 0,
-              warningCount: 0,
-              seatRealizedPnl: 0,
-              totalRealizedPnl: 0,
-              fillRate: 0,
-              paperFillRate: 0,
-              realFillRate: 0,
-              orderFailureRate: 0,
-              avgPriceImpactBps: null,
-              seatTradeCount: 0,
-            },
-            flags: [],
-            markets: [],
-          },
-          200,
-        );
-      }
-
-      const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
-      const diagnosticsOverview = await this.qmonValidationLogService.readDiagnosticsOverview(diagnosticsRange);
-      const populationByMarket = new Map<string, QmonPopulation>(
-        (this.qmonEngine?.getFamilyState().populations ?? []).map((population) => [population.market, population]),
-      );
-      const enrichedMarkets = diagnosticsOverview.markets.map((marketSummary) => {
-        const population = populationByMarket.get(marketSummary.market);
-
-        return {
-          ...marketSummary,
-          marketHealth: population?.marketHealth ?? marketSummary.marketHealth,
-          rejectionFunnel: population?.evaluationFunnel ?? marketSummary.rejectionFunnel ?? null,
-        };
-      });
-
-      return context.json(
-        {
-          ...diagnosticsOverview,
-          markets: enrichedMarkets,
-        },
-        200,
-      );
-    });
-
-    app.get("/api/qmons/diagnostics/market", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json({ error: "QMON diagnostics not initialized" }, 503);
-      }
-
-      const market = context.req.query("market");
-
-      if (!market) {
-        return context.json({ error: "market query parameter is required" }, 400);
-      }
-
-      const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
-      const marketDiagnostics = await this.qmonValidationLogService.readMarketDiagnostics(market, diagnosticsRange);
-      const population = this.qmonEngine?.getPopulation(market as MarketKey);
-
-      return context.json(
-        {
-          ...marketDiagnostics,
-          marketHealth: population?.marketHealth ?? marketDiagnostics.marketHealth,
-          rejectionFunnel: population?.evaluationFunnel ?? marketDiagnostics.rejectionFunnel ?? null,
-        },
-        200,
-      );
-    });
-
-    app.get("/api/qmons/diagnostics/events", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json([], 200);
-      }
-
-      const market = context.req.query("market") ?? undefined;
-      const category = this.parseDiagnosticsCategory(context.req.query("category") ?? null);
-      const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
-      const requestedLimit = Number(context.req.query("limit") ?? "100");
-      const safeLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 500) : 100;
-      const diagnosticEvents = await this.qmonValidationLogService.readDiagnosticEvents(market, category, diagnosticsRange, safeLimit);
-
-      return context.json(diagnosticEvents, 200);
-    });
-
-    app.get("/api/qmons/market-activity", async (context) => {
-      if (this.qmonValidationLogService === null) {
-        return context.json([], 200);
-      }
-
-      const market = context.req.query("market");
-
-      if (!market) {
-        return context.json({ error: "market query parameter is required" }, 400);
-      }
-
-      const diagnosticsRange = this.parseDiagnosticsRange(context.req.query("range") ?? null);
-      const requestedLimit = Number(context.req.query("limit") ?? "500");
-      const safeLimit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 5000) : 500;
-      const marketActivityEvents = await this.qmonValidationLogService.readMarketSeatEvents(market, diagnosticsRange, safeLimit);
-      return context.json(marketActivityEvents, 200);
-    });
-
-    app.get("/api/qmons/:id", (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-      const id = context.req.param("id");
-      const qmon = this.qmonEngine.getQmon(id);
-      if (!qmon) {
-        return context.json({ error: "QMON not found" }, 404);
-      }
-      return context.json(qmon, 200);
-    });
-
-    app.get("/api/signal-correlations", (context) => {
-      if (!this.qmonEngine) {
-        return context.json({ error: "QMON engine not initialized" }, 503);
-      }
-      const correlations = this.qmonEngine.getSignalCorrelations();
-      return context.json(correlations, 200, { "Content-Type": "application/json" });
-    });
-
+    app.get("/dashboard", (context) => context.redirect("/"));
     app.get("/signals.html", (context) => {
-      const signalsHtml = this.readSignalsHtml();
+      const signalsHtml = this.readHtmlDocument("signals.html");
+
       if (signalsHtml === null) {
         return context.text("Signals dashboard not found", 404);
       }
+
       return context.html(signalsHtml);
     });
+    app.get("/api/signals/structured", (context) =>
+      context.json({
+        generatedAt: Date.now(),
+        structuredSignals: this.lastStructuredResult,
+        regimes: this.lastRegimes,
+        regimeEvents: this.lastRegimeEvents,
+      }),
+    );
+    app.get("/api/qmons", (context) => context.json(this.buildQmonPayload()));
+    app.get("/api/qmons/stats", (context) => context.json(this.buildQmonStatsPayload()));
 
-    app.get("/qmons.html", (context) => {
-      return context.redirect("/", 301);
+    return createAdaptorServer({
+      fetch: app.fetch,
     });
-
-    app.get("/dashboard", (context) => {
-      return context.redirect("/", 301);
-    });
-
-    return createAdaptorServer({ fetch: app.fetch });
   }
 }

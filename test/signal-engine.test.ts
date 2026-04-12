@@ -2,7 +2,7 @@ import * as assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import type { Snapshot } from "@sha3/polymarket-snapshot";
-import { SignalEngine } from "../src/index.ts";
+import { SignalEngine } from "../src/signal/signal-engine.service.ts";
 
 function createSnapshot(generatedAt: number, fields: Record<string, number | string | null>): Snapshot {
   return {
@@ -39,7 +39,7 @@ function createSnapshotSeries(count: number, chainlinkPrices: readonly number[])
 }
 
 describe("SignalEngine", () => {
-  const signalEngine = new SignalEngine(["btc"], ["5m"], 500, [30, 120, 300], ["binance", "coinbase"]);
+  const signalEngine = new SignalEngine(["btc"], ["5m"], 500, [30, 120, 300]);
 
   test("returns structured placeholders when no snapshots are available", () => {
     const structuredSignals = signalEngine.calculateStructured([]);
@@ -50,7 +50,7 @@ describe("SignalEngine", () => {
     assert.ok(btcWindow);
     assert.equal(btcSignals.chainlinkPrice, null);
     assert.equal(btcSignals.signals.oracleLag, null);
-    assert.equal(btcWindow.signals.distance, null);
+    assert.equal(btcWindow.signals.distance, 0);
     assert.equal(btcWindow.prices.priceToBeat, null);
   });
 

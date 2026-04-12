@@ -1,8 +1,8 @@
-import { ServiceRuntime } from "./index.ts";
+import { ServiceRuntime } from "./app/service-runtime.service.ts";
 
 async function main() {
-  const SERVICE_RUNTIME = await ServiceRuntime.createDefault();
-  SERVICE_RUNTIME.startServer();
+  const serviceRuntime = await ServiceRuntime.createDefault();
+  serviceRuntime.startServer();
 }
 
 main();

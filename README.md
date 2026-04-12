@@ -1,387 +1,290 @@
-# @sha3/polymarket-quant
+# QMON v1
 
-Real-time signal calculation and taker-only QMON simulation for Polymarket crypto markets.
+## TL;DR
 
-The service ingests snapshot data, computes normalized structured signals, evaluates a family of QMON agents, mirrors the active market champion into a separate seat ledger, persists the full family state, and exposes dashboards plus JSON APIs for operators.
+QMON v1 is a preset-only Polymarket runtime with exactly one QMON per configured market. The first strategy is `late-trend-reverse`: when the market enters the last 10% of its window and the detected trend flips from `UP` to `DOWN` or from `DOWN` to `UP`, the QMON buys the new trend token with the minimum valid size (`>= 1 USD` and `>= 5 shares`) and holds it until market resolution.
 
-## Setup
+## Why
+
+The previous QMON stack was dominated by genetic evolution, large diagnostic payloads, and champion heuristics that made the product difficult to reason about. QMON v1 replaces that with a direct operating model:
+
+- one predefined strategy per market
+- one simple active rule
+- one simple champion rule
+- one reduced dashboard and API surface
+
+## Main Capabilities
+
+- builds 8 preset QMONs from the default `btc/eth/sol/xrp` x `5m/15m` universe
+- computes structured market snapshots with current token prices and timing fields
+- derives a simplified trend state from recent price momentum
+- runs the `late-trend-reverse` paper strategy
+- settles paper trades at market resolution
+- marks a market champion only when recent 5-window paper PnL is positive
+- mirrors the champion seat into a simplified real-seat ledger when mode is `real`
+- serves a reduced dashboard and JSON API
+
+## Installation
 
 ```bash
 npm install
-npm run build
-npm run test
-npm run start
 ```
 
-Default URLs:
-
-- `http://localhost:3000/` — QMON dashboard
-- `http://localhost:3000/signals.html` — signal dashboard
-
-Useful local commands:
+## Running Locally
 
 ```bash
-npm run typecheck
-npm run lint
-npm run standards:check
+npm start
+```
+
+Verification:
+
+```bash
 npm run check
 ```
 
-## Runtime Model
+## Usage
 
-The live loop is:
+Start the runtime and open:
 
-1. `SnapshotService` receives snapshots on a fixed interval.
-2. `SignalEngine` computes one canonical payload with `calculateStructured()`.
-3. `TriggerEngine` emits transition-based trigger events from the structured payload.
-4. `RegimeEngine` classifies direction and volatility regimes per asset.
-5. `QmonEngine` evaluates every market population in taker-only paper mode.
-6. The active champion, if any, also drives a separate market seat ledger.
-7. `QmonPersistenceService` writes the full family state to `data/family-state.json`.
-8. `HttpServerService` serves dashboards and APIs.
+- `http://localhost:3000/`
+- `http://localhost:3000/signals.html`
 
-Important behavior:
+You can also consume the JSON payloads directly:
 
-- There is no maker mode.
-- There is no live `real` routing mode.
-- `/api/signals/structured` is the only signal API contract.
-- `Market CPnL` is updated only by the champion seat, not by all candidate QMONs.
-
-## HTTP API
-
-### HTML routes
-
-- `GET /` returns the operator dashboard.
-- `GET /signals.html` returns the signal dashboard.
-- `GET /qmons.html` redirects to `/`.
-- `GET /dashboard` redirects to `/`.
-
-### Signal route
-
-- `GET /api/signals/structured`
-  - Status: `200`
-  - Response: structured asset/window signals plus `triggers`, `regimes`, and `regimeEvents`
-
-Example:
-
-```json
-{
-  "btc": {
-    "chainlinkPrice": 100000,
-    "signals": {
-      "oracleLag": 0.18,
-      "dispersion": 0.04,
-      "velocity": { "30s": 0.12, "2m": 0.08, "5m": null }
-    },
-    "windows": {
-      "5m": {
-        "signals": {
-          "distance": 0.11,
-          "zScore": 0.07,
-          "edge": 0.09,
-          "tokenPressure": 0.02,
-          "marketEfficiency": -0.01
-        },
-        "prices": {
-          "priceToBeat": 100000,
-          "upPrice": 0.41,
-          "downPrice": 0.59,
-          "marketStartMs": 1710000000000,
-          "marketEndMs": 1710000300000
-        }
-      }
-    }
-  },
-  "triggers": [],
-  "regimes": {},
-  "regimeEvents": []
-}
+```bash
+curl http://localhost:3000/api/qmons
+curl http://localhost:3000/api/qmons/stats
+curl http://localhost:3000/api/signals/structured
 ```
 
-### QMON routes
+## Examples
 
-- `GET /api/qmons`
-  - Status: `200`
-  - Response: full `QmonFamilyState`
-- `GET /api/qmons/stats`
-  - Status: `200`
-  - Response: aggregated family statistics
-- `GET /api/qmons/:id`
-  - Status: `200` when found, `404` otherwise
-  - Response: one `Qmon`
+Paper-only startup:
 
-### Diagnostics routes
+```bash
+QMON_EXECUTION_MODE=paper npm start
+```
 
-- `GET /api/qmons/activity?limit=50`
-- `GET /api/qmons/cpnl-log?range=24h&limit=100`
-- `GET /api/qmons/diagnostics/overview?range=24h`
-- `GET /api/qmons/diagnostics/market?market=btc-5m&range=24h`
-  - Returns `400` when `market` is missing
-- `GET /api/qmons/diagnostics/events?market=btc-5m&category=execution&range=24h&limit=100`
-- `GET /api/qmons/market-activity?market=btc-5m&range=24h&limit=500`
-  - Returns `400` when `market` is missing
+Adjusted late-zone behavior:
 
-Diagnostic ranges are `24h`, `7d`, or `30d`.
+```bash
+QMON_LATE_ZONE_FRACTION=0.10 \
+QMON_CHAMPION_WINDOW_COUNT=5 \
+QMON_MIN_ENTRY_USD=1 \
+QMON_MIN_ENTRY_SHARES=5 \
+npm start
+```
 
 ## Public API
 
-### `ServiceRuntime`
+This package currently does not expose a stable library API from `src/index.ts`.
 
-Creates and wires the live service.
+The project is intended to run as an application service via `npm start`, while internal modules such as `ServiceRuntime`, `QmonEngine`, and `SignalEngine` remain implementation details inside `src/`.
 
-- `ServiceRuntime.createDefault()`
-  - Builds snapshot ingestion, signal engine, QMON engine, persistence, diagnostics, and HTTP server dependencies.
-  - Returns a fully configured runtime.
-- `buildServer()`
-  - Returns a server instance without opening a port.
-- `startServer()`
-  - Starts the HTTP server on `config.DEFAULT_PORT`.
-  - Registers the snapshot listener and begins the live loop.
+### `ExecutionMode`
 
-Example:
+Union type: `paper | real`.
 
-```ts
-import { ServiceRuntime } from "@sha3/polymarket-quant";
+### `RuntimeExecutionStatus`
 
-const runtime = await ServiceRuntime.createDefault();
-runtime.startServer();
-```
+Runtime status payload exposing the current mode and per-market route summaries.
 
 ### `SignalEngine`
 
-Computes the canonical structured signal payload.
+Builds the structured signal payload used by the runtime.
 
 - `SignalEngine.createDefault()`
-  - Builds the engine with configured assets, windows, horizons, and exchanges.
+  - Creates the signal engine from `src/config.ts`.
 - `calculateStructured(snapshots)`
-  - Returns the canonical `StructuredSignalResult`.
-  - Includes asset-level signals, window-level signals, and extracted market price fields.
-- `calculateExchangeSignalsWithWeights(snapshots, asset, exchangeWeights)`
-  - Recomputes exchange-sensitive signals for one asset using explicit exchange weights.
-  - Used by QMON evaluation for genome-specific weighting.
+  - Returns asset-level placeholders plus current window timing and token prices.
 
-### `TriggerEngine`
+### `StructuredSignalResult`
 
-Produces transition-based trigger events from structured signals.
+Type representing the structured signal payload keyed by asset.
 
-- `TriggerEngine.createDefault()`
-  - Creates a trigger engine with default thresholds and previous-state tracking.
-- `evaluate(current)`
-  - Returns the trigger events that fired on the latest transition.
+### `Snapshot`
+
+Re-exported Polymarket snapshot type consumed by the signal engine and runtime.
 
 ### `RegimeEngine`
 
-Computes market direction and volatility regimes from structured signals.
+Classifies a simple market direction from recent momentum.
 
 - `RegimeEngine.createDefault()`
-  - Creates a default regime classifier.
-- `evaluate(current)`
-  - Returns current states plus regime-change events.
+  - Creates the simplified regime engine.
+- `evaluate(structuredSignals)`
+  - Returns current regime states and any direction-change events.
 - `getCurrentStates()`
-  - Returns the last computed `RegimeResult`.
+  - Returns the most recently computed regime state map.
+
+### `RegimeResult`
+
+Type representing the current regime state keyed by asset.
+
+### `QmonPresetStrategyService`
+
+Factory for the preset strategy catalog.
+
+- `QmonPresetStrategyService.createDefault()`
+  - Creates the preset strategy registry.
+- `getDefinition()`
+  - Returns the `late-trend-reverse` definition.
+- `createMarketQmon(market)`
+  - Creates the canonical preset QMON for one market.
+
+### `QmonChampionService`
+
+Applies the simplified active/champion rule.
+
+- `QmonChampionService.createDefault()`
+  - Creates the champion selector.
+- `refreshPopulation(population)`
+  - Recomputes recent 5-window activity and assigns the champion role to the best eligible QMON.
 
 ### `QmonEngine`
 
-Owns the taker-only paper family and champion seat logic.
+Runs the preset-only QMON family.
 
-- `QmonEngine.createDefault(assets, windows, signalEngine?, validationLogService?)`
-  - Creates the engine with default genome, champion, evolution, execution, and hydration services.
-- `initializePopulations()`
-  - Seeds one deterministic population per market.
+- `QmonEngine.createDefault(assets, windows, initialFamilyState?)`
+  - Creates the engine and optionally hydrates it from a persisted v1 family state.
 - `getFamilyState()`
-  - Returns the full `QmonFamilyState`.
-- `getPopulation(market)`
-  - Returns one market population or `null`.
-- `getQmon(id)`
-  - Returns one QMON or `null`.
-- `getAllQmons()`
-  - Returns every QMON across markets.
-- `getQmonsForMarket(market)`
-  - Returns every QMON for one market.
-- `updateTriggers(triggers)`
-  - Stores the latest trigger events for evaluation.
-- `updateSnapshots(snapshots)`
-  - Stores the latest snapshot buffer for weighted signal recalculation and replay.
-- `evaluateAll(signals, regimes, snapshots?)`
-  - Evaluates every configured market population.
+  - Returns the current family state.
+- `replaceFamilyState(familyState)`
+  - Replaces the in-memory family state after real-seat synchronization.
+- `getStateSnapshotVersion()`
+  - Returns the current mutation version.
 - `consumeMutationState()`
-  - Returns whether evaluation mutated state and whether the mutation was critical for persistence.
-- `evaluatePopulation(market, signals, regimes, firedTriggerIds, snapshots?, evaluationOptions?)`
-  - Evaluates one market population.
-  - Processes pending taker orders, opens/closes paper positions, updates champion selection, and syncs the champion seat.
-- `evaluateQmon(qmon, signalValues, firedTriggerIds, directionRegime, volatilityRegime, timeSegment)`
-  - Returns one decision result without mutating family state.
-- `setFamilyState(state)`
-  - Replaces the full in-memory family state.
-- `getStats()`
-  - Returns top-level family counters for the dashboard and stats API.
+  - Returns and clears pending persistence mutation flags.
+- `evaluateAll(structuredSignals, regimes, evaluatedAt)`
+  - Evaluates all market QMONs, settles expired paper positions, rolls completed windows, and refreshes champions.
 
-### `QmonGenomeService`
+### `QmonLiveExecutionService`
 
-Builds, validates, mutates, and seeds QMON genomes.
+Mirrors the champion seat into the simplified real-seat ledger.
 
-- `QmonGenomeService.createDefault()`
-  - Creates the default genome service with built-in signal metadata.
-- `getSignalMetadata()`
-  - Returns available signal definitions and weight bounds.
-- `getSignalInfo(signalId)`
-  - Returns one signal definition or `null`.
-- `getAvailableTriggers()`
-  - Returns all trigger ids.
-- `validateSignalGene(gene)`
-  - Checks a signal gene against its allowed weight range.
-- `validateThresholds(thresholds)`
-  - Checks buy, sell, stop-loss, and take-profit thresholds.
-- `validateGenome(genome)`
-  - Validates a full genome.
-- `generateSignalGenes(density, strategy)`
-  - Generates signal genes for random exploration.
-- `generateTriggerGenes(density)`
-  - Generates trigger genes with enabled/disabled states.
-- `generateTimeWindowGenes()`
-  - Generates time-segment gates.
-- `generateDirectionRegimeGenes()`
-  - Generates direction-regime gates.
-- `generateVolatilityRegimeGenes()`
-  - Generates volatility-regime gates.
-- `generateScoreThresholds()`
-  - Generates a valid threshold bundle.
-- `createOffspringGenome(parentAGenome, parentBGenome, mutationRate)`
-  - Produces a child genome for evolution.
-- `generateRandomGenome(strategy)`
-  - Produces one random genome.
-- `generateSeededGenome(seedType)`
-  - Produces one hand-seeded baseline genome.
-- `generateInitialPopulation(populationSize?)`
-  - Produces the deterministic taker-only bootstrap population.
+- `QmonLiveExecutionService.createDefault(minimumVenueShares)`
+  - Creates the mirroring service.
+- `syncFamilyState(familyState, executionMode, synchronizedAt)`
+  - Returns the family state with updated `realSeat` summaries.
+- `resolveMirroredShareCount(requestedShareCount, venueMinimumShares)`
+  - Returns the larger of the requested and venue-minimum share counts.
 
 ### `QmonPersistenceService`
 
-Persists the whole family state in one atomic file.
+Stores and loads the v1 family state.
 
-- `QmonPersistenceService.createDefault(dataDir?)`
-  - Creates a persistence service rooted at `./data` by default.
-- `saveQmon(qmon)`
-  - Upserts one QMON into the stored family state.
-- `savePopulation(population)`
-  - Upserts one population into the stored family state.
-- `save(state)`
-  - Writes the full family state to `family-state.json`.
+- `QmonPersistenceService.createDefault(dataDir)`
+  - Persists to `qmon-v1-state.json` inside `dataDir`.
 - `load()`
-  - Reads the full family state or returns `null`.
-- `loadPopulation(market)`
-  - Reads one stored population or returns `null`.
-- `exists()`
-  - Returns whether the family-state file already exists.
-- `deleteQmon(market, qmonId)`
-  - Removes one QMON from one stored market population.
-- `getDataDir()`
-  - Returns the configured storage directory.
-- `generateUniqueId()`
-  - Returns a fresh QMON id.
-- `getAllMarkets()`
-  - Returns every configured market derived from `SIGNAL_ASSETS × SIGNAL_WINDOWS`.
+  - Loads a valid v1 family state or returns `null` for legacy payloads.
+- `save(familyState)`
+  - Saves the supplied family state and returns `true` on success.
 
-### Exported types
+### `MarketKey`
 
-- `SignalValue` — one normalized signal value or `null`
-- `HorizonSignalValues` — horizon-keyed signal map
-- `StructuredSignalResult` — canonical signal payload
-- `TriggerEvent`, `TriggerSeverity` — trigger output contracts
-- `DirectionRegime`, `RegimeEvent`, `RegimeResult`, `RegimeState`, `VolatilityRegime` — regime contracts
-- `MarketKey`, `Qmon`, `QmonFamilyState`, `QmonGenome`, `QmonLifecycle`, `QmonMetrics`, `QmonRole`, `TradingAction` — QMON contracts
-- `generateQmonId()` — exported id generator
+String-literal market identifier in the form `<asset>-<window>`.
+
+### `Qmon`
+
+Type describing one preset market QMON, including current trend, paper position, strategy state, and recent performance.
+
+### `QmonFamilyState`
+
+Type describing the persisted family state for all configured markets.
+
+## HTTP API
+
+### `GET /api/qmons`
+
+Returns the reduced runtime payload:
+
+- configured markets
+- current trend
+- current paper position
+- last 5 paper windows
+- recent summed PnL
+- champion id or `null`
+- real-seat summary
+
+### `GET /api/qmons/stats`
+
+Returns high-level runtime counters such as total markets, total QMONs, champion count, total PnL, and total trades.
+
+### `GET /api/signals/structured`
+
+Returns the latest structured signals, current regimes, and regime-change events.
 
 ## Configuration
 
-All runtime configuration comes from `src/config.ts`.
+Every top-level config key from `src/config.ts`:
 
 | Key | Purpose | Default |
 | --- | --- | --- |
-| `RESPONSE_CONTENT_TYPE` | Default HTTP content type for JSON responses. | `application/json` |
+| `RESPONSE_CONTENT_TYPE` | Default JSON content type. | `application/json` |
 | `DEFAULT_PORT` | HTTP port used by `startServer()`. | `3000` |
-| `SERVICE_NAME` | Service label used by the process. | `@sha3/polymarket-quant` |
-| `SNAPSHOT_INTERVAL_MS` | Snapshot polling/listener interval. | `500` |
-| `SIGNAL_HORIZONS_SEC` | Lookback horizons for multi-horizon signals. | `30, 120, 300` |
-| `SIGNAL_ASSETS` | Assets with active signal and QMON markets. | `btc, eth, sol, xrp` |
-| `SIGNAL_WINDOWS` | Market windows evaluated per asset. | `5m, 15m` |
-| `SIGNAL_EXCHANGES` | Exchanges used for exchange-derived signals. | `binance, coinbase, kraken, okx` |
-| `MAX_MAX_TRADES_PER_WINDOW` | Upper bound for genome `maxTradesPerWindow`. | `4` |
-| `MAX_MAX_SLIPPAGE_BPS` | Upper bound for genome `maxSlippageBps`. | `1500` |
-| `QMON_PERSIST_CHECKPOINT_MS` | Minimum interval between non-critical state saves. | `10000` |
-| `QMON_EVOLUTION_ENABLED` | Enables population replacement during window rollovers. | `true` |
-| `QMON_EVOLUTION_REPLACEMENT_RATE` | Share of the active pool replaced on a rollover. | `0.01` |
-| `QMON_EVOLUTION_MIN_PARENT_WINDOWS` | Minimum completed windows before a QMON can reproduce. | `12` |
-| `QMON_EVOLUTION_NEWBORN_PROTECTION_WINDOWS` | Minimum windows before a weak QMON can be culled. | `8` |
-| `QMON_EVOLUTION_MUTATION_RATE` | Mutation rate used when creating offspring genomes. | `0.04` |
-| `QMON_GENETIC_POPULATION_SIZE` | Number of genetic QMONs seeded per market. | `96` |
-| `QMON_PRESET_QMON_COUNT` | Number of preset QMONs seeded per market. | `120` |
-| `QMON_PRESET_QMONS_ENABLED` | Enables preset strategies alongside genetic QMONs. | `true` |
-| `QMON_HYDRATION_WINDOW_COUNT` | Number of historical windows replayed into newborns. | `10` |
-| `QMON_HYDRATION_SNAPSHOT_STRIDE` | Snapshot downsampling factor during hydration replay. | `10` |
-| `QMON_MIN_ENTRY_EDGE_BPS` | Legacy minimum modeled edge kept for observability and compatibility. | `35` |
-| `QMON_MIN_ENTRY_NET_EV_USD` | Legacy minimum net EV kept for observability and compatibility. | `0.08` |
-| `QMON_MIN_ENTRY_CONFIRMATIONS` | Minimum aligned signals before a new entry is allowed. | `2` |
-| `QMON_MIN_ENTRY_FILL_QUALITY` | Minimum fill-quality score required for a new entry. | `0.5` |
-| `QMON_MAX_ENTRY_SLIPPAGE_BPS` | Hard cap for predicted entry slippage. | `80` |
-| `QMON_MIN_FINAL_OUTCOME_PROBABILITY` | Minimum final-outcome conviction required before buying an outcome. | `0.6` |
-| `QMON_THESIS_COLLAPSE_PROBABILITY` | Early-exit threshold below which an open thesis is considered broken. | `0.4` |
-| `QMON_MAX_ENTRY_RISK_USD` | Worst-case USD loss budget allowed for a single new entry. | `1` |
-| `QMON_EXTREME_DRAWDOWN_PCT` | Disaster-only unrealized drawdown threshold for early exits. | `0.85` |
-| `QMON_EXECUTION_MODE` | Global routing mode for seat execution. | `paper` |
-| `QMON_USE_MINIMUM_ENTRY_SHARES` | Keeps compatibility with minimum-share entry sizing. | `true` |
-| `QMON_REAL_EMERGENCY_MAX_SESSION_LOSS_USD` | Session loss guardrail for real execution. | `10` |
-| `QMON_REAL_REQUIRE_WALK_FORWARD` | Requires walk-forward validation before arming real routing. | `true` |
-| `QMON_REAL_MIN_WF_TRADES` | Minimum walk-forward trades for real routing. | `10` |
-| `QMON_REAL_MAX_WF_DRAWDOWN_USD` | Maximum walk-forward drawdown allowed for real routing. | `4` |
-| `QMON_REAL_MIN_WF_NET_PNL_USD` | Minimum walk-forward net PnL required for real routing. | `1` |
-| `QMON_REAL_MAX_WF_FEE_RATIO` | Maximum walk-forward fee ratio allowed for real routing. | `0.45` |
-| `QMON_REAL_MAX_WF_SLIPPAGE_BPS` | Maximum walk-forward slippage allowed for real routing. | `80` |
-| `POLYMARKET_PRIVATE_KEY` | Private key used for authenticated real execution. | unset |
-| `POLYMARKET_FUNDER_ADDRESS` | Funder address used by the Polymarket venue client. | unset |
-| `POLYMARKET_SIGNATURE_TYPE` | Optional signature type override for Polymarket. | unset |
-| `POLYMARKET_MAX_ALLOWED_SLIPPAGE` | Optional venue-level slippage override. | unset |
-| `POLYMARKET_SAFE_MAX_BUY_AMOUNT` | Venue-side buy notional cap used by the real executor. | `15` |
-| `QMON_REAL_CONFIRMATION_TIMEOUT_MS` | Timeout for waiting on live venue confirmations. | `15000` |
+| `SERVICE_NAME` | Runtime service identifier. | `@sha3/polymarket-quant` |
+| `SNAPSHOT_INTERVAL_MS` | Snapshot polling cadence. | `500` |
+| `SIGNAL_HORIZONS_SEC` | Signal horizons used by the simplified signal engine. | `30,120,300` |
+| `SIGNAL_ASSETS` | Configured asset universe. | `btc,eth,sol,xrp` |
+| `SIGNAL_WINDOWS` | Configured market windows. | `5m,15m` |
+| `SIGNAL_EXCHANGES` | Exchange names retained in config for snapshot compatibility. | `binance,coinbase,kraken,okx` |
+| `QMON_EXECUTION_MODE` | Mirroring mode: `paper` or `real`. | `paper` |
+| `QMON_PERSIST_CHECKPOINT_MS` | Minimum delay between automatic saves. | `10000` |
+| `QMON_LATE_ZONE_FRACTION` | Fraction of the window considered “late zone”. | `0.1` |
+| `QMON_CHAMPION_WINDOW_COUNT` | Recent completed paper windows used for champion selection. | `5` |
+| `QMON_MIN_ENTRY_USD` | Minimum order notional for paper or mirrored entries. | `1` |
+| `QMON_MIN_ENTRY_SHARES` | Minimum share count for paper or mirrored entries. | `5` |
+
+## Compatibility
+
+- Node.js ESM service
+- built and tested with the repo TypeScript toolchain
+- breaking refactor relative to the legacy genetic QMON model
+- legacy QMON persistence is intentionally ignored by v1
+
+## Scripts
+
+- `npm start` starts the live service
+- `npm run build` builds `dist/`
+- `npm run standards:check` runs the project standards verifier
+- `npm run lint` runs Biome checks
+- `npm run format:check` checks formatting
+- `npm run typecheck` runs TypeScript without emit
+- `npm run test` runs the test suite
+- `npm run check` runs the full blocking gate
+
+## Structure
+
+- `src/app/` runtime bootstrap
+- `src/http/` dashboard and JSON endpoints
+- `src/qmon/` preset QMON engine, champion selection, persistence, and real-seat mirroring
+- `src/regime/` simplified trend classification
+- `src/signal/` simplified structured signal extraction
+- `public/` dashboards
+- `test/` behavior tests
 
 ## Troubleshooting
 
-### The signal API is empty
+### No champion appears
 
-`/api/signals/structured` returns an empty object plus trigger/regime arrays until snapshots arrive. This is expected on a cold start.
+The market QMON is champion-eligible only when its summed paper PnL over the last 5 completed windows is strictly positive.
 
-### The dashboard shows no QMONs
+### No trade appears
 
-Delete `data/family-state.json` and restart if you want a clean bootstrap. The service seeds fresh populations when no stored family state exists.
+`late-trend-reverse` trades only when all of these are true:
 
-### Diagnostics show order failures
+- the market is inside the last 10% of the active window
+- the trend flips from `UP` to `DOWN` or from `DOWN` to `UP`
+- the QMON has not already triggered in that window
+- current token pricing supports both the minimum USD and minimum share constraints
 
-The simulator is taker-only, but orders can still expire at market end or be rejected on slippage and minimum-notional checks. Use:
+### Real seat stays flat
 
-- `/api/qmons/diagnostics/overview`
-- `/api/qmons/diagnostics/market?market=btc-5m`
-- `/api/qmons/cpnl-log`
-
-### `npm run standards:check` fails on managed files
-
-This repository uses `@sha3/code-standards`. Managed AI contract files are part of the verification surface, so a missing managed file will fail standards even if application code is correct.
+The real seat mirrors only the champion. If the market has no champion or the champion has no open paper position, the mirrored real seat stays empty.
 
 ## AI Workflow
 
-This repository is governed by the contract in `AGENTS.md` and `ai/contract.json`.
-
-Operational rules for AI changes:
-
-- keep the canonical signal surface at `calculateStructured()`
-- keep QMON execution taker-only
-- preserve the champion seat as a separate ledger from candidate paper evaluation
-- update `src/index.ts`, `README.md`, `test/`, and HTTP docs together when contracts change
-- avoid editing managed contract files unless the task is explicitly a standards update
-
-Recommended validation flow for code changes:
-
-```bash
-npm run typecheck
-npm run test
-npm run check
-```
+- Read `AGENTS.md`, `ai/contract.json`, and the relevant skill instructions before changing code.
+- Keep the QMON system preset-first unless a new requirement explicitly reintroduces a different strategy model.
+- Update tests, dashboard payloads, and README sections in the same pass whenever behavior changes.
+- Do not edit managed files except when the task requires bringing the contract surface back into a passing state.
